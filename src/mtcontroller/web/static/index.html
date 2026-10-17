@@ -9,7 +9,7 @@
 </head>
 <body>
 <header>
-  <h1>MikroTik Controller</h1>
+  <h1><span class="logo" aria-hidden="true"></span>MikroTik Controller</h1>
   <div id="who"></div>
 </header>
 
@@ -220,8 +220,14 @@
       <ul id="d-vlan"></ul>
       <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
       <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
-      <h3>Rozhraní</h3>
-      <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>Linka</th><th>VLAN</th><th>STP</th><th>PoE</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
+      <h3>Porty</h3>
+      <div id="d-ports" class="ports"></div>
+      <div class="ports-legend">
+        <span><i class="sw gbe"></i>GbE+</span><span><i class="sw fe"></i>FE</span>
+        <span><i class="sw down"></i>bez linky</span><span><i class="sw off"></i>vypnutý</span>
+        <span>⚡ PoE</span><span>↑ uplink</span><span><i class="sw blk"></i>blokuje STP / half-duplex</span>
+        <span class="muted">klik na port = graf provozu</span>
+      </div>
       <div id="d-traffic" hidden>
         <h3><span id="d-traffic-h"></span>
           <select id="d-traffic-range"><option value="6">6 h</option><option value="24">24 h</option>
@@ -229,8 +235,12 @@
         <svg id="d-traffic-svg" viewBox="0 0 800 220" role="img" aria-label="Provoz rozhraní"></svg>
         <p id="d-traffic-info" class="muted"></p>
       </div>
-      <h3>Sousedé</h3>
+      <details class="fold"><summary>Všechna rozhraní <span id="d-ifaces-n" class="muted"></span></summary>
+      <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>Linka</th><th>VLAN</th><th>STP</th><th>PoE</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
+      </details>
+      <details class="fold"><summary>Sousedé (MNDP/LLDP) <span id="d-neigh-n" class="muted"></span></summary>
       <table><thead><tr><th>Port</th><th>Identita</th><th>Model</th><th>Adresa</th><th>MAC</th></tr></thead><tbody id="d-neigh"></tbody></table>
+      </details>
       <h3>Zálohy</h3>
       <table><thead><tr><th>Čas</th><th>Důvod</th><th>Velikost</th><th>Změna</th><th></th></tr></thead><tbody id="d-backups"></tbody></table>
       <pre id="d-diff" hidden></pre>

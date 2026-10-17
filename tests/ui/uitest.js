@@ -102,6 +102,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
     if (byId["d-security"].children.length < 5) errors.push("bezpečnostní nálezy se nezobrazily");
+    const pg = byId["d-ports"].children[0];
+    if (!pg || pg.className !== "port-group" || !pg.children.some((c) => /^port( |$)/.test(c.className)))
+      errors.push("panel portů se nevykreslil");
     await byId["d-ifaces"].children[0].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const lines = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;

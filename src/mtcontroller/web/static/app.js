@@ -704,6 +704,91 @@ $("pw-form").addEventListener("submit", async (ev) => {
   } catch (e) { msg(e.message, true); }
 });
 
+// --- panel portů (jako přední panel switche) ----------------------------------------------
+
+const PORT_RE = /^(ether|sfp|combo|qsfp)/;
+
+function portNum(name) {
+  const m = String(name).match(/(\d+)(?!.*\d)/);
+  return m ? Number(m[1]) : 0;
+}
+
+function shortName(s, n = 9) {
+  s = String(s || "");
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+function renderPorts(devId, d) {
+  const box = $("d-ports"); box.textContent = "";
+  const phys = (d.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
+  if (!phys.length) { box.appendChild(el("p", "Žádné fyzické porty v inventuře", "muted")); return; }
+  const managed = new Set((devicesCache || []).map((x) => x.identity).filter(Boolean));
+  const neigh = {};
+  for (const n of d.neighbors || []) {
+    for (const part of String(n.interface || "").split(/[,/]/)) {
+      if (part && !neigh[part]) neigh[part] = n;
+    }
+  }
+  const sfp = phys.filter((i) => /^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
+  const cu = phys.filter((i) => !/^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
+  for (const group of [cu, sfp]) if (group.length) box.appendChild(portGroup(devId, group, neigh, managed));
+}
+
+function portGroup(devId, ports, neigh, managed) {
+  // víc než 8 portů: liché nahoře, sudé dole (jako na switchi); jinak jedna řada
+  const twoRows = ports.length > 8;
+  const top = twoRows ? ports.filter((_, i) => i % 2 === 0) : ports;
+  const bottom = twoRows ? ports.filter((_, i) => i % 2 === 1) : [];
+  const g = el("div", null, "port-group");
+  g.style.gridTemplateColumns = `repeat(${top.length}, 52px)`;
+  const place = (node, row, col) => { node.style.gridRow = String(row); node.style.gridColumn = String(col); g.appendChild(node); };
+  const label = (i, pos) => {
+    const n = neigh[i.name], p = i.port || {};
+    const c = el("div", null, "port-label " + pos);
+    const who = n ? (n.identity || n["mac-address"] || "") : "";
+    const w = p.poe_power && Number(p.poe_power) > 0 ? `${Number(p.poe_power).toFixed(1)} W` : "";
+    const name = el("span", shortName(who), managed.has(who) ? "managed" : "");
+    if (pos === "above") c.append(el("span", w, "poe-w"), name); else c.append(name, el("span", w, "poe-w"));
+    if (n) c.title = `${n.identity || ""} ${n["mac-address"] || ""} ${n.board || n.platform || ""}`.trim();
+    return c;
+  };
+  top.forEach((i, k) => { place(label(i, "above"), 1, k + 1); place(portTile(devId, i, neigh, managed), 2, k + 1); });
+  bottom.forEach((i, k) => { place(portTile(devId, i, neigh, managed), 3, k + 1); place(label(i, "below"), 4, k + 1); });
+  return g;
+}
+
+function portTile(devId, i, neigh, managed) {
+  const p = i.port || {};
+  const n = neigh[i.name];
+  let cls = "port";
+  if (i.disabled) cls += " off";
+  else if (!i.running || (p.link && p.link !== "link-ok")) cls += " down";
+  else if (/G/.test(p.rate || "")) cls += " gbe";
+  else if (p.rate) cls += " fe";
+  else cls += " gbe";
+  if (p.full_duplex === false || p.stp_forwarding === false) cls += " blk";
+  // uplink: root port STP, bez STP port ke spravované gateway
+  const gw = n && (devicesCache || []).some((x) => x.identity === n.identity && x.role === "gateway");
+  const uplink = p.stp_role === "root-port" || (!p.stp_role && gw);
+  const t = el("button", null, cls);
+  t.type = "button";
+  const poeOn = p.poe && /powered-on|on/.test(p.poe);
+  if (/^(sfp|qsfp)/.test(i.name)) { t.className += " sfp"; t.appendChild(el("span", /plus/.test(i.name) ? "SFP+" : "SFP", "tag")); }
+  t.append(el("span", String(portNum(i.name)), "num"), el("span", (poeOn ? "⚡" : "") + (uplink ? "↑" : ""), "ico"));
+  t.title = [
+    i.name + (i.comment ? ` – ${i.comment}` : ""),
+    i.disabled ? "vypnutý" : (i.running ? `linka ${p.rate || "ok"}${p.full_duplex === false ? " half-duplex" : ""}` : "bez linky"),
+    p.pvid ? `PVID ${p.pvid}` + (p.tagged && p.tagged.length ? `, tagované ${p.tagged.join(",")}` : "") : "",
+    p.stp_role ? `STP ${p.stp_role}${p.stp_forwarding === false ? " (blokuje)" : ""}` : "",
+    p.poe ? `PoE ${p.poe}${p.poe_power ? " " + p.poe_power + " W" : ""}` : "",
+    p.sfp_rx_power ? `SFP RX ${p.sfp_rx_power} dBm` : "",
+    n ? `soused: ${n.identity || n["mac-address"]}` : "",
+    `chyby RX/TX ${i.rx_error || 0}/${i.tx_error || 0}, výpadky ${i.link_downs || 0}`,
+  ].filter(Boolean).join("\n");
+  t.addEventListener("click", () => showTraffic(devId, i.name));
+  return t;
+}
+
 // --- graf provozu rozhraní -------------------------------------------------------------------
 
 let trafficIface = null;
@@ -735,10 +820,11 @@ function drawTraffic(r) {
   const pts = r.points || [];
   const W = 800, H = 220, L = 60, R = 10, T = 10, B = 25;
   if (pts.length < 2) {
-    svg.appendChild(svgEl("text", { x: W / 2 - 120, y: H / 2 }, "Zatím málo dat (vzorek každých 5 min)"));
-    $("d-traffic-info").textContent = "";
+    svg.style.display = "none";
+    $("d-traffic-info").textContent = "Zatím málo dat – vzorek se ukládá každých 5 minut, první body do ~10 min po adopci.";
     return;
   }
+  svg.style.display = "";
   const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime();
   const peak = (p) => Math.max(p.rx || 0, p.tx || 0, p.rx_max || 0, p.tx_max || 0);
   const max = Math.max(1, ...pts.map(peak));
@@ -959,6 +1045,7 @@ async function openDetail(id) {
     $("d-vlan-plan").hidden = d.vlan.status !== "legacy";
   }
   // rozhraní a sousedé
+  renderPorts(id, d);
   const it = $("d-ifaces"); it.textContent = "";
   $("d-traffic").hidden = true;
   for (const i of d.interfaces) {
@@ -981,6 +1068,8 @@ async function openDetail(id) {
               el("td", i.mac || ""), el("td", i.link_downs || "0"), el("td", `${i.rx_error || 0} / ${i.tx_error || 0}`), el("td", i.comment || ""));
     it.appendChild(tr);
   }
+  $("d-ifaces-n").textContent = `(${d.interfaces.length})`;
+  $("d-neigh-n").textContent = `(${(d.neighbors || []).length})`;
   const nt = $("d-neigh"); nt.textContent = "";
   for (const n of d.neighbors) {
     const tr = el("tr");
