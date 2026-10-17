@@ -26,6 +26,8 @@ class Section:
     name: str
     path: str
     proplist: str | None = None
+    # filtr REST (?pole=hodnota) – např. jen výchozí routa, ne celá BGP tabulka
+    query: tuple[tuple[str, str], ...] = ()
 
 
 SECTIONS: list[Section] = [
@@ -41,7 +43,7 @@ SECTIONS: list[Section] = [
     Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out"),
     Section("switch", "/interface/ethernet/switch", "name,type"),
     Section("bridges", "/interface/bridge",
-            "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment"),
+            "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority"),
     Section("bridge_ports", "/interface/bridge/port",
             "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment"),
     Section("bridge_vlans", "/interface/bridge/vlan",
@@ -88,6 +90,10 @@ SECTIONS: list[Section] = [
     Section("fw_filter", "/ip/firewall/filter",
             "chain,action,disabled,dynamic,in-interface,in-interface-list,src-address,src-address-list,"
             "connection-state,protocol,dst-port,comment"),
+    # WAN: výchozí routy (jen 0.0.0.0/0) a DHCP klient – pro pohled Infrastruktura
+    Section("routes_default", "/ip/route", "dst-address,gateway,immediate-gw,distance,active,disabled,comment,routing-table",
+            (("dst-address", "0.0.0.0/0"),)),
+    Section("dhcp_client", "/ip/dhcp-client", "interface,address,gateway,status,disabled,add-default-route"),
     Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
     Section("capsman_caps_legacy", "/caps-man/remote-cap"),
 ]
@@ -146,7 +152,10 @@ POE_PROPS = "name,poe-out-status,poe-out-voltage,poe-out-current,poe-out-power"
 
 def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     for s in SECTIONS:
-        _fetch(api, data, errors, s.name, "GET", s.path, params={".proplist": s.proplist} if s.proplist else None)
+        params = dict(s.query)
+        if s.proplist:
+            params[".proplist"] = s.proplist
+        _fetch(api, data, errors, s.name, "GET", s.path, params=params or None)
     eth = [e for e in data.get("ethernet") or [] if isinstance(e, dict) and e.get("name")]
     names = [str(e["name"]) for e in eth]
     if names:

@@ -480,6 +480,28 @@ async def site_wifi(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_infra(request: Request, p: Principal, tid: str) -> Response:
+    from .. import infra
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            devs = tx.fetchall("""SELECT id, serial, identity, model, role::text AS role, state::text AS state, ros_version
+                                  FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline', 'provisioning')""",
+                               {"s": sid})
+            invs = {str(d["id"]): inventory.load(tx, d["id"], INFRA_SECTIONS) for d in devs}
+        return infra.site_infra(devs, invs)
+
+    return json_response(await run_in_threadpool(q))
+
+
+INFRA_SECTIONS = ["interfaces", "neighbors", "resource", "ethernet_monitor", "poe_monitor", "stp_bridges",
+                  "stp_ports", "bridges", "bridge_ports", "routes_default", "dhcp_client", "addresses"]
+
+
+@endpoint(READ)
 async def site_stp(request: Request, p: Principal, tid: str) -> Response:
     from .. import stp
 
@@ -588,6 +610,7 @@ def routes() -> list[Route]:
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),
+        Route(s + "/infra", site_infra, methods=["GET"]),
         Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/plans", plan_list, methods=["GET"]),

@@ -85,6 +85,13 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["wifi-btn"].fire("click");
     await byId["stp-btn"].fire("click");
     await byId["upg-btn"].fire("click");
+    await byId["infra-btn"].fire("click");
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    if (byId["infra-list"].children.length !== 4) errors.push("infrastruktura: seznam zařízení " + byId["infra-list"].children.length);
+    const ig = byId["infra-svg"].children;
+    if (ig.length !== 2 || ig[1].children.length < 6) errors.push("infrastruktura: strom se nevykreslil");
+    byId["infra-ext"].checked = true;
+    await byId["infra-ext"].fire("change");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const topoEls = byId["topo"].children.length;
     const clientRows = byId["clients"].children.length;

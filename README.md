@@ -24,6 +24,7 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] Zálohy konfigurace (šifrovaně), drift, diff se skrytými hesly
 - [x] Analýza VLAN/bridge proti cílovému modelu + náhled migrace
 - [x] Modul NTP s plány změn (observe/manage, schválení, zneplatnění)
+- [x] Infrastruktura lokality jako v UniFi 10 (WAN → gateway → switche → AP, porty na spojích, STP root, CPU/RAM)
 - [x] Topologie lokality (MNDP/LLDP), dostupné aktualizace RouterOS, známé problémy verzí
 - [x] Aktualizace RouterOS a RouterBOOT z UI (potvrzená verze, blokace kritických verzí, kontrola výsledku)
 - [x] Postupná aktualizace lokality (okraj → gateway, po jednom, zastavení při chybě)

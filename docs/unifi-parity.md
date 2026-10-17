@@ -86,3 +86,66 @@ a admin dostane přehled „co je zastaralé a proč".
 - Bezpečnostní audit konfigurace každého zařízení (`hardening.py`): veřejná IP bez filtru na input, otevřený DNS resolver, nešifrované služby, MAC server na WAN, SNMP public, SOCKS/proxy (častý znak kompromitace), výchozí `admin`. Každý nález s návrhem opravy.
 - Release notes filtrované na komponenty, které konkrétní zařízení používá.
 - STP přehled s detekcí rizika smyček.
+
+## UniFi Network 9.x–10.x (2025–2026) – novinky a jejich protějšek v RouterOS
+
+Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · ⏳ plán.
+
+### Switche
+
+| UniFi | Co dělá | RouterOS / náš návrh | Stav |
+| --- | --- | --- | --- |
+| Infrastructure Topology (10.2) | mapa páteře: WAN → gateway → switche, STP, CPU, rozpojené linky | strom ze sousedů MNDP/LLDP, WAN z výchozích rout, STP root, CPU/RAM, porty na spojích (`infra.py`) | ✅ |
+| Port Manager + Ports Insights | přední panel, profily portů, PoE, VLAN | panel portů s pohledy Linka / Native VLAN / VLAN tagování / PoE / Chyby | ✅ zobrazení, ⏳ změny |
+| Time Machine portů (10.2, 10.6) | 24h historie stavů portů | máme 5min vzorky čítačů; ⏳ časová osa událostí (link up/down, PoE) z `link-downs` a stavů | 🟡 |
+| Port Anomaly (9.5) | flapping, smyčky, včasné alerty | alerty flapping, chyby, half-duplex ✅; ⏳ `loop-protect` na ethernet portech + alert | 🟡 |
+| STP Edge / Auto STP Edge (10.2) | edge porty k zařízením, rychlejší konvergence | bridge port `edge=yes/auto`; varování „konvergence STP“ v Infrastruktuře | 🟡 |
+| Ethernet Port Profiles | šablona portu (VLAN, PoE, STP, storm control) | profil = sada vlastností bridge port + bridge vlan + ethernet (poe-out, storm-rate…); aplikace přes plán změn s potvrzením | ⏳ |
+| Port locking (10.6) | port uzamčený na konkrétní zařízení | bridge port `learn=no` + statický bridge host, nebo `/interface bridge filter` s MAC | ⏳ |
+| Device Supervisor (10.2) | ping watchdog, power-cycle přes PoE | controller pingne zařízení přes REST souseda → `/interface ethernet poe power-cycle` na portu switche (se schválením) | ⏳ |
+
+### Wi-Fi / AP
+
+| UniFi | Co dělá | RouterOS / náš návrh | Stav |
+| --- | --- | --- | --- |
+| Radio Manager, Radios Overview + Time Machine | rádia, kanály, klienti, historie | přehled Wi-Fi (rádia, SSID, kanály, signál, CAPsMAN) | 🟡 bez historie |
+| Channel AI (9.5) | noční plán kanálů pro celou lokalitu | `/interface wifi scan` / frequency-scan na AP → návrh plánu kanálů → plán změn | ⏳ |
+| Multicast Suppressor | méně broadcastů ve vzduchu | `multicast-enhance`, IGMP snooping na bridge, filtrace mDNS | ⏳ |
+| OWE (Enhanced Open) | šifrované otevřené SSID | `security.authentication-types=owe` (wifi balík) | ⏳ |
+
+### Gateway, firewall, routování
+
+| UniFi | Co dělá | RouterOS / náš návrh | Stav |
+| --- | --- | --- | --- |
+| Zone-Based Firewall (9.0) | zóny (Internal, External, Gateway, VPN, Hotspot, DMZ), matice zón, politiky Allow/Block, „auto allow return traffic“ | zóna = `/interface list`; politika = pravidlo ve `forward` (mezi zónami) nebo `input` (zóna → Gateway) s `in-/out-interface-list`; návratový provoz = `established,related` na začátku; objekty = `address-list`; plán = `time=` | ⏳ modul firewall (nejdřív jen zobrazení matice ze stávajících pravidel) |
+| Master Policy Table (9.4) | firewall, NAT, routy, QoS na jedné stránce | jedna tabulka z `/ip firewall filter`, `nat`, `mangle`, `/ip route`, `/queue` | ⏳ (jen čtení snadné) |
+| Object Oriented Networking (9.4) | pravidla pro skupiny klientů | address-listy plněné z DHCP (`address-lists=` na lease / síti) | ⏳ |
+| High Availability Readiness (10.6) | skóre: ISP, napájení, gateway jako SPOF | víc WAN (výchozí routy s `distance`/`check-gateway`) ✅ v Infrastruktuře; ⏳ skóre (2 WAN, 2 koncentrátory, VRRP, záložní napájení PSU z `/system health`) | 🟡 |
+
+### Správa
+
+| UniFi | Co dělá | RouterOS / náš návrh | Stav |
+| --- | --- | --- | --- |
+| SafeOps (10.6) | test-and-confirm, návrat na poslední funkční konfiguraci | commit-confirm: plán změn + scheduler s návratem, zrušený po check-inu (viz architektura, test-plan 9b) | ⏳ předpoklad pro VLAN/firewall |
+| Granular bulk updates (10.6) | řízené hromadné aktualizace | postupná aktualizace lokality | ✅ |
+| Firmware revert (10.2) | návrat verze | `/system package downgrade` (balíčky nahrát) – s varováním | ⏳ |
+| Drift Inspector (Site Manager) | odchylky konfigurace mezi lokalitami | drift ze záloh ✅; ⏳ porovnání se šablonou lokality | 🟡 |
+| Topology Spotlight (10.6) | zvýraznění důležitých klientů | ⏳ v Infrastruktuře zvýraznit cestu k vybranému klientovi | ⏳ |
+| Alarm Manager | vlastní pravidla upozornění | alerty + notifikace (webhook, Talk, e-mail) ✅; ⏳ uživatelské prahy | 🟡 |
+
+### Doporučené pořadí
+
+1. **Commit-confirm (SafeOps)** – bez něj nejde bezpečně měnit VLAN ani firewall. Ověřit test-plan 9b body 5–6.
+2. **Profily portů + změny portů** (PVID, tagované VLAN, PoE on/off, power-cycle, edge) – nejčastější každodenní práce na switchích.
+3. **Firewall – matice zón jen pro čtení** ze stávajících pravidel (interface listy jako zóny), pak politiky s návratem.
+4. **Časová osa portů** (Time Machine) – uložit změny stavu portů při každé inventuře.
+5. **Channel plán pro Wi-Fi** a OWE.
+
+### Zdroje
+
+- [Introducing UniFi Network 10.6](https://blog.ui.com/article/introducing-unifi-network-10-6)
+- [What's new with UniFi Network 10.2 (HostiFi)](https://www.hostifi.com/blog/what-is-new-with-unifi-network-10-2)
+- [UniFi Network 10.2 now available (Dong Knows Tech)](https://dongknows.com/unifi-network-10-2-now-available/)
+- [Releasing UniFi Network 9.5](https://blog.ui.com/article/releasing-unifi-network-9-5)
+- [What's new in UniFi Network 9.4.17 (HostiFi)](https://www.hostifi.com/blog/what-is-new-in-unifi-network-9-4-17)
+- [UniFi Zone-Based Firewall (LazyAdmin)](https://lazyadmin.nl/home-network/unifi-zone-based-firewall/)

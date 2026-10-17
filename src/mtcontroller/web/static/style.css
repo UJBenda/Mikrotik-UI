@@ -185,3 +185,54 @@ details.fold[open] > summary { margin-bottom: 6px; }
 .tip .tip-rx span:last-child { color: #7cc4ff; } .tip .tip-tx span:last-child { color: #c9a6ff; }
 .port.sfp .big { top: 12px; }
 .port .ico.br { top: auto; bottom: 2px; font-size: 10px; }
+
+/* --- infrastruktura --- */
+.banner { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 8px; padding: 8px 12px;
+          margin: 6px 0; background: var(--card); font-size: 13px; }
+.banner.warn { border-left-color: var(--warn); background: var(--warn-weak); }
+.banner.info { border-left-color: var(--accent); background: var(--accent-weak); }
+.infra-bar { display: flex; gap: 16px; align-items: center; margin: 8px 0; }
+label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; color: var(--muted); font-size: 13px; }
+.infra { display: grid; grid-template-columns: 290px 1fr; gap: 14px; align-items: start; }
+@media (max-width: 900px) { .infra { grid-template-columns: 1fr; } }
+.infra-list { display: flex; flex-direction: column; gap: 8px; }
+.infra-dev { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; cursor: pointer; background: var(--card); }
+.infra-dev:hover { background: var(--hover); }
+.infra-dev.offline { border-left: 4px solid var(--bad); }
+.infra-dev .row1 { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.infra-dev .row1 .muted { font-size: 11px; }
+.infra-dev .row2 { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; margin-top: 4px; }
+.strip { display: grid; grid-auto-flow: column; grid-auto-columns: 7px; gap: 2px; margin: 7px 0 2px;
+         padding: 4px 6px; background: var(--bg); border-radius: 6px; width: max-content; }
+.strip .pp { width: 7px; height: 7px; border-radius: 2px; background: var(--port-down); }
+.strip .pp.gbe { background: var(--port-gbe); } .strip .pp.fe { background: var(--port-fe); }
+.strip .pp.off { background: transparent; outline: 1px dashed var(--port-down); }
+.infra-canvas { overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); max-height: 760px; }
+#infra-svg { display: block; }
+#infra-svg .card { fill: var(--card); stroke: var(--line); stroke-width: 1; }
+#infra-svg .node, #infra-svg .ext { cursor: pointer; }
+#infra-svg .node:hover .card { stroke: var(--accent); }
+#infra-svg .node.offline .card { stroke: var(--bad); stroke-dasharray: 4 3; }
+#infra-svg .node.offline text { opacity: .6; }
+#infra-svg text { fill: var(--text); font-size: 12px; }
+#infra-svg .title { font-size: 15px; font-weight: 600; }
+#infra-svg .sub { fill: var(--muted); font-size: 12.5px; }
+#infra-svg .stat { text-anchor: end; font-size: 12.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+#infra-svg .stat.ok { fill: var(--ok); font-weight: 600; }
+#infra-svg .wan.standby .card { fill: var(--bg); }
+#infra-svg .wan.standby text { opacity: .55; }
+#infra-svg .dot { fill: var(--muted); } #infra-svg .dot.adopted { fill: var(--ok); } #infra-svg .dot.offline { fill: var(--bad); }
+#infra-svg .link { fill: none; stroke-width: 1.6; }
+#infra-svg .link.up { stroke: var(--port-gbe); } #infra-svg .link.standby { stroke: var(--rx); opacity: .55; }
+#infra-svg .link.down { stroke: var(--bad); stroke-dasharray: 5 4; } #infra-svg .link.ext { stroke: var(--line); }
+#infra-svg .pbadge rect { fill: var(--card); stroke: var(--line); }
+#infra-svg .pbadge rect.ico { fill: var(--port-gbe); stroke: none; }
+#infra-svg .pbadge.wan rect.ico { fill: var(--port-gbe); }
+#infra-svg .pbadge .icot { fill: #fff; font-size: 12px; font-weight: 700; text-anchor: middle; }
+#infra-svg .pbadge .pnum { font-size: 14px; font-weight: 600; text-anchor: middle; }
+#infra-svg .crown rect { fill: var(--warn-weak); stroke: var(--warn); stroke-opacity: .4; }
+#infra-svg .crown text { fill: var(--warn); text-anchor: middle; font-weight: 700; }
+#infra-svg .crown .c1 { font-size: 17px; } #infra-svg .crown .c2 { font-size: 10px; }
+#infra-svg .ext rect { fill: var(--card); stroke: var(--line); stroke-dasharray: 3 2; }
+#infra-svg .ext text { text-anchor: middle; } #infra-svg .ext .t1 { font-size: 11.5px; } #infra-svg .ext .t2 { font-size: 10px; fill: var(--muted); }
+#infra-svg .ext rect { stroke-dasharray: 4 3; }

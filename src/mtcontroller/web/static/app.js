@@ -345,7 +345,7 @@ async function loadSitePanel() {
   const busiest = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
   sel.value = prev && sites.some((s) => s.id === prev) ? prev : (busiest ? busiest.id : "");
   // panely jsou vázané na lokalitu – při změně je zavřít, ať neukazují data jiné lokality
-  for (const w of ["topo-wrap", "clients-wrap", "wifi-wrap", "stp-wrap", "upg-wrap"]) $(w).hidden = true;
+  for (const w of ["topo-wrap", "clients-wrap", "wifi-wrap", "stp-wrap", "upg-wrap", "infra-wrap"]) $(w).hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
   const prim = $("ntp-primary");
@@ -1138,6 +1138,157 @@ $("upg-start").addEventListener("click", async () => {
   try { await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); msg("Postupná aktualizace spuštěna"); loadUpgrade(); }
   catch (e) { msg(e.message, true); }
 });
+
+// --- infrastruktura lokality (strom WAN → gateway → switche → AP) ----------------------------
+
+let infraData = null;
+
+$("infra-btn").addEventListener("click", async () => {
+  try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
+  $("infra-wrap").hidden = false;
+  renderInfra();
+});
+$("infra-ext").addEventListener("change", () => { if (infraData) renderInfra(); });
+
+function miniPorts(ports) {
+  const strip = el("div", null, "strip");
+  const rows = ports.length > 8 ? 2 : 1;
+  strip.style.gridTemplateRows = `repeat(${rows}, 7px)`;
+  for (const p of ports) { const q = el("span", null, "pp " + p.cls); q.title = p.name; strip.appendChild(q); }
+  return strip;
+}
+
+function renderInfra() {
+  const d = infraData;
+  const warn = $("infra-warn"); warn.textContent = "";
+  for (const w of d.warnings) {
+    const b = el("div", null, "banner " + (w.severity === "warning" ? "warn" : "info"));
+    b.append(el("b", w.severity === "warning" ? "⚠ " : "ⓘ "), document.createTextNode(w.text));
+    warn.appendChild(b);
+  }
+  // seznam vlevo
+  const list = $("infra-list"); list.textContent = "";
+  for (const n of d.nodes) {
+    const c = el("div", null, "infra-dev" + (n.state === "offline" ? " offline" : ""));
+    const head = el("div", null, "row1");
+    head.append(el("b", n.label), el("span", n.model || "", "muted"));
+    c.appendChild(head);
+    if (n.ports.length) c.appendChild(miniPorts(n.ports));
+    const foot = el("div", null, "row2 muted");
+    foot.append(el("span", (n.version || "").split(" ")[0]), el("span", n.poe_w ? `⚡ ${n.poe_w} W` : ""),
+                el("span", `CPU ${n.cpu != null ? n.cpu + " %" : "–"}`), el("span", `RAM ${n.mem != null ? n.mem + " %" : "–"}`));
+    c.appendChild(foot);
+    c.addEventListener("click", () => openDetail(n.id));
+    list.appendChild(c);
+  }
+  drawInfra();
+}
+
+function drawInfra() {
+  const d = infraData, svg = $("infra-svg"); svg.textContent = "";
+  const NW = 250, NH = 66, GX = 76, LV = 180, WH = 56, TOP = 20, EW = 150, EH = 40;
+  const showExt = $("infra-ext").checked;
+  const byId = {}, kids = {};
+  for (const n of d.nodes) { byId[n.id] = n; kids[n.id] = []; }
+  for (const n of d.nodes) if (n.parent && byId[n.parent]) kids[n.parent].push(n);
+  if (showExt) {
+    // nespravovaní sousedé jako listy stromu; sousedy na WAN portu zastupuje karta WAN
+    const wanPorts = new Set(d.wans.map((w) => `${w.device_id}|${w.port}`));
+    d.externals.filter((e) => byId[e.parent] && !wanPorts.has(`${e.parent}|${e.port}`)).slice(0, 80).forEach((e, k) => {
+      kids[e.parent].push({ id: "ext" + k, ext: true, label: e.label, platform: e.platform, parent_port: e.port,
+                            level: byId[e.parent].level + 1, parent: e.parent });
+    });
+  }
+  const all = [...d.nodes, ...Object.values(kids).flat().filter((x) => x.ext)];
+  for (const n of all) kids[n.id] = kids[n.id] || [];
+  // rozložení: listy dostanou sloupce, rodič je uprostřed nad dětmi
+  let slot = 0;
+  const pos = {};
+  const place = (n) => {
+    const ch = kids[n.id];
+    if (!ch.length) { pos[n.id] = slot; slot += n.ext ? 0.7 : 1; return; }
+    ch.forEach(place);
+    pos[n.id] = (pos[ch[0].id] + pos[ch[ch.length - 1].id]) / 2;
+  };
+  const roots = d.nodes.filter((n) => !n.parent || !byId[n.parent]);
+  roots.forEach((r) => { place(r); slot += 0.3; });
+  const wanRoot = d.wans.length ? 1 : 0;
+  const levels = Math.max(0, ...all.map((n) => n.level));
+  const W = Math.max(slot, Math.max(1, d.wans.length) * 1.5) * (NW + GX) + 60;
+  const H = TOP + wanRoot * (WH + 90) + (levels + 1) * LV;
+  svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const cx = (n) => 60 + pos[n.id] * (NW + GX) + NW / 2;
+  const y = (n) => TOP + wanRoot * (WH + 90) + n.level * LV;
+  const g = (cls) => svgEl("g", cls ? { class: cls } : {});
+  const num = (p) => String(p || "").replace(/^\D+/, "") || "?";
+  const badge = (x0, y0, text, kind) => {
+    const b = g("pbadge " + kind);
+    b.appendChild(svgEl("rect", { x: x0 - 30, y: y0 - 14, width: 60, height: 28, rx: 7 }));
+    b.appendChild(svgEl("rect", { x: x0 - 26, y: y0 - 10, width: 20, height: 20, rx: 5, class: "ico" }));
+    b.appendChild(svgEl("text", { x: x0 - 16, y: y0 + 5, class: "icot" }, kind === "wan" ? "◎" : kind === "down" ? "↓" : "↑"));
+    b.appendChild(svgEl("text", { x: x0 + 12, y: y0 + 5, class: "pnum" }, text));
+    return b;
+  };
+  const curve = (x1, y1, x2, y2, cls) => svgEl("path", { d: `M${x1},${y1} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2}`, class: "link " + cls });
+  const links = g(), nodes = g();
+  svg.append(links, nodes);
+  // WAN nahoře
+  const root = roots[0];
+  d.wans.forEach((w, k) => {
+    const host = byId[w.device_id] || root;
+    const n = d.wans.length;
+    const wx = cx(host) + (k - (n - 1) / 2) * 360, wy = TOP;
+    const card = g("wan" + (w.active ? "" : " standby"));
+    card.appendChild(svgEl("rect", { x: wx - 160, y: wy, width: 320, height: WH, rx: 10, class: "card" }));
+    card.appendChild(svgEl("text", { x: wx - 144, y: wy + 23, class: "title" }, `WAN · ${w.interface || "?"}`));
+    card.appendChild(svgEl("text", { x: wx - 144, y: wy + 43, class: "sub" },
+      `${w.address || "bez adresy"}${w.gateway ? " → " + w.gateway : ""}${w.dhcp ? " (DHCP)" : ""}`));
+    card.appendChild(svgEl("text", { x: wx + 144, y: wy + 23, class: "stat " + (w.active ? "ok" : "muted") }, w.active ? "aktivní" : "záloha"));
+    if (w.distance) card.appendChild(svgEl("text", { x: wx + 144, y: wy + 43, class: "stat muted" }, `distance ${w.distance}`));
+    nodes.appendChild(card);
+    const px = cx(host) + (k - (n - 1) / 2) * 70, py = y(host) - 26;
+    links.appendChild(curve(wx, wy + WH, px, py - 14, w.active ? "up" : "standby"));
+    nodes.appendChild(badge(px, py, num(w.port), "wan"));
+  });
+  for (const n of all) {
+    const x = cx(n), top = y(n);
+    const ch = kids[n.id];
+    ch.forEach((c, k) => {
+      const bx = x + (k - (ch.length - 1) / 2) * 70, by = top + NH + 26;
+      links.appendChild(curve(bx, by + 14, cx(c), c.ext ? y(c) : y(c) - 40, c.ext ? "ext" : c.state === "offline" ? "down" : "up"));
+      nodes.appendChild(badge(bx, by, num(c.parent_port), "down"));
+      if (!c.ext) nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));
+    });
+    if (n.ext) {
+      const pill = g("ext");
+      pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH, rx: 8 }));
+      pill.appendChild(svgEl("text", { x, y: top + 17, class: "t1" }, shortName(n.label || "?", 18)));
+      pill.appendChild(svgEl("text", { x, y: top + 32, class: "t2" }, n.platform ? shortName(n.platform, 20) : "nespravované"));
+      nodes.appendChild(pill);
+      continue;
+    }
+    const card = g("node" + (n.state === "offline" ? " offline" : ""));
+    card.appendChild(svgEl("title", {}, [n.label, n.model, n.version, n.stp_root ? `STP root, priorita ${n.stp_priority ?? "?"}` : "",
+                                         n.poe_w ? `PoE ${n.poe_w} W` : ""].filter(Boolean).join("\n")));
+    card.appendChild(svgEl("rect", { x: x - NW / 2, y: top, width: NW, height: NH, rx: 10, class: "card" }));
+    card.appendChild(svgEl("circle", { cx: x - NW / 2 + 16, cy: top + 22, r: 5, class: "dot " + (n.state || "") }));
+    card.appendChild(svgEl("text", { x: x - NW / 2 + 28, y: top + 27, class: "title" }, shortName(n.label, 18)));
+    card.appendChild(svgEl("text", { x: x - NW / 2 + 28, y: top + 48, class: "sub" }, shortName(n.model || n.role || "", 20)));
+    card.appendChild(svgEl("text", { x: x + NW / 2 - 12, y: top + 27, class: "stat" }, n.cpu != null ? `${n.cpu} % CPU` : ""));
+    card.appendChild(svgEl("text", { x: x + NW / 2 - 12, y: top + 48, class: "stat" }, n.mem != null ? `${n.mem} % RAM` : ""));
+    if (n.stp_root) {
+      const cr = g("crown");
+      cr.appendChild(svgEl("rect", { x: x - NW / 2 - 50, y: top + 4, width: 44, height: NH - 8, rx: 8 }));
+      cr.appendChild(svgEl("text", { x: x - NW / 2 - 28, y: top + 27, class: "c1" }, "♛"));
+      cr.appendChild(svgEl("text", { x: x - NW / 2 - 28, y: top + 43, class: "c2" }, "STP"));
+      cr.appendChild(svgEl("text", { x: x - NW / 2 - 28, y: top + 55, class: "c2" }, "ROOT"));
+      card.appendChild(cr);
+    }
+    card.addEventListener("click", () => openDetail(n.id));
+    nodes.appendChild(card);
+  }
+  if (!d.nodes.length) svg.appendChild(svgEl("text", { x: 20, y: 40, class: "sub" }, "V lokalitě zatím nejsou spravovaná zařízení s inventurou."));
+}
 
 // --- STP lokality ------------------------------------------------------------------------
 

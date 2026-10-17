@@ -82,11 +82,23 @@
 
     <div class="card">
       <h2>Lokalita <select id="site-sel"></select>
+        <button id="infra-btn" type="button" class="small secondary">Infrastruktura</button>
         <button id="topo-btn" type="button" class="small secondary">Topologie</button>
         <button id="clients-btn" type="button" class="small secondary">Klienti</button>
         <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button>
         <button id="stp-btn" type="button" class="small secondary">STP</button>
         <button id="upg-btn" type="button" class="small secondary">Aktualizace lokality</button></h2>
+      <div id="infra-wrap" hidden class="panel">
+        <h3>Infrastruktura</h3>
+        <div id="infra-warn"></div>
+        <div class="infra-bar">
+          <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
+        </div>
+        <div class="infra">
+          <div id="infra-list" class="infra-list"></div>
+          <div class="infra-canvas"><svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg></div>
+        </div>
+      </div>
       <div id="upg-wrap" hidden class="panel">
         <h3>Postupná aktualizace lokality</h3>
         <p class="muted">Postupně po jednom zařízení: AP a PtP → switche → gateway. Další až po návratu

@@ -1451,6 +1451,182 @@
    "interface": "*",
    "resolution": "5m",
    "points": []
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/infra": {
+   "nodes": [
+    {
+     "id": "gw",
+     "label": "core-gw",
+     "model": "RB5009",
+     "role": "gateway",
+     "state": "adopted",
+     "version": null,
+     "cpu": 19,
+     "mem": 67,
+     "poe_w": 0,
+     "stp_root": false,
+     "stp_priority": null,
+     "ports": [
+      {
+       "name": "ether1",
+       "cls": "gbe"
+      },
+      {
+       "name": "ether2",
+       "cls": "down"
+      },
+      {
+       "name": "ether3",
+       "cls": "gbe"
+      }
+     ],
+     "wans": [
+      {
+       "interface": "ether1",
+       "port": "ether1",
+       "gateway": "81.2.3.1",
+       "address": "81.2.3.4",
+       "distance": "1",
+       "active": true,
+       "dhcp": null,
+       "comment": null
+      },
+      {
+       "interface": "ether2",
+       "port": "ether2",
+       "gateway": "192.168.8.1",
+       "address": "192.168.8.100",
+       "distance": "2",
+       "active": false,
+       "dhcp": "bound",
+       "comment": null
+      }
+     ],
+     "parent": null,
+     "level": 0,
+     "uplink_port": null,
+     "parent_port": null
+    },
+    {
+     "id": "sw",
+     "label": "sw-hala",
+     "model": "CRS328",
+     "role": "switch",
+     "state": "adopted",
+     "version": null,
+     "cpu": 41,
+     "mem": null,
+     "poe_w": 10.3,
+     "stp_root": true,
+     "stp_priority": 28672,
+     "ports": [
+      {
+       "name": "ether1",
+       "cls": "fe"
+      },
+      {
+       "name": "ether24",
+       "cls": "gbe"
+      },
+      {
+       "name": "sfp-sfpplus1",
+       "cls": "down"
+      }
+     ],
+     "wans": [],
+     "parent": "gw",
+     "level": 1,
+     "uplink_port": "ether24",
+     "parent_port": "ether3"
+    },
+    {
+     "id": "ap",
+     "label": "ap-hala",
+     "model": "cAP ax",
+     "role": "ap",
+     "state": "offline",
+     "version": null,
+     "cpu": null,
+     "mem": null,
+     "poe_w": 0,
+     "stp_root": false,
+     "stp_priority": null,
+     "ports": [
+      {
+       "name": "ether1",
+       "cls": "gbe"
+      }
+     ],
+     "wans": [],
+     "parent": "sw",
+     "level": 2,
+     "uplink_port": null,
+     "parent_port": "ether1"
+    },
+    {
+     "id": "lost",
+     "label": "osamely",
+     "model": null,
+     "role": "unknown",
+     "state": "adopted",
+     "version": null,
+     "cpu": null,
+     "mem": null,
+     "poe_w": 0,
+     "stp_root": false,
+     "stp_priority": null,
+     "ports": [
+      {
+       "name": "ether1",
+       "cls": "gbe"
+      }
+     ],
+     "wans": [],
+     "parent": null,
+     "level": 0,
+     "uplink_port": null,
+     "parent_port": null
+    }
+   ],
+   "wans": [
+    {
+     "interface": "ether1",
+     "port": "ether1",
+     "gateway": "81.2.3.1",
+     "address": "81.2.3.4",
+     "distance": "1",
+     "active": true,
+     "dhcp": null,
+     "comment": null,
+     "device_id": "gw"
+    },
+    {
+     "interface": "ether2",
+     "port": "ether2",
+     "gateway": "192.168.8.1",
+     "address": "192.168.8.100",
+     "distance": "2",
+     "active": false,
+     "dhcp": "bound",
+     "comment": null,
+     "device_id": "gw"
+    }
+   ],
+   "externals": [
+    {
+     "parent": "gw",
+     "port": "ether1",
+     "label": "isp-modem",
+     "platform": null,
+     "address": null
+    }
+   ],
+   "warnings": [
+    {
+     "severity": "warning",
+     "text": "ap-hala: offline – spoj k němu je přerušený"
+    }
+   ]
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",
