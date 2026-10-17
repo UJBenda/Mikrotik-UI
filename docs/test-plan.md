@@ -324,7 +324,9 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
 | Zařízení zůstává **provisioning** | `/log print where message~"mtc"` na MikroTiku; `journalctl -u mtc-worker -f` na controlleru |
 | `mtc-sstp` neběží | `/ppp active print` a `/log print where topics~"sstp"` na koncentrátoru; jméno `connect-to` musí sedět s certifikátem (mimo lab režim) |
 | Worker hlásí „otisk certifikátu nesouhlasí" u zařízení | porovnej `/certificate print detail where name=mtc-rest` se sloupcem `api_cert_fingerprint` v DB |
-| REST přes tunel nejde | `ping 10.200.1.x` z controlleru; routa na pool; `/ip service print` (www-ssl zapnuté, adresa controlleru povolená) |
+| `nginx -t` hlásí „Address family not supported“ | server má vypnuté IPv6 – v `/etc/nginx/sites-available/mtcontroller.conf` smaž řádky `listen [::]:…` |
+| Nic nefunguje a nevíš proč | `mtc-admin doctor` – projde konfiguraci, DB, worker, síť i koncentrátory |
+| REST přes tunel nejde | `mtc-admin device-check Lab SERIAL`; `ping 10.200.1.x` z controlleru; routa na pool; `/ip service print` (www-ssl zapnuté, adresa controlleru povolená) |
 | Zařízení se hlásí (UI „naposledy“ se mění), ale příkazy se neprovedou | `/log print where message~"mtc"` – „check-in selhal“; `/file print where name~"mtc"`; pošli mi výpis (možná jiné chování `fetch … as-value` na tvé verzi) |
 | Provisioning `failed` | `/log print where topics~"script"`, ruční zkouška: `/system script run mtc-checkin` v terminálu ukáže chybu s řádkem |
 | Skript selže na `rest-api` politice | starší RouterOS – skript automaticky použije `web`; aktualizuj RouterOS |
