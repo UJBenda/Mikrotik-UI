@@ -271,7 +271,11 @@ _DEVICE_COLS = """d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.
                   (SELECT i.data->>'latest-version' FROM device_inventory i
                     WHERE i.device_id = d.id AND i.section = 'update') AS latest_version,
                   (SELECT i.data->>'channel' FROM device_inventory i
-                    WHERE i.device_id = d.id AND i.section = 'update') AS update_channel"""
+                    WHERE i.device_id = d.id AND i.section = 'update') AS update_channel,
+                  (SELECT count(*) FROM device_inventory i,
+                          jsonb_array_elements(CASE WHEN jsonb_typeof(i.data) = 'array' THEN i.data ELSE '[]' END) f
+                    WHERE i.device_id = d.id AND i.section = 'hardening'
+                      AND f->>'severity' IN ('critical', 'warning')) AS security_issues"""
 
 
 @endpoint(READ)

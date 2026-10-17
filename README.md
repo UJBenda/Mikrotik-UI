@@ -31,6 +31,7 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] `mtc-admin doctor` – kontrola instalace
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
 - [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP
+- [x] Bezpečnostní audit konfigurace zařízení (hardening podle doporučení MikroTiku, kritické nálezy → alert)
 - [x] Porty (rychlost, duplex, SFP, PoE, VLAN, STP role) a STP lokality (root, blokované porty, rizika smyček)
 - [x] Wi-Fi lokality: rádia (wifi i wireless), SSID, kanály, klienti, signál, CAPsMAN AP, varování
 - [x] Alerty (offline, tunel, REST, certifikát, CPU/paměť, porty, zálohy, verze) a notifikace (webhook, Nextcloud Talk, e-mail)

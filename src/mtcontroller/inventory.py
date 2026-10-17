@@ -73,6 +73,21 @@ SECTIONS: list[Section] = [
     Section("stp_ports", "/interface/bridge/port",
             "interface,bridge,role,edge-port,point-to-point-port,forwarding,learning,root-path-cost,"
             "designated-bridge,path-cost,inactive,disabled"),
+    # bezpečnostní audit (hardening.py) – jen nastavení, žádná tajemství
+    Section("ip_services", "/ip/service", "name,port,disabled,address,certificate"),
+    Section("users", "/user", "name,group,disabled,address"),
+    Section("mac_server", "/tool/mac-server", "allowed-interface-list"),
+    Section("mac_winbox", "/tool/mac-server/mac-winbox", "allowed-interface-list"),
+    Section("neighbor_discovery", "/ip/neighbor/discovery-settings", "discover-interface-list,protocol"),
+    Section("dns", "/ip/dns", "allow-remote-requests"),
+    Section("snmp", "/snmp", "enabled"),
+    Section("socks", "/ip/socks", "enabled"),
+    Section("proxy", "/ip/proxy", "enabled"),
+    Section("bw_server", "/tool/bandwidth-server", "enabled,authenticate"),
+    Section("romon", "/tool/romon", "enabled"),
+    Section("fw_filter", "/ip/firewall/filter",
+            "chain,action,disabled,dynamic,in-interface,in-interface-list,src-address,src-address-list,"
+            "connection-state,protocol,dst-port,comment"),
     Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
     Section("capsman_caps_legacy", "/caps-man/remote-cap"),
 ]
@@ -137,6 +152,19 @@ def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     if names:
         _fetch(api, data, errors, "ethernet_monitor", "POST", "/interface/ethernet/monitor",
                body={"numbers": ",".join(names), "once": "true", ".proplist": MONITOR_PROPS})
+    # SNMP komunita je fakticky heslo: do DB jen to, zda je výchozí "public"
+    try:
+        comms = api.request("GET", "/snmp/community", params={".proplist": "name,addresses,disabled"})
+        if isinstance(comms, list):
+            data["snmp_communities"] = [
+                {"is_public": str(c.get("name")) == "public", "disabled": c.get("disabled"),
+                 "open": str(c.get("addresses") or "0.0.0.0/0") in ("0.0.0.0/0", "::/0", "")}
+                for c in comms if isinstance(c, dict)]
+    except PinMismatch:
+        raise
+    except RosApiError as e:
+        if e.status in (401, 403):
+            raise
     stp = [str(b["name"]) for b in data.get("bridges") or []
            if isinstance(b, dict) and b.get("name") and b.get("protocol-mode") not in (None, "", "none")
            and b.get("disabled") != "true"]
@@ -190,11 +218,14 @@ def interface_samples(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], errors: list[str]) -> None:
+    from .hardening import audit as hardening_audit
     from .health import dhcp_pools
 
     if "dhcp_servers" in data:
         # odvozené při uložení: alerty pak nemusí každou minutu číst všechny leases
         data = dict(data, dhcp_usage=dhcp_pools(data))
+    if "ip_services" in data:
+        data = dict(data, hardening=hardening_audit(data))
     with tenant_scope(db, tenant_id) as tx:
         for section, value in data.items():
             tx.execute(

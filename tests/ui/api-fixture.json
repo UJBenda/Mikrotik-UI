@@ -55,7 +55,8 @@
       "source": "https://forum.mikrotik.com/t/7-24-stable-is-released/272381?page=8"
      }
     ],
-    "update_available": true
+    "update_available": true,
+    "security_issues": 6
    },
    {
     "id": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
@@ -77,7 +78,8 @@
     "latest_version": null,
     "update_channel": null,
     "warnings": [],
-    "update_available": false
+    "update_available": false,
+    "security_issues": 6
    }
   ],
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/audit": [
@@ -517,6 +519,68 @@
      "message": "gw: RouterOS 7.24.1 (stable) – Scheduler s výchozím datem/časem startu se nespouští. Controller to obchází explicitním startem, ale doporučena aktualizace.",
      "opened_at": "2026-10-17 17:54:15.660759+00:00",
      "acknowledged_at": null
+    }
+   ],
+   "security": [
+    {
+     "severity": "critical",
+     "code": "no_input_firewall",
+     "text": "veřejná IP 81.2.3.4 (ether1) a input chain nic nezahazuje – router je otevřený z internetu",
+     "fix": "/ip firewall filter add chain=input in-interface-list=!LAN action=drop comment=\"drop all not from LAN\""
+    },
+    {
+     "severity": "critical",
+     "code": "open_resolver",
+     "text": "DNS odpovídá z internetu (otevřený resolver – zneužití k DDoS)",
+     "fix": "/ip dns set allow-remote-requests=no  nebo firewall na input udp/tcp 53 z WAN"
+    },
+    {
+     "severity": "warning",
+     "code": "service_telnet",
+     "text": "Telnet je zapnuté a dostupné odkudkoli – nešifrovaný provoz",
+     "fix": "/ip service set telnet disabled=yes"
+    },
+    {
+     "severity": "warning",
+     "code": "service_ftp",
+     "text": "FTP je zapnuté a dostupné odkudkoli – nešifrovaný provoz",
+     "fix": "/ip service set ftp disabled=yes"
+    },
+    {
+     "severity": "warning",
+     "code": "service_www",
+     "text": "WebFig přes HTTP je zapnuté a dostupné odkudkoli – nešifrovaný provoz",
+     "fix": "/ip service set www disabled=yes"
+    },
+    {
+     "severity": "warning",
+     "code": "service_api",
+     "text": "API (8728) bez TLS je zapnuté a dostupné odkudkoli – nešifrovaný provoz",
+     "fix": "/ip service set api disabled=yes"
+    },
+    {
+     "severity": "info",
+     "code": "service_ssh_open",
+     "text": "ssh není omezené na adresy správy",
+     "fix": "/ip service set ssh address=<síť správy>"
+    },
+    {
+     "severity": "info",
+     "code": "service_winbox_open",
+     "text": "winbox není omezené na adresy správy",
+     "fix": "/ip service set winbox address=<síť správy>"
+    },
+    {
+     "severity": "info",
+     "code": "default_admin",
+     "text": "výchozí uživatel „admin“ existuje – cíl útoků hrubou silou",
+     "fix": "vytvoř vlastní účet ve skupině full, pak /user disable admin"
+    },
+    {
+     "severity": "info",
+     "code": "bw_server",
+     "text": "bandwidth-test server je zapnutý",
+     "fix": "/tool bandwidth-server set enabled=no"
     }
    ]
   },

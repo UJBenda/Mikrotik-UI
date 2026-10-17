@@ -93,6 +93,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             "neighbors": inv.get("neighbors") or [],
             "vlan": analysis.analyze_vlan(inv).as_dict() if inv else None,
             "ntp": analysis.ntp_status(inv) if inv else None,
+            "security": inv.get("hardening") if isinstance(inv.get("hardening"), list) else None,
             "backups": backups, "plans": pl, "commands": cmds, "alerts": dev_alerts,
         }
 

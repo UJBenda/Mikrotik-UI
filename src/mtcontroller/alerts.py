@@ -130,7 +130,7 @@ def conditions(tx: Tx) -> list[Active]:
                       jsonb_object_agg(i.section, i.data) AS inv
                FROM device d JOIN device_inventory i ON i.device_id = d.id
                WHERE d.state = 'adopted'
-                 AND i.section IN ('dhcp_usage', 'ntp_client', 'resource')
+                 AND i.section IN ('dhcp_usage', 'ntp_client', 'resource', 'hardening')
                GROUP BY d.id, d.tenant_id, d.identity, d.serial"""):
         inv = r["inv"] or {}
         for p in inv.get("dhcp_usage") or []:
@@ -138,6 +138,10 @@ def conditions(tx: Tx) -> list[Active]:
                 out.append(Active(r["tenant_id"], r["id"], "dhcp_pool_full", str(p["server"]), "warning",
                                   f"{_label(r)}: DHCP {p['server']} – pool {p['pool']} zaplněn na {p['pct']} % "
                                   f"({p['used']}/{p['size']})"))
+        for f in inv.get("hardening") or []:
+            if isinstance(f, dict) and f.get("severity") == "critical":
+                out.append(Active(r["tenant_id"], r["id"], "security_exposed", str(f.get("code") or ""), "critical",
+                                  f"{_label(r)}: {f.get('text')}"))
         st = health.ntp_unsynced(inv)
         if st:
             out.append(Active(r["tenant_id"], r["id"], "ntp_unsynced", "", "warning",

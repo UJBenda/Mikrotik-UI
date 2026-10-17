@@ -166,7 +166,9 @@ function renderOverview() {
     ["Varování", alertsCache.filter((a) => a.severity === "warning").length, ""],
     ["Dostupná aktualizace", devicesCache.filter((d) => d.update_available).length, ""],
     ["Známé problémy verzí", devicesCache.filter((d) => (d.warnings || []).some((w) => w.severity === "critical")).length, ""],
+    ["Bezpečnostní nálezy", devicesCache.reduce((n, d) => n + (Number(d.security_issues) || 0), 0), ""],
   ];
+  tiles[8][2] = tiles[8][1] ? "warn" : "";
   tiles[4][2] = tiles[4][1] ? "bad" : "";
   tiles[5][2] = tiles[5][1] ? "warn" : "";
   tiles[7][2] = tiles[7][1] ? "bad" : "";
@@ -843,6 +845,15 @@ async function openDetail(id) {
   for (const r of ["unknown", "gateway", "switch", "ap", "ptp"]) { const o = el("option", r); o.value = r; er.appendChild(o); }
   er.value = dev.role || "unknown";
   $("d-edit-note").value = dev.note || "";
+  const sec = $("d-security"); sec.textContent = "";
+  if (!d.security) sec.appendChild(el("li", "Zatím bez inventury", "muted"));
+  else if (!d.security.length) sec.appendChild(el("li", "Bez nálezů ✓", "muted"));
+  for (const f of d.security || []) {
+    const li = el("li", (f.severity === "critical" ? "⚠ " : "") + f.text,
+                  "sev-" + (f.severity === "critical" ? "error" : f.severity));
+    if (f.fix) { li.appendChild(document.createTextNode(" ")); li.appendChild(el("code", f.fix)); }
+    sec.appendChild(li);
+  }
   const da = $("d-alerts"); da.textContent = "";
   for (const a of d.alerts || []) da.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : a.severity)));
   kv($("d-summary"), [

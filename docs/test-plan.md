@@ -204,6 +204,7 @@ Všechno níže je jen čtení, kromě NTP plánu, který se aplikuje až po sch
 
 | Klienti | Lokalita → Klienti | DHCP/ARP/bridge host/wifi klienti; u každého zařízení + port (u wifi AP, SSID, signál), VLAN; port k jinému spravovanému MikroTiku se nepočítá jako poloha klienta |
 | Graf provozu | detail → klik na rozhraní | RX/TX v čase; 6 h/24 h z 5min vzorků, 7 dní a déle hodinové průměry + čárkovaně špičky (první body cca 10 min po adopci) |
+| Bezpečnost konfigurace | detail → Bezpečnost konfigurace; dlaždice Bezpečnostní nálezy | nálezy s návrhem opravy (příkaz RouterOS): telnet/ftp/http/api, výchozí admin, MAC server na všech rozhraních, SNMP public, SOCKS/proxy…; veřejná IP bez filtru na input a otevřený DNS = kritický alert. Controller nic neopravuje sám |
 | Porty | detail → Rozhraní | sloupce Linka (rychlost, half-duplex žlutě, SFP RX výkon), VLAN (PVID · U netagované · T tagované), PoE (stav, W); half-duplex na lince → alert |
 | STP | Lokalita → STP; detail → sloupec STP | root bridge lokality, root port a cena u každého bridge; zablokované porty (alternate) = redundantní cesta; varování: STP vypnuté na bridgi se 2+ linkami ke spravovaným zařízením, root bridge mimo spravovaná zařízení, více rootů |
 | Wi-Fi | Lokalita → Wi-Fi | rádia všech AP (i PtP), SSID, kanál, počet klientů, průměrný/nejslabší signál; u CAPsMAN controlleru připojené AP; varování (neběžící rádio, slabí klienti, 40 MHz ve 2,4 GHz, stejný pevný kanál) |

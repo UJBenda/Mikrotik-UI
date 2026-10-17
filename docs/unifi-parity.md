@@ -80,3 +80,9 @@ a admin dostane přehled „co je zastaralé a proč".
 - [UniFi Remote Management via Site Manager](https://help.ui.com/hc/en-us/articles/20680072882967-UniFi-Remote-Management-via-Site-Manager)
 - [UniFi site management (Blueprints, Drift Inspector, Update Manager, ISP Viewer)](https://www.unihosted.com/blog/unifi-site-management)
 - [UniFi Network Application 8 – Radio Manager, Port Manager, VLAN viewer, Admin Activity](https://virtualizationhowto.com/2023/12/unifi-network-application-8-new-features-and-enhancements)
+
+## Navíc oproti UniFi
+
+- Bezpečnostní audit konfigurace každého zařízení (`hardening.py`): veřejná IP bez filtru na input, otevřený DNS resolver, nešifrované služby, MAC server na WAN, SNMP public, SOCKS/proxy (častý znak kompromitace), výchozí `admin`. Každý nález s návrhem opravy.
+- Release notes filtrované na komponenty, které konkrétní zařízení používá.
+- STP přehled s detekcí rizika smyček.
