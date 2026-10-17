@@ -148,7 +148,8 @@ $("tenant-form").addEventListener("submit", async (ev) => {
 });
 
 async function loadTenant() {
-  await Promise.all([loadSites(), loadDevices(), loadAudit(), loadPlans(), loadAlerts(), loadUsers()]);
+  await loadSites();  // nejdřív lokality – výběr lokality u čekajících zařízení je potřebuje
+  await Promise.all([loadDevices(), loadAudit(), loadPlans(), loadAlerts(), loadUsers()]);
   renderOverview();
   await loadSitePanel();
 }
