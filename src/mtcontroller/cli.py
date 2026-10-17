@@ -13,6 +13,7 @@
   concentrator-check            ověří REST spojení na všechny koncentrátory
   notify-test NAME              pošle zkušební notifikaci na cíl z [[notify]]
   doctor                        zkontroluje instalaci (konfigurace, DB, síť, koncentrátory)
+  device-check TENANT DEVICE    diagnostika REST přes tunel (identita, otisk, porty, aktualizace)
 """
 
 from __future__ import annotations
@@ -143,6 +144,57 @@ def cmd_devices(a) -> int:
     return 0
 
 
+def device_check(db, box, tid: str, ref: str, out=print) -> int:
+    """Diagnostika REST přes tunel: identita, otisk certifikátu, monitor portů, aktualizace."""
+    from . import inventory
+    from .db import tenant_scope
+    from .rosapi import PinMismatch, RosApiError
+    from .services import device_api
+
+    with tenant_scope(db, tid) as tx:
+        dev = tx.fetchone("""SELECT id, serial, state, host(tunnel_ip) AS tunnel_ip, api_cert_fingerprint AS fp
+                             FROM device WHERE id::text = %(r)s OR serial = %(r)s""", {"r": ref})
+        if not dev:
+            raise SystemExit(f"zařízení {ref!r} neexistuje")
+        out(f"{dev['serial']}: stav {dev['state']}, tunel {dev['tunnel_ip'] or '-'}, otisk {dev['fp'] or '-'}")
+        try:
+            api = device_api(tx, box, dev, timeout=15)
+        except Exception as e:  # noqa: BLE001
+            out(f"  [XX] {e}")
+            return 1
+    ok = True
+    checks = [
+        ("identita", lambda: api.get("/system/identity").get("name")),
+        ("verze", lambda: api.get("/system/resource").get("version")),
+        ("ethernet monitor", lambda: ", ".join(
+            f"{m.get('name')}={m.get('rate') or m.get('status')}" for m in (api.post(
+                "/interface/ethernet/monitor",
+                {"numbers": ",".join(e["name"] for e in api.get("/interface/ethernet", **{".proplist": "name"})[:4]),
+                 "once": "true", ".proplist": inventory.MONITOR_PROPS}) or []))),
+        ("aktualizace", lambda: str(api.get("/system/package/update"))),
+    ]
+    try:
+        for name, fn in checks:
+            try:
+                out(f"  [OK] {name}: {fn()}")
+            except PinMismatch:
+                raise
+            except RosApiError as e:
+                ok = False
+                out(f"  [XX] {name}: {e}")
+    except PinMismatch as e:
+        out(f"  [XX] otisk certifikátu: {e}")
+        return 1
+    finally:
+        api.close()
+    return 0 if ok else 1
+
+
+def cmd_device_check(a) -> int:
+    from .security import get_box
+    return device_check(_db(), get_box(), _tenant_id(a.tenant), a.device)
+
+
 def cmd_approve(a) -> int:
     from .security import get_box
     from .services import approve_device
@@ -218,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("concentrator-check").set_defaults(fn=cmd_concentrator_check)
     x = sub.add_parser("notify-test"); x.add_argument("name"); x.set_defaults(fn=cmd_notify_test)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
+    x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")
+    x.set_defaults(fn=cmd_device_check)
     a = p.parse_args(argv)
     try:
         return a.fn(a)

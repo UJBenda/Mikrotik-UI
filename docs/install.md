@@ -55,6 +55,7 @@ Brána je adresa z `api_url`, jinak `route_via` u koncentrátoru.
 
 ```sh
 mtc-admin devices Lab                 # přehled zařízení tenanta
+mtc-admin device-check Lab SERIAL     # REST přes tunel: identita, otisk, porty, aktualizace
 mtc-admin token Lab "Stůl"            # adopční příkaz z CLI
 journalctl -u mtc-web -u mtc-worker -f
 systemd-analyze security mtc-web

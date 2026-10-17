@@ -387,3 +387,48 @@ def test_device_update_site_role_note():
         assert len(a) == 1 and a[0]["after"]["note"] == "rack 2, U14" and a[0]["before"]["role"] == "unknown"
     finally:
         drop_db(name)
+
+
+def test_cli_device_check():
+    from mtcontroller import cli
+    from mtcontroller.rosapi import PinMismatch
+
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+
+        class Api:
+            def __init__(self, pin_fail=False):
+                self.pin_fail, self.closed = pin_fail, False
+
+            def get(self, path, **kw):
+                if self.pin_fail:
+                    raise PinMismatch(None, "otisk nesouhlasí")
+                return {"/system/identity": {"name": "gw"}, "/system/resource": {"version": "7.20.1"},
+                        "/interface/ethernet": [{"name": "ether1"}, {"name": "ether2"}],
+                        "/system/package/update": {"channel": "stable"}}[path]
+
+            def post(self, path, body):
+                assert body["numbers"] == "ether1,ether2" and body["once"] == "true"
+                return [{"name": "ether1", "rate": "1Gbps"}, {"name": "ether2", "status": "no-link"}]
+
+            def close(self):
+                self.closed = True
+
+        orig = services.device_api
+        out = []
+        try:
+            api = Api()
+            services.device_api = lambda tx, b, dev, timeout=10.0: api
+            assert cli.device_check(db, box, tid, "GW1", out=out.append) == 0 and api.closed
+            text = "\n".join(out)
+            assert "[OK] identita: gw" in text and "ether1=1Gbps, ether2=no-link" in text
+            assert "pw-GW1" not in text  # heslo se nikdy nevypíše
+            out.clear()
+            services.device_api = lambda tx, b, dev, timeout=10.0: Api(pin_fail=True)
+            assert cli.device_check(db, box, tid, "GW1", out=out.append) == 1
+            assert "[XX] otisk certifikátu" in "\n".join(out)
+        finally:
+            services.device_api = orig
+    finally:
+        drop_db(name)

@@ -283,17 +283,15 @@ Tyhle věci jsem nemohl vyzkoušet bez skutečného RouterOS. Stačí pustit a p
 výstup (nebo jen „OK“ / „nefunguje: …“). Body 1–4 se týkají toho, co už je hotové,
 body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
 
-1. **Otisk certifikátu REST** (pinning) – na controlleru:
+1. **REST přes tunel** (pinning otisku, monitor portů, kontrola aktualizací) – jedním příkazem:
    ```sh
-   echo | openssl s_client -connect 10.200.1.1:443 2>/dev/null | openssl x509 -noout -fingerprint -sha256
+   mtc-admin device-check Lab <sériové číslo>
    ```
-   a na zařízení `/certificate print detail where name=mtc-rest` – sedí `fingerprint` (bez dvojteček)?
-2. **Monitor portů přes REST** (sloupce Linka/PoE/STP v detailu):
-   ```sh
-   curl -sk -u mtc-ctl:HESLO -X POST https://10.200.1.1/rest/interface/ethernet/monitor \
-     -H 'content-type: application/json' -d '{"numbers":"ether1","once":"true"}'
-   ```
-   (heslo se nikde nezobrazuje – stačí, že v detailu zařízení jsou vyplněné sloupce Linka a STP)
+   Čekáš `[OK]` u identity, verze, ethernet monitoru (rychlosti portů) a aktualizací.
+   Při `[XX] otisk certifikátu` porovnej
+   `echo | openssl s_client -connect 10.200.1.1:443 2>/dev/null | openssl x509 -noout -fingerprint -sha256`
+   s `/certificate print detail where name=mtc-rest` na zařízení a pošli mi oba.
+2. **Detail zařízení v UI** – vyplněné sloupce Linka, VLAN, STP (a PoE u PoE portů).
 3. **Kontrola aktualizací** – v detailu je „Kanál / dostupná“ a u starší verze tlačítko Aktualizovat.
 4. **Release notes** – controller potřebuje odchozí HTTPS na `download.mikrotik.com`:
    `curl -sI https://download.mikrotik.com/routeros/7.20/CHANGELOG | head -1`.
