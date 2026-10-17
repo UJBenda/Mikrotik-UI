@@ -233,6 +233,41 @@ async def metrics(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(READ)
+async def traffic(request: Request, p: Principal, tid: str) -> Response:
+    """Provoz jednoho rozhraní pro graf: do 48 h z 5min vzorků, déle z hodinových agregací."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    hours = _int(request.query_params.get("hours"), 24, 1, 24 * 400)
+    iface = str(request.query_params.get("interface") or "")[:100]
+    if not iface:
+        return _err(400, "chybí parametr interface")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if hours <= 48:
+                rows = tx.fetchall(
+                    """SELECT at, rx_bytes - lag(rx_bytes) OVER w AS drx, tx_bytes - lag(tx_bytes) OVER w AS dtx,
+                              extract(epoch FROM at - lag(at) OVER w)::float AS secs
+                       FROM interface_sample
+                       WHERE device_id = %(d)s AND name = %(i)s
+                         AND at > now() - make_interval(hours => %(h)s) - interval '10 minutes'
+                       WINDOW w AS (ORDER BY at) ORDER BY at""", {"d": did, "i": iface, "h": hours})
+                pts = [{"t": r["at"], "rx": round(r["drx"] * 8 / r["secs"]), "tx": round(r["dtx"] * 8 / r["secs"])}
+                       for r in rows
+                       if r["secs"] and 0 < r["secs"] < 3600 and r["drx"] is not None and r["drx"] >= 0
+                       and r["dtx"] is not None and r["dtx"] >= 0]
+                return {"interface": iface, "resolution": "5m", "points": pts}
+            rows = tx.fetchall(
+                """SELECT hour AS t, rx_bps_avg AS rx, tx_bps_avg AS tx, rx_bps_max AS rx_max, tx_bps_max AS tx_max
+                   FROM interface_hourly WHERE device_id = %(d)s AND name = %(i)s
+                     AND hour > now() - make_interval(hours => %(h)s) ORDER BY hour""",
+                {"d": did, "i": iface, "h": hours})
+            return {"interface": iface, "resolution": "1h", "points": rows}
+
+    return json_response(await run_in_threadpool(q))
+
+
 # --- lokalita: NTP politika, plány, topologie ------------------------------------------
 
 
@@ -452,6 +487,7 @@ def routes() -> list[Route]:
         Route(d + "/backups/{backup_id}/download", backup_download, methods=["GET"]),
         Route(d + "/vlan-migration", vlan_migration, methods=["GET"]),
         Route(d + "/metrics", metrics, methods=["GET"]),
+        Route(d + "/traffic", traffic, methods=["GET"]),
         Route(d + "/release-notes", release_notes, methods=["GET"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),

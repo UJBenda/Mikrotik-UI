@@ -328,3 +328,32 @@ def test_site_wifi_endpoint():
         assert c.get(f"/api/admin/tenants/{other['id']}/sites/{sid}/wifi").json()["radios"] == []
     finally:
         drop_db(name)
+
+
+def test_traffic_endpoint():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        with tenant_scope(db, tid) as tx:
+            for k in range(4):  # 4 vzorky po 5 min, 1 MB/5 min navíc RX, 2 MB TX
+                tx.execute(
+                    """INSERT INTO interface_sample (tenant_id, device_id, at, name, rx_bytes, tx_bytes)
+                       VALUES (%(t)s, %(d)s, now() - make_interval(mins => %(m)s), 'ether1', %(rx)s, %(tx)s)""",
+                    {"t": tid, "d": gw, "m": 140 - 5 * k, "rx": 1_000_000 * k, "tx": 2_000_000 * k})
+            # restart čítačů (záporný rozdíl) se nesmí ukázat jako špička
+            # (vzorky před 2 h – agregace zpracovává jen dokončené hodiny)
+            tx.execute("""INSERT INTO interface_sample (tenant_id, device_id, at, name, rx_bytes, tx_bytes)
+                          VALUES (%(t)s, %(d)s, now() - interval '120 minutes', 'ether1', 5, 5)""",
+                       {"t": tid, "d": gw})
+        c = _login(app)
+        base = f"/api/admin/tenants/{tid}/devices/{gw}/traffic"
+        r = c.get(base + "?interface=ether1&hours=6").json()
+        assert r["resolution"] == "5m" and len(r["points"]) == 3
+        assert all(abs(p["rx"] - 1_000_000 * 8 / 300) < 100 and abs(p["tx"] - 2 * 1_000_000 * 8 / 300) < 100
+                   for p in r["points"])
+        inventory.rollup(db)
+        r = c.get(base + "?interface=ether1&hours=168").json()
+        assert r["resolution"] == "1h" and r["points"] and r["points"][-1]["rx_max"] > 0
+        assert c.get(base).status_code == 400
+    finally:
+        drop_db(name)

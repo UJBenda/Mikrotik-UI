@@ -529,6 +529,64 @@ function renderWifi(w) {
   }
 }
 
+// --- graf provozu rozhraní -------------------------------------------------------------------
+
+let trafficIface = null;
+
+function fmtBps(v) {
+  if (v == null) return "–";
+  const u = [["G", 1e9], ["M", 1e6], ["k", 1e3]];
+  for (const [n, f] of u) if (v >= f) return (v / f).toFixed(v / f >= 100 ? 0 : 1) + ` ${n}b/s`;
+  return `${Math.round(v)} b/s`;
+}
+
+async function showTraffic(devId, name) {
+  trafficIface = name;
+  const hours = $("d-traffic-range").value || "24";
+  let r;
+  try {
+    r = await api("GET", `/tenants/${tenantId}/devices/${devId}/traffic?interface=${encodeURIComponent(name)}&hours=${hours}`);
+  } catch (e) { return msg(e.message, true); }
+  if (detailId !== devId || trafficIface !== name) return;
+  $("d-traffic").hidden = false;
+  $("d-traffic-h").textContent = `Provoz ${name} `;
+  drawTraffic(r);
+}
+
+$("d-traffic-range").addEventListener("change", () => { if (detailId && trafficIface) showTraffic(detailId, trafficIface); });
+
+function drawTraffic(r) {
+  const svg = $("d-traffic-svg"); svg.textContent = "";
+  const pts = r.points || [];
+  const W = 800, H = 220, L = 60, R = 10, T = 10, B = 25;
+  if (pts.length < 2) {
+    svg.appendChild(svgEl("text", { x: W / 2 - 120, y: H / 2 }, "Zatím málo dat (vzorek každých 5 min)"));
+    $("d-traffic-info").textContent = "";
+    return;
+  }
+  const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime();
+  const peak = (p) => Math.max(p.rx || 0, p.tx || 0, p.rx_max || 0, p.tx_max || 0);
+  const max = Math.max(1, ...pts.map(peak));
+  const x = (t) => L + (W - L - R) * (t1 > t0 ? (new Date(t).getTime() - t0) / (t1 - t0) : 0);
+  const y = (v) => T + (H - T - B) * (1 - (v || 0) / max);
+  for (const f of [0, 0.5, 1]) {
+    svg.appendChild(svgEl("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f) }));
+    svg.appendChild(svgEl("text", { x: 2, y: y(max * f) + 4 }, fmtBps(max * f)));
+  }
+  const line = (key, cls) => {
+    const p = pts.filter((q) => q[key] != null).map((q) => `${x(q.t).toFixed(1)},${y(q[key]).toFixed(1)}`).join(" ");
+    if (p) svg.appendChild(svgEl("polyline", { points: p, class: cls }));
+  };
+  if (r.resolution === "1h") { line("rx_max", "rx max"); line("tx_max", "tx max"); }
+  line("rx", "rx"); line("tx", "tx");
+  const fmtT = (t) => new Date(t).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+  svg.appendChild(svgEl("text", { x: L, y: H - 6 }, fmtT(pts[0].t)));
+  svg.appendChild(svgEl("text", { x: W - R - 90, y: H - 6 }, fmtT(pts[pts.length - 1].t)));
+  const last = pts[pts.length - 1];
+  $("d-traffic-info").textContent = `RX (modře) ${fmtBps(last.rx)}, TX (oranžově) ${fmtBps(last.tx)} · špička ${fmtBps(max)}` +
+    (r.resolution === "1h" ? " · hodinové průměry, čárkovaně špičky" : " · 5min vzorky");
+}
+
 // --- release notes ------------------------------------------------------------------------
 
 async function loadReleaseNotes(id) {
@@ -655,8 +713,12 @@ async function openDetail(id) {
   }
   // rozhraní a sousedé
   const it = $("d-ifaces"); it.textContent = "";
+  $("d-traffic").hidden = true;
   for (const i of d.interfaces) {
     const tr = el("tr");
+    tr.className = "clickable";
+    tr.title = "Graf provozu";
+    tr.addEventListener("click", () => showTraffic(id, i.name));
     const p = i.port || {};
     let link = "";
     if (p.rate) link = p.rate + (p.full_duplex === false ? " half-duplex" : "");

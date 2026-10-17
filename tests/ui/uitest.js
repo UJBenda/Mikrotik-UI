@@ -93,6 +93,10 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
+    await byId["d-ifaces"].children[0].fire("click");
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    const lines = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;
+    if (byId["d-traffic"].hidden || lines !== 2) errors.push("graf provozu: čekány 2 křivky, je " + lines);
     const diffBtn = byId["d-backups"].children[0].children[4].children[0];
     if (diffBtn && diffBtn.onclick) await diffBtn.onclick();
     const diffShown = !byId["d-diff"].hidden;

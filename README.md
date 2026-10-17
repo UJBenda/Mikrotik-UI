@@ -20,7 +20,7 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] SSTP tunel na každé zařízení, účty na koncentrátoru přes REST s pinningem certifikátu
 - [x] Ověření adopce přes REST v tunelu, offline detekce, failover mezi koncentrátory
 - [x] Generátor konfigurace koncentrátoru (`mtc-admin concentrator-script`)
-- [x] Inventura přes REST (jen čtení), metriky rozhraní (5 min / hodinové agregace)
+- [x] Inventura přes REST (jen čtení), metriky rozhraní (5 min / hodinové agregace), grafy provozu v UI
 - [x] Zálohy konfigurace (šifrovaně), drift, diff se skrytými hesly
 - [x] Analýza VLAN/bridge proti cílovému modelu + náhled migrace
 - [x] Modul NTP s plány změn (observe/manage, schválení, zneplatnění)
