@@ -115,6 +115,7 @@ async function startApp() {
   who.append(pw, " ");
   who.appendChild(out);
   $("tenant-form").hidden = !me.superadmin;
+  if (me.superadmin) loadSystem();
   await loadTenants();
 }
 
@@ -561,6 +562,34 @@ function renderWifi(w) {
     ct.appendChild(tr);
   }
 }
+
+// --- stav systému (superadmin) -------------------------------------------------------------
+
+async function loadSystem() {
+  let s;
+  try { s = await api("GET", "/system"); } catch (e) { return; }
+  $("system-card").hidden = false;
+  const w = s.worker;
+  const wtxt = !w ? "worker zatím nezapsal stav – běží? (systemctl status mtc-worker)"
+    : w.stale ? `worker NEBĚŽÍ – poslední kolo před ${Math.round(w.age_seconds / 60)} min (journalctl -u mtc-worker)`
+    : `worker běží (kolo ${w.tick}, před ${w.age_seconds} s)`;
+  const dev = Object.entries(s.devices || {}).map(([k, v]) => `${k} ${v}`).join(", ") || "žádná";
+  const p = $("system-summary"); p.textContent = "";
+  p.append(el("span", wtxt, !w || w.stale ? "sev-error" : ""),
+           ` · zařízení: ${dev} · fronta příkazů: ${(s.commands.queued || 0)} čeká, ${(s.commands.sent || 0)} odesláno` +
+           ` · otevřené alerty: ${Object.values(s.alerts || {}).reduce((a, b) => a + b, 0)}` +
+           ` · DB ${(s.db_bytes / 1048576).toFixed(1)} MB · verze ${s.version}`);
+  const tb = $("system-steps"); tb.textContent = "";
+  for (const [name, st] of Object.entries((w && w.steps) || {})) {
+    const tr = el("tr");
+    tr.append(el("td", name), el("td", `${st.ms} ms`),
+              el("td", st.error ? st.error : (st.result === null || st.result === undefined ? "ok" : String(st.result)),
+                 st.error ? "sev-error" : ""));
+    tb.appendChild(tr);
+  }
+}
+
+$("system-refresh").addEventListener("click", () => loadSystem());
 
 // --- uživatelé tenanta a vlastní heslo -----------------------------------------------------
 

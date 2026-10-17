@@ -207,6 +207,43 @@ async def tenant_user(request: Request, p: Principal, tid: str) -> Response:
     return json_response({"ok": True})
 
 
+@endpoint(None)
+async def system_status(request: Request, p: Principal, _t) -> Response:
+    """Stav controlleru pro superadmina: worker (heartbeat), fronty, alerty, verze."""
+    from .. import heartbeat
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+
+    def q():
+        with operator_scope(st.db) as tx:
+            states = {r["state"]: r["n"] for r in tx.fetchall(
+                "SELECT state::text AS state, count(*) AS n FROM device GROUP BY state")}
+            cmds = {r["status"]: r["n"] for r in tx.fetchall(
+                """SELECT status::text AS status, count(*) AS n FROM device_command
+                   WHERE status IN ('queued', 'sent') GROUP BY status""")}
+            alerts_ = {r["severity"]: r["n"] for r in tx.fetchall(
+                """SELECT severity::text AS severity, count(*) AS n FROM alert
+                   WHERE resolved_at IS NULL GROUP BY severity""")}
+            misc = tx.fetchone(
+                """SELECT (SELECT count(*) FROM tenant) AS tenants,
+                          (SELECT count(*) FROM upgrade_job WHERE status = 'running') AS upgrade_jobs,
+                          (SELECT count(*) FROM ros_release) AS changelogs,
+                          pg_database_size(current_database()) AS db_bytes""")
+        return {"worker": heartbeat.read(st.settings.paths.data_dir), "devices": states, "commands": cmds,
+                "alerts": alerts_, **misc, "version": _app_version()}
+
+    return json_response(await run_in_threadpool(q))
+
+
+def _app_version() -> str:
+    try:
+        return (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip()
+    except OSError:
+        return "dev"
+
+
 # --- tenanti a lokality -----------------------------------------------------------
 
 
@@ -367,6 +404,7 @@ def routes() -> list[Route]:
         Route("/api/admin/logout", logout, methods=["POST"]),
         Route("/api/admin/me", me, methods=["GET"]),
         Route("/api/admin/me/password", my_password, methods=["POST"]),
+        Route("/api/admin/system", system_status, methods=["GET"]),
         Route("/api/admin/users/{user_id}/reset-mfa", user_mfa_reset, methods=["POST"]),
         Route(t + "/users", tenant_users, methods=["GET", "POST"]),
         Route(t + "/users/{user_id}", tenant_user, methods=["PATCH", "DELETE"]),

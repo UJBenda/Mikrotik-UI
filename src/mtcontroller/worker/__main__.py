@@ -13,6 +13,7 @@ Každých 10 min:
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 import time
@@ -222,10 +223,12 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
-    from .. import alerts, inventory, notify, releases, routes, upgrades
+    from .. import alerts, heartbeat, inventory, notify, releases, routes, upgrades
 
     # -inf: monotonic() počítá od startu systému, 0.0 by po čerstvém bootu oddálilo první běh
     last_reconcile = last_rollup = last_releases = float("-inf")
+    steps: dict[str, dict] = {}
+    tick, started = 0, time.time()
     log.info("worker běží (%d koncentrátorů)", len(providers))
     while not stop.is_set():
         # každý krok zvlášť: chyba jednoho (např. nedostupný koncentrátor) nesmí zastavit ostatní
@@ -239,10 +242,23 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                            ("alerts", lambda: alerts.reconcile(db)),
                            ("notify", lambda: notify.deliver(db, settings)),
                            ("routes", lambda: settings.tunnel.manage_routes and routes.sync(settings, providers))):
+            t0 = time.monotonic()
             try:
-                step()
-            except Exception:
+                res = step()
+                steps[name] = {"ms": round((time.monotonic() - t0) * 1000), "result": res if isinstance(res, (int, bool)) else None,
+                               "error": None}
+            except Exception as e:
                 log.exception("krok %s selhal", name)
+                steps[name] = {"ms": round((time.monotonic() - t0) * 1000), "result": None,
+                               "error": f"{type(e).__name__}: {e}"[:300], "error_at": time.time()}
+        tick += 1
+        try:
+            heartbeat.write(settings.paths.data_dir, {
+                "at_epoch": time.time(), "started_epoch": started, "tick": tick, "pid": os.getpid(),
+                "concentrators": [p.name for p in providers], "manage_routes": settings.tunnel.manage_routes,
+                "steps": steps})
+        except OSError as e:
+            log.warning("stav workeru nejde zapsat: %s", e)
         now = time.monotonic()
         if now - last_rollup > 300:
             try:

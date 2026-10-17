@@ -219,10 +219,24 @@ def check_files(s: Settings) -> list[Check]:
     return [Check(WARN, "config.toml", problem)] if problem else []
 
 
+def check_worker(s: Settings) -> list[Check]:
+    from . import heartbeat
+
+    st = heartbeat.read(s.paths.data_dir)
+    if st is None:
+        return [Check(WARN, "worker", "stav workeru zatím neexistuje – systemctl status mtc-worker")]
+    if st["stale"]:
+        return [Check(FAIL, "worker", f"poslední kolo před {st['age_seconds']} s – journalctl -u mtc-worker")]
+    errs = [f"{k}: {v['error']}" for k, v in (st.get("steps") or {}).items() if v.get("error")]
+    if errs:
+        return [Check(WARN, "worker", "běží, ale kroky hlásí chyby: " + "; ".join(errs)[:400])]
+    return [Check(OK, "worker", f"běží (kolo {st.get('tick')}, před {st['age_seconds']} s)")]
+
+
 def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     checks: list[Check] = []
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
-               lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s),
+               lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s), lambda: check_worker(s),
                lambda: check_concentrators(s, providers), lambda: check_notify(s)):
         try:
             checks.extend(fn())
