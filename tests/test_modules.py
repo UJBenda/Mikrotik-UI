@@ -353,7 +353,10 @@ def test_traffic_endpoint():
                    for p in r["points"])
         inventory.rollup(db)
         r = c.get(base + "?interface=ether1&hours=168").json()
-        assert r["resolution"] == "1h" and r["points"] and r["points"][-1]["rx_max"] > 0
+        # vzorky můžou ležet přes hranici hodiny – špička musí být aspoň v jedné hodině,
+        # hodina jen s restartem čítačů nesmí mít nesmyslnou hodnotu
+        assert r["resolution"] == "1h" and any((p["rx_max"] or 0) > 0 for p in r["points"])
+        assert all(p["rx_max"] is None or p["rx_max"] < 10**9 for p in r["points"])
         assert c.get(base).status_code == 400
     finally:
         drop_db(name)
