@@ -72,6 +72,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
     if (visible.join() !== "app") errors.push("po bootu je vidět " + visible.join());
     const devRows = byId["devices"].children.length;
+    if (byId["users-card"].hidden || byId["users"].children.length !== 2) errors.push("uživatelé: čekány 2 řádky");
     const tiles = byId["overview"].children.length;
     if (tiles < 7) errors.push("přehled: čekáno aspoň 7 dlaždic, je " + tiles);
     if (byId["overview"].children[0].textContent !== "2Online") errors.push("přehled: " + byId["overview"].children[0].textContent);

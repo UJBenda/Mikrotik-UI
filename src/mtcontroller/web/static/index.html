@@ -145,6 +145,27 @@
       </table>
     </div>
 
+    <div class="card" id="users-card" hidden>
+      <h2>Uživatelé tenanta</h2>
+      <table><thead><tr><th>E-mail</th><th>Role</th><th>MFA</th><th>Poslední přihlášení</th><th></th></tr></thead>
+        <tbody id="users"></tbody></table>
+      <form id="user-form" class="inline">
+        <input name="email" type="email" placeholder="e-mail" required>
+        <select name="role" id="user-role"></select>
+        <button>Přidat</button>
+      </form>
+      <p id="user-temp" class="warn" hidden></p>
+    </div>
+
+    <div class="card" id="pw-card" hidden>
+      <h2>Změna hesla</h2>
+      <form id="pw-form" class="inline">
+        <input name="old" type="password" placeholder="současné heslo" autocomplete="current-password" required>
+        <input name="new" type="password" placeholder="nové heslo (min. 12 znaků)" minlength="12" autocomplete="new-password" required>
+        <button>Změnit</button>
+      </form>
+    </div>
+
     <div class="card">
       <h2>Audit</h2>
       <table>

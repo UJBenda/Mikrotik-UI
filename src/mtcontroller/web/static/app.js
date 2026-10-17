@@ -110,6 +110,9 @@ async function startApp() {
   who.appendChild(el("span", me.email + (me.superadmin ? " (superadmin) " : " ")));
   const out = el("button", "Odhlásit", "small secondary");
   out.onclick = async () => { await api("POST", "/logout").catch(() => {}); location.reload(); };
+  const pw = el("button", "Heslo", "small secondary");
+  pw.onclick = () => { $("pw-card").hidden = !$("pw-card").hidden; };
+  who.append(pw, " ");
   who.appendChild(out);
   $("tenant-form").hidden = !me.superadmin;
   await loadTenants();
@@ -144,7 +147,7 @@ $("tenant-form").addEventListener("submit", async (ev) => {
 });
 
 async function loadTenant() {
-  await Promise.all([loadSites(), loadDevices(), loadAudit(), loadPlans(), loadAlerts()]);
+  await Promise.all([loadSites(), loadDevices(), loadAudit(), loadPlans(), loadAlerts(), loadUsers()]);
   renderOverview();
   await loadSitePanel();
 }
@@ -556,6 +559,85 @@ function renderWifi(w) {
     ct.appendChild(tr);
   }
 }
+
+// --- uživatelé tenanta a vlastní heslo -----------------------------------------------------
+
+const ROLE_LABEL = { tenant_admin: "správce", technician: "technik", readonly: "jen čtení" };
+
+function canManage() {
+  return me && (me.superadmin || (me.tenants || {})[tenantId] === "tenant_admin");
+}
+
+async function loadUsers() {
+  $("users-card").hidden = !canManage();
+  if (!canManage()) return;
+  const rs = $("user-role");
+  if (!rs.children.length) for (const [r, l] of Object.entries(ROLE_LABEL)) { const o = el("option", l); o.value = r; rs.appendChild(o); }
+  rs.value = "technician";
+  let list;
+  try { list = await api("GET", `/tenants/${tenantId}/users`); } catch (e) { return msg(e.message, true); }
+  const tb = $("users"); tb.textContent = "";
+  for (const u of list) {
+    const tr = el("tr");
+    const sel = el("select");
+    for (const [r, l] of Object.entries(ROLE_LABEL)) { const o = el("option", l); o.value = r; sel.appendChild(o); }
+    sel.value = u.role;
+    const self = u.email === me.email;
+    sel.disabled = self;
+    sel.addEventListener("change", async () => {
+      try { await api("PATCH", `/tenants/${tenantId}/users/${u.id}`, { role: sel.value }); msg("Role změněna"); }
+      catch (e) { msg(e.message, true); loadUsers(); }
+    });
+    const act = el("td");
+    if (!self) {
+      const b = el("button", "Odebrat", "small danger");
+      b.onclick = async () => {
+        if (!confirm(`Odebrat ${u.email} z tenanta?`)) return;
+        try { await api("DELETE", `/tenants/${tenantId}/users/${u.id}`); loadUsers(); } catch (e) { msg(e.message, true); }
+      };
+      act.appendChild(b);
+    }
+    if (me.superadmin && u.mfa) {
+      const b = el("button", "Reset MFA", "small secondary");
+      b.onclick = async () => {
+        if (!confirm(`Resetovat MFA pro ${u.email}? Při dalším přihlášení si ho nastaví znovu.`)) return;
+        try { await api("POST", `/users/${u.id}/reset-mfa`); loadUsers(); } catch (e) { msg(e.message, true); }
+      };
+      act.append(" ", b);
+    }
+    const td = el("td"); td.appendChild(sel);
+    tr.append(el("td", u.email + (u.locked ? " (zamčeno)" : "") + (u.is_active ? "" : " (neaktivní)")), td,
+              el("td", u.mfa ? "ano" : "zatím ne"), el("td", fmtTime(u.last_login)), act);
+    tb.appendChild(tr);
+  }
+}
+
+$("user-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/users`, { email: f.get("email"), role: f.get("role") });
+    const t = $("user-temp");
+    t.hidden = !r.temp_password;
+    t.textContent = r.temp_password
+      ? `Nový účet ${r.email}: dočasné heslo ${r.temp_password} – předej ho bezpečně, zobrazí se jen teď. MFA si nastaví při prvním přihlášení.`
+      : "";
+    if (!r.temp_password) msg(`${r.email} přidán do tenanta`);
+    ev.target.reset();
+    loadUsers();
+  } catch (e) { msg(e.message, true); }
+});
+
+$("pw-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  try {
+    await api("POST", "/me/password", { old: f.get("old"), new: f.get("new") });
+    msg("Heslo změněno, ostatní relace odhlášeny");
+    ev.target.reset();
+    $("pw-card").hidden = true;
+  } catch (e) { msg(e.message, true); }
+});
 
 // --- graf provozu rozhraní -------------------------------------------------------------------
 

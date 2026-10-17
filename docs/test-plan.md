@@ -173,6 +173,8 @@ Stejně adoptuj druhý testovací MikroTik.
 | Použitý adopční token | vlož stejný příkaz podruhé | fetch selže (404) |
 | Zámek účtu | 5× špatné heslo | další pokusy odmítnuty 15 min |
 | Audit | UI → Audit | registrace, schválení, adopce, přihlášení |
+| Uživatelé | UI → Uživatelé tenanta → přidat technika | nový účet dostane dočasné heslo (jen jednou), po přihlášení musí nastavit MFA; technik nevidí správu uživatelů; sám sebe nikdo neodebere |
+| Změna hesla | tlačítko Heslo nahoře | vyžaduje současné heslo, ostatní relace se odhlásí |
 
 ## 7. Příkazy
 

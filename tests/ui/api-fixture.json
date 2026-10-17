@@ -1221,7 +1221,27 @@
      ]
     }
    ]
-  }
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/users": [
+   {
+    "id": "u1",
+    "email": "admin@example.cz",
+    "is_active": true,
+    "role": "tenant_admin",
+    "mfa": true,
+    "locked": false,
+    "last_login": "2026-10-17T19:00:00+00:00"
+   },
+   {
+    "id": "u2",
+    "email": "technik@firma.cz",
+    "is_active": true,
+    "role": "technician",
+    "mfa": false,
+    "locked": true,
+    "last_login": null
+   }
+  ]
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",
  "gw": "06813aef-ac70-438a-a7d6-7859862f16ed",

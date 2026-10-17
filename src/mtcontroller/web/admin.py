@@ -157,6 +157,56 @@ async def me(request: Request, p: Principal, _t) -> Response:
                           "superadmin": p.superadmin, "tenants": p.tenant_roles})
 
 
+@endpoint(None)
+async def my_password(request: Request, p: Principal, _t) -> Response:
+    from .. import users
+
+    if _rate_limited(f"pw:{p.user_id}"):
+        return _err(429, "příliš mnoho pokusů, zkus to za minutu")
+    data = await _json(request)
+    await run_in_threadpool(users.change_password, get_state(request).db, p, str(data.get("old", "")),
+                            str(data.get("new", "")), client_ip(request))
+    return json_response({"ok": True})
+
+
+@endpoint(None)
+async def user_mfa_reset(request: Request, p: Principal, _t) -> Response:
+    from .. import users
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    uid = str(_uuid(request.path_params["user_id"]))
+    await run_in_threadpool(users.reset_mfa, get_state(request).db, uid, p, client_ip(request))
+    return json_response({"ok": True})
+
+
+@endpoint(MANAGE)
+async def tenant_users(request: Request, p: Principal, tid: str) -> Response:
+    from .. import users
+
+    st = get_state(request)
+    if request.method == "POST":
+        data = await _json(request)
+        res = await run_in_threadpool(users.add_user, st.db, tid, str(data.get("email", "")),
+                                      str(data.get("role", "")), p, client_ip(request))
+        return json_response(res, 201)
+    return json_response(await run_in_threadpool(users.list_users, st.db, tid))
+
+
+@endpoint(MANAGE)
+async def tenant_user(request: Request, p: Principal, tid: str) -> Response:
+    from .. import users
+
+    st = get_state(request)
+    uid = str(_uuid(request.path_params["user_id"]))
+    if request.method == "DELETE":
+        await run_in_threadpool(users.remove_user, st.db, tid, uid, p, client_ip(request))
+    else:
+        data = await _json(request)
+        await run_in_threadpool(users.set_role, st.db, tid, uid, str(data.get("role", "")), p, client_ip(request))
+    return json_response({"ok": True})
+
+
 # --- tenanti a lokality -----------------------------------------------------------
 
 
@@ -312,6 +362,10 @@ def routes() -> list[Route]:
         Route("/api/admin/login", login, methods=["POST"]),
         Route("/api/admin/logout", logout, methods=["POST"]),
         Route("/api/admin/me", me, methods=["GET"]),
+        Route("/api/admin/me/password", my_password, methods=["POST"]),
+        Route("/api/admin/users/{user_id}/reset-mfa", user_mfa_reset, methods=["POST"]),
+        Route(t + "/users", tenant_users, methods=["GET", "POST"]),
+        Route(t + "/users/{user_id}", tenant_user, methods=["PATCH", "DELETE"]),
         Route("/api/admin/mfa/setup", mfa_setup, methods=["POST"]),
         Route("/api/admin/mfa/verify", mfa_verify, methods=["POST"]),
         Route("/api/admin/tenants", tenants, methods=["GET", "POST"]),

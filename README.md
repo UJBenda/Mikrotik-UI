@@ -14,7 +14,7 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 
 - [x] Instalace na Debian 13 jen z apt (`deploy/install.sh`), systemd sandbox, nginx
 - [x] Multi-tenant datový model, row-level security, append-only audit
-- [x] Admin UI + API: přihlášení, povinné TOTP MFA, zamykání účtu, CSRF, role per tenant
+- [x] Admin UI + API: přihlášení, povinné TOTP MFA, zamykání účtu, CSRF, role per tenant, správa uživatelů, změna hesla, reset MFA
 - [x] Adopce jedním řádkem v terminálu MikroTiku, schválení v UI
 - [x] Check-in přes HTTPS, fronta příkazů s potvrzením (provisioning, restart, odebrání)
 - [x] SSTP tunel na každé zařízení, účty na koncentrátoru přes REST s pinningem certifikátu
