@@ -135,6 +135,10 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const lines = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;
     if (byId["d-traffic"].hidden || lines !== 2) errors.push("graf provozu: čekány 2 křivky, je " + lines);
     if (byId["tr-scope"].children[1].disabled) errors.push("graf: po kliknutí na port má jít přepnout na port");
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    if (byId["port-edit"].hidden) errors.push("editor portu se neotevřel");
+    const pe = JSON.stringify(byId["port-edit"].textContent);
+    if (!pe.includes("Povolit správu portů") || !pe.includes("Použít")) errors.push("editor portu: chybí akce " + pe.slice(0, 120));
     await byId["tr-range"].children[2].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const l7 = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;

@@ -947,6 +947,110 @@ function fmtVal(v) {
 function selectPortTraffic(name) {
   trafficState.lastPort = name;
   showTraffic(detailId, name);
+  loadPortEditor(name);
+}
+
+// --- editor portu (změny s automatickým návratem) ---------------------------------------------
+
+async function loadPortEditor(port) {
+  const box = $("port-edit");
+  let st;
+  try { st = await api("GET", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(port)}`); }
+  catch (e) { box.hidden = true; return; }
+  box.hidden = false; box.textContent = "";
+  const head = el("div", null, "pe-head");
+  head.append(el("b", `Port ${st.port}`), el("span", st.comment ? ` – ${st.comment}` : "", "muted"));
+  if (st.uplink) head.appendChild(el("span", "uplink – změna může odpojit zařízení (vrátí se samo)", "badge warnb"));
+  const close = el("button", "×", "small secondary pe-close"); close.type = "button";
+  close.onclick = () => { box.hidden = true; };
+  head.appendChild(close);
+  box.appendChild(head);
+  if (st.module_mode !== "manage") {
+    const b = el("div", null, "banner info");
+    b.appendChild(document.createTextNode("Správa portů je na tomto zařízení vypnutá (jen sleduje). "));
+    const en = el("button", "Povolit správu portů", "small"); en.type = "button";
+    en.onclick = async () => {
+      if (!confirm("Povolit controlleru měnit porty tohoto zařízení? Každá změna se aplikuje s automatickým návratem.")) return;
+      try { await api("POST", `/tenants/${tenantId}/devices/${detailId}/modules`, { module: "ports", mode: "manage" }); loadPortEditor(port); }
+      catch (e) { msg(e.message, true); }
+    };
+    b.appendChild(en);
+    box.appendChild(b);
+  }
+  const f = el("div", null, "pe-grid");
+  const field = (label, input) => { const l = el("label", null, "pe-field"); l.append(el("span", label), input); f.appendChild(l); return input; };
+  const enabled = el("input"); enabled.type = "checkbox"; enabled.checked = !st.disabled;
+  field("Zapnutý", enabled);
+  const comment = el("input"); comment.maxLength = 80; comment.value = st.comment || ""; comment.placeholder = "např. kamera vjezd";
+  field("Popis", comment);
+  let poe = null;
+  if (st.poe !== null) {
+    poe = el("select");
+    for (const [v, l] of [["auto-on", "auto"], ["forced-on", "vždy zapnuto"], ["off", "vypnuto"]]) { const o = el("option", l); o.value = v; poe.appendChild(o); }
+    poe.value = st.poe;
+    field("PoE", poe);
+  }
+  let pvid = null, edge = null, tagBox = null, addVlan = null;
+  const tagChecks = [];
+  if (st.bridge) {
+    pvid = el("input"); pvid.type = "number"; pvid.min = 1; pvid.max = 4094; pvid.value = st.pvid || 1;
+    field("Native VLAN (PVID)", pvid);
+    edge = el("select");
+    for (const [v, l] of [["auto", "auto"], ["yes", "ano (koncové zařízení)"], ["no", "ne"]]) { const o = el("option", l); o.value = v; edge.appendChild(o); }
+    edge.value = st.edge || "auto";
+    field("STP edge", edge);
+    tagBox = el("div", null, "pe-tags");
+    const all = [...new Set([...(st.known_vlans || []), ...(st.tagged || [])])].sort((a, b) => a - b);
+    for (const v of all) {
+      const l = el("label", null, "check"); const c = el("input"); c.type = "checkbox"; c.value = v;
+      c.checked = (st.tagged || []).includes(v);
+      tagChecks.push(c);
+      l.append(c, document.createTextNode(` ${v}`)); tagBox.appendChild(l);
+    }
+    addVlan = el("input"); addVlan.placeholder = "další VLAN, např. 50,60"; addVlan.size = 14;
+    tagBox.appendChild(addVlan);
+    field("Tagované VLAN", tagBox);
+    if ((st.tagged_locked || []).length)
+      f.appendChild(el("p", `Řádky VLAN ${st.tagged_locked.join("; ")} obsahují víc ID – ty upravuj v RouterOS.`, "muted"));
+    if (!st.vlan_filtering) f.appendChild(el("p", "Bridge nemá zapnuté vlan-filtering – PVID a tagování se zatím neuplatní.", "sev-warning"));
+  }
+  box.appendChild(f);
+  const desired = () => {
+    const d = { disabled: !enabled.checked, comment: comment.value };
+    if (poe) d.poe = poe.value;
+    if (pvid) d.pvid = Number(pvid.value);
+    if (edge) d.edge = edge.value;
+    if (tagBox) {
+      const t = tagChecks.filter((c) => c.checked).map((c) => c.value);
+      for (const v of String(addVlan.value || "").split(/[ ,;]+/)) if (v) t.push(v);
+      d.tagged = t;
+    }
+    return d;
+  };
+  const send = async (apply) => {
+    try {
+      const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(port)}/plan`, { desired: desired(), apply });
+      msg(apply ? `Odesláno: ${r.summary}. Zařízení změnu provede do minuty; když se do 5 min neozve, samo ji vrátí.`
+                : `Plán uložen: ${r.summary} (čeká na schválení v Plánech změn)`);
+      for (const w of r.warnings || []) msg(w, true);
+      loadPlans();
+    } catch (e) { msg(e.message, true); }
+  };
+  const acts = el("div", null, "pe-acts");
+  const go = el("button", "Použít (s automatickým návratem)", "small"); go.type = "button";
+  go.onclick = () => { if (confirm("Použít změnu portu? Když se zařízení po změně do 5 minut neozve, vrátí ji samo.")) send(true); };
+  const save = el("button", "Uložit jako plán", "small secondary"); save.type = "button"; save.onclick = () => send(false);
+  acts.append(go, save);
+  if (st.poe && st.poe !== "off") {
+    const pc = el("button", "Restart PoE (power-cycle)", "small secondary"); pc.type = "button";
+    pc.onclick = async () => {
+      if (!confirm(`Vypnout a zapnout napájení na ${port} (zařízení na portu se restartuje)?`)) return;
+      try { await api("POST", `/tenants/${tenantId}/devices/${detailId}/commands`, { kind: "poe_cycle", port }); msg("Power-cycle naplánován"); }
+      catch (e) { msg(e.message, true); }
+    };
+    acts.appendChild(pc);
+  }
+  box.appendChild(acts);
 }
 
 async function showTraffic(devId, name) {
@@ -1383,7 +1487,7 @@ async function openDetail(id) {
   for (const [mod, mode] of Object.entries(d.modules)) {
     const tr = el("tr"); tr.appendChild(el("th", mod));
     const td = el("td", mode === "manage" ? "spravuje " : "jen sleduje ");
-    if (mod === "ntp") {
+    if (mod === "ntp" || mod === "ports") {
       const b = el("button", mode === "manage" ? "Přepnout na sledování" : "Povolit správu", "small secondary");
       b.onclick = async () => {
         const to = mode === "manage" ? "observe" : "manage";
@@ -1411,6 +1515,7 @@ async function openDetail(id) {
   }
   // rozhraní a sousedé
   trafficState.iface = "*"; trafficState.lastPort = null; trafficData = null;
+  $("port-edit").hidden = true;
   renderPorts(id, d);
   showTraffic(id, "*");
   const it = $("d-ifaces"); it.textContent = "";
@@ -1466,8 +1571,10 @@ async function openDetail(id) {
   if (!d.backups.length) { const tr = el("tr"); const td = el("td", "Zatím žádná záloha", "muted"); td.colSpan = 5; tr.appendChild(td); bt.appendChild(tr); }
   // historie
   const ht = $("d-history"); ht.textContent = "";
-  const hist = d.plans.map((p) => [p.created_at, `plán ${p.module}: ${p.summary}`, p.status])
-    .concat(d.commands.map((c) => [c.created_at, `příkaz ${c.kind}`, c.status]))
+  const PLAN_ST = { draft: "návrh", queued: "ve frontě", confirming: "čeká na potvrzení", applied: "provedeno",
+                    rolled_back: "vráceno zařízením", failed: "selhalo", superseded: "zastaralý", discarded: "zahozen" };
+  const hist = d.plans.map((p) => [p.created_at, `plán ${p.module}: ${p.summary}`, PLAN_ST[p.status] || p.status])
+    .concat(d.commands.filter((c) => c.kind !== "confirm_plan").map((c) => [c.created_at, `příkaz ${c.kind}`, c.status]))
     .sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 25);
   for (const [t, what, st] of hist) { const tr = el("tr"); tr.append(el("td", new Date(t).toLocaleString("cs-CZ")), el("td", what), el("td", st)); ht.appendChild(tr); }
 }

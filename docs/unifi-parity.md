@@ -96,7 +96,7 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 | UniFi | Co dělá | RouterOS / náš návrh | Stav |
 | --- | --- | --- | --- |
 | Infrastructure Topology (10.2) | mapa páteře: WAN → gateway → switche, STP, CPU, rozpojené linky | strom ze sousedů MNDP/LLDP, WAN z výchozích rout, STP root, CPU/RAM, porty na spojích (`infra.py`) | ✅ |
-| Port Manager + Ports Insights | přední panel, profily portů, PoE, VLAN | panel portů s pohledy Linka / Native VLAN / VLAN tagování / PoE / Chyby | ✅ zobrazení, ⏳ změny |
+| Port Manager + Ports Insights | přední panel, profily portů, PoE, VLAN | panel portů s pohledy + editor portu (zapnutí, popis, PoE, PVID, tagované VLAN, STP edge, restart PoE) | ✅ (profily ⏳) |
 | Time Machine portů (10.2, 10.6) | 24h historie stavů portů | máme 5min vzorky čítačů; ⏳ časová osa událostí (link up/down, PoE) z `link-downs` a stavů | 🟡 |
 | Port Anomaly (9.5) | flapping, smyčky, včasné alerty | alerty flapping, chyby, half-duplex ✅; ⏳ `loop-protect` na ethernet portech + alert | 🟡 |
 | STP Edge / Auto STP Edge (10.2) | edge porty k zařízením, rychlejší konvergence | bridge port `edge=yes/auto`; varování „konvergence STP“ v Infrastruktuře | 🟡 |
@@ -126,7 +126,7 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 
 | UniFi | Co dělá | RouterOS / náš návrh | Stav |
 | --- | --- | --- | --- |
-| SafeOps (10.6) | test-and-confirm, návrat na poslední funkční konfiguraci | commit-confirm: plán změn + scheduler s návratem, zrušený po check-inu (viz architektura, test-plan 9b) | ⏳ předpoklad pro VLAN/firewall |
+| SafeOps (10.6) | test-and-confirm, návrat na poslední funkční konfiguraci | commit-confirm: návratový skript + scheduler s počítadlem, potvrzení dalším check-inem | ✅ pro porty (ověřit na HW) |
 | Granular bulk updates (10.6) | řízené hromadné aktualizace | postupná aktualizace lokality | ✅ |
 | Firmware revert (10.2) | návrat verze | `/system package downgrade` (balíčky nahrát) – s varováním | ⏳ |
 | Drift Inspector (Site Manager) | odchylky konfigurace mezi lokalitami | drift ze záloh ✅; ⏳ porovnání se šablonou lokality | 🟡 |

@@ -374,8 +374,9 @@ def update_device(db: Database, tenant_id: Any, device_id: Any, changes: dict,
 
 # --- příkazy -----------------------------------------------------------------------
 
-COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware"}
-USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware"}
+COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
+                 "confirm_plan", "poe_cycle"}
+USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle"}
 
 
 def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
@@ -412,6 +413,15 @@ def request_command(db: Database, tenant_id: Any, device_id: Any, kind: str,
                 raise ServiceError("aktualizace tohoto zařízení už čeká na provedení")
         if kind == "upgrade":
             p = _upgrade_params(tx, device_id, dev["ros_version"] or "", str((params or {}).get("version", "")))
+        if kind == "poe_cycle":
+            from . import inventory, portcfg
+
+            port = str((params or {}).get("port", ""))
+            try:
+                portcfg.poe_cycle_body(inventory.load(tx, device_id, ["ethernet"]), port)
+            except (portcfg.PortError, ValueError) as e:
+                raise ServiceError(str(e)) from e
+            p = {"port": port}
         cid = enqueue(tx, tenant_id, device_id, kind, p, user_id)
         audit(tx, f"device.command.{kind}", tenant_id=tenant_id, user_id=user_id,
               target=f"device:{device_id}", after={"command_id": cid, **p}, ip=ip)
@@ -472,7 +482,19 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
     if kind == "apply_plan":
         from .plans import plan_script
 
-        return routeros.wrap_command(ack_url, key, plan_script(tx, int(cmd["params"]["plan_id"]), dev["id"]), opts)
+        pl = plan_script(tx, int(cmd["params"]["plan_id"]), dev["id"])
+        body = pl["script"]
+        if pl["revert_script"]:
+            body = routeros.safe_apply_body(body, pl["revert_script"], f"{ack_url}&status=reverted", key, opts,
+                                            int(pl["confirm_minutes"] or 5))
+        return routeros.wrap_command(ack_url, key, body, opts)
+    if kind == "confirm_plan":
+        return routeros.wrap_command(ack_url, key, routeros.CONFIRM_BODY, opts)
+    if kind == "poe_cycle":
+        from . import inventory, portcfg
+
+        return routeros.wrap_command(ack_url, key, portcfg.poe_cycle_body(
+            inventory.load(tx, dev["id"], ["ethernet"]), str(cmd["params"].get("port", ""))), opts)
     raise ServiceError(f"neznámý příkaz {kind}")
 
 
@@ -565,9 +587,17 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
                 audit(tx, "device.concentrator_failover", tenant_id=device_ref["tenant_id"],
                       target=f"device:{dev['id']}", before={"concentrator": cur}, after={"concentrator": nxt})
 
+        # zařízení se po aplikaci změny ozvalo → cesta ke správě funguje → potvrdit (zrušit návrat)
+        from .plans import pending_confirm
+
+        pc = pending_confirm(tx, dev["id"])
+        if pc:
+            cid = enqueue(tx, device_ref["tenant_id"], dev["id"], "confirm_plan", {"plan_id": pc["id"]})
+            tx.execute("UPDATE device_command SET plan_id = %(p)s WHERE id = %(c)s", {"p": pc["id"], "c": cid})
         cmd = tx.fetchone(
             """SELECT id, kind, params FROM device_command
-               WHERE device_id = %(d)s AND status = 'queued' ORDER BY id LIMIT 1
+               WHERE device_id = %(d)s AND status = 'queued'
+               ORDER BY (kind = 'confirm_plan') DESC, id LIMIT 1
                FOR UPDATE SKIP LOCKED""",
             {"d": str(dev["id"])},
         )
@@ -585,9 +615,21 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
 
 
 def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | None = None) -> bool:
-    if status not in ("done", "failed"):
+    if status not in ("done", "failed", "reverted"):
         raise ServiceError("neplatný stav")
     tenant_id = device_ref["tenant_id"]
+    if status == "reverted":
+        # zařízení samo vrátilo nepotvrzenou změnu (commit-confirm)
+        from .plans import rolled_back
+
+        with tenant_scope(db, tenant_id) as tx:
+            ok = tx.fetchone("""SELECT 1 FROM device_command WHERE id = %(id)s AND device_id = %(d)s
+                                AND kind = 'apply_plan'""", {"id": command_id, "d": str(device_ref["id"])})
+            row = rolled_back(tx, command_id) if ok else None
+            if row:
+                audit(tx, "plan.rolled_back", tenant_id=tenant_id, target=f"device:{device_ref['id']}",
+                      after={"plan_id": row["id"], "summary": row["summary"]}, ip=ip)
+            return bool(row)
     with tenant_scope(db, tenant_id) as tx:
         row = tx.fetchone(
             """UPDATE device_command SET status = %(st)s, finished_at = now()
@@ -599,6 +641,13 @@ def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | 
             return False
         audit(tx, f"device.command.{status}", tenant_id=tenant_id, target=f"device:{device_ref['id']}",
               after={"command_id": command_id, "kind": row["kind"]}, ip=ip)
+        if row["kind"] == "confirm_plan":
+            from .plans import confirm_done
+
+            pid = tx.fetchone("SELECT plan_id FROM device_command WHERE id = %(c)s", {"c": command_id})["plan_id"]
+            confirm_done(tx, pid, status == "done")
+            audit(tx, "plan.confirmed", tenant_id=tenant_id, target=f"device:{device_ref['id']}",
+                  after={"plan_id": pid}, ip=ip)
         if row["kind"] == "apply_plan":
             from .plans import finish_plan
 

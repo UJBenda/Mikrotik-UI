@@ -240,6 +240,9 @@ DEPROVISION_TAIL = f""":log warning "mtc: odebrani ze spravy controlleru"
 /user group remove [find name="mtc" comment="mtc"]
 /system scheduler remove [find name="mtc-checkin"]
 /system script remove [find name="mtc-checkin"]
+/system scheduler remove [find name="mtc-confirm"]
+/system script remove [find name="mtc-confirm-tick"]
+/system script remove [find name="mtc-revert"]
 """
 
 
@@ -292,3 +295,52 @@ FIRMWARE_TAIL = """:do {
   }
 } on-error={}
 """
+
+
+# --- bezpečné aplikování změn (commit-confirm) ---------------------------------------
+
+SAFE_REVERT = "mtc-revert"
+SAFE_TICK = "mtc-confirm-tick"
+SAFE_SCHED = "mtc-confirm"
+
+
+def _cleanup_safe() -> str:
+    return (f'/system scheduler remove [find name="{SAFE_SCHED}"]\n'
+            f'/system script remove [find name="{SAFE_TICK}"]\n'
+            f'/system script remove [find name="{SAFE_REVERT}"]\n')
+
+
+def safe_apply_body(body: str, revert: str, reverted_url: str, key: str, opts: FetchOpts, minutes: int) -> str:
+    """Změna s automatickým návratem. Před změnou uloží na zařízení revert skript
+    a scheduler, který každou minutu přičte tik; po `minutes` ticích (controller
+    nepotvrdil) spustí revert, nahlásí to controlleru a uklidí po sobě.
+    Počítadlo je globální proměnná – nezávisí na tom, kdy RouterOS scheduler
+    poprvé spustí, ani na přechodu přes půlnoc. Po restartu se počítá znovu."""
+    if not 2 <= minutes <= 30:
+        raise ValueError("minutes 2–30")
+    revert_src = (revert.rstrip() + "\n"
+                  + ':log warning "mtc: zmena nepotvrzena controllerem - vracim puvodni konfiguraci"\n'
+                  + f":do {{ :local a [/tool fetch url={q(reverted_url)} http-method=post "
+                    f"http-header-field={q('Authorization: Bearer ' + key)} output=none "
+                    f"check-certificate={opts.check_certificate} as-value] }} on-error={{}}\n"
+                  + _cleanup_safe())
+    tick_src = (":global mtcConfirmTicks\n"
+                ':if ([:typeof $mtcConfirmTicks] != "num") do={ :set mtcConfirmTicks 0 }\n'
+                ":set mtcConfirmTicks ($mtcConfirmTicks + 1)\n"
+                f":if ($mtcConfirmTicks >= {minutes}) do={{\n"
+                "  :set mtcConfirmTicks 0\n"
+                f'  /system scheduler remove [find name="{SAFE_SCHED}"]\n'
+                f'  /system script run [find name="{SAFE_REVERT}"]\n'
+                "}\n")
+    return (_cleanup_safe()
+            + f'/system script add name="{SAFE_REVERT}" policy={SCRIPT_POLICY} comment="mtc" source={q_source(revert_src)}\n'
+            + f'/system script add name="{SAFE_TICK}" policy={SCRIPT_POLICY} comment="mtc" source={q_source(tick_src)}\n'
+            + ":global mtcConfirmTicks\n:set mtcConfirmTicks 0\n"
+            + f'/system scheduler add name="{SAFE_SCHED}" interval=1m start-date=[/system clock get date] '
+              f'start-time=00:00:00 policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run {SAFE_TICK}"\n'
+            + f':log warning "mtc: aplikuji zmenu, bez potvrzeni se za {minutes} min vrati"\n'
+            + body.rstrip() + "\n")
+
+
+CONFIRM_BODY = (':global mtcConfirmTicks\n:set mtcConfirmTicks 0\n' + _cleanup_safe()
+                + ':log info "mtc: zmena potvrzena controllerem"\n')

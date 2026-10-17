@@ -111,6 +111,64 @@ async def device_update(request: Request, p: Principal, tid: str) -> Response:
     return json_response(res)
 
 
+def _uplinks(tx, inv: dict) -> set[str]:
+    """Porty, které vedou ke správě: STP root port a porty ke spravovaným zařízením."""
+    from ..infra import _port_of
+
+    out = {str(p.get("interface")) for p in inv.get("stp_ports") or [] if isinstance(p, dict) and p.get("role") == "root-port"}
+    managed = {r["identity"] for r in tx.fetchall("SELECT identity FROM device WHERE identity IS NOT NULL")}
+    for n in inv.get("neighbors") or []:
+        if isinstance(n, dict) and n.get("identity") in managed:
+            out.add(_port_of(n.get("interface")))
+    return out
+
+
+@endpoint(READ)
+async def port_get(request: Request, p: Principal, tid: str) -> Response:
+    from .. import portcfg
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    port = str(request.path_params["port"])[:64]
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            inv = inventory.load(tx, did)
+            try:
+                state = portcfg.port_state(inv, port)
+            except portcfg.PortError as e:
+                raise NotFound(str(e)) from e
+            vlans = sorted({str(v.get("vlan-ids")) for v in inv.get("bridge_vlans") or []
+                            if isinstance(v, dict) and str(v.get("vlan-ids", "")).isdigit()}, key=int)
+            mode = plans.module_modes(tx, did).get("ports")
+            return {**state, "known_vlans": vlans, "uplink": port in _uplinks(tx, inv), "module_mode": mode}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def port_plan(request: Request, p: Principal, tid: str) -> Response:
+    """Vytvoří plán změny portu; s "apply": true ho rovnou schválí (aplikace s automatickým návratem)."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    port = str(request.path_params["port"])[:64]
+    data = await _json(request)
+    desired = data.get("desired") if isinstance(data.get("desired"), dict) else {}
+    ip = client_ip(request)
+
+    def run():
+        with tenant_scope(st.db, tid) as tx:
+            up = _uplinks(tx, inventory.load(tx, did))
+        res = plans.create_port_plan(st.db, tid, did, port, desired, p.user_id, ip, up)
+        if data.get("apply"):
+            if not p.can(tid, MANAGE):
+                raise ServiceError("plán je uložený – schválit ho musí správce tenanta")
+            res["command_id"] = plans.approve_plan(st.db, st.settings, tid, res["plan_id"], p.user_id, ip)
+        return res
+
+    return json_response(await run_in_threadpool(run), 201)
+
+
 @endpoint(READ)
 async def release_notes(request: Request, p: Principal, tid: str) -> Response:
     """Co přinese dostupná aktualizace – změny relevantní pro toto zařízení."""
@@ -604,6 +662,8 @@ def routes() -> list[Route]:
         Route(d + "/metrics", metrics, methods=["GET"]),
         Route(d + "/traffic", traffic, methods=["GET"]),
         Route(d + "/release-notes", release_notes, methods=["GET"]),
+        Route(d + "/ports/{port}", port_get, methods=["GET"]),
+        Route(d + "/ports/{port}/plan", port_plan, methods=["POST"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),

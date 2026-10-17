@@ -124,6 +124,19 @@ def conditions(tx: Tx) -> list[Active]:
         elif not (r["after"] or {}).get("by_controller"):
             out.append(Active(r["tenant_id"], r["device_id"], "config_drift", "", "info",
                               f"{_label(r)}: konfigurace změněna mimo controller (viz zálohy)"))
+    # bezpečné změny: vrácené (24 h) a nepotvrzené po termínu
+    for r in tx.fetchall(
+            """SELECT p.tenant_id, p.device_id, p.id AS plan_id, p.summary, p.status::text AS status,
+                      d.identity, d.serial, d.id
+               FROM config_plan p JOIN device d ON d.id = p.device_id
+               WHERE (p.status = 'rolled_back' AND p.finished_at > now() - interval '24 hours')
+                  OR (p.status = 'confirming' AND p.confirm_deadline < now() - interval '10 minutes')"""):
+        if r["status"] == "rolled_back":
+            out.append(Active(r["tenant_id"], r["device_id"], "change_rolled_back", str(r["plan_id"]), "warning",
+                              f"{_label(r)}: změna „{r['summary']}“ se nepotvrdila a zařízení ji samo vrátilo"))
+        else:
+            out.append(Active(r["tenant_id"], r["device_id"], "change_unconfirmed", str(r["plan_id"]), "warning",
+                              f"{_label(r)}: změna „{r['summary']}“ čeká na potvrzení po termínu – zařízení se neozývá"))
     # DHCP pooly a NTP: jen zařízení, která DHCP server / NTP klienta mají
     for r in tx.fetchall(
             """SELECT d.id, d.tenant_id, d.identity, d.serial,

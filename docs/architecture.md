@@ -184,6 +184,24 @@ Pravidla:
 - Management VLAN a cesta k controlleru jsou chráněné: změnu, která by je přerušila, controller odmítne.
 - Volitelně „dry run“: zobrazit vygenerovaný skript a diff bez aplikace.
 
+### Implementace (commit-confirm, obdoba UniFi SafeOps)
+
+Plán s `revert_script` (zatím modul `ports`) se aplikuje takto (`routeros.safe_apply_body`):
+
+1. Na zařízení se uloží skript `mtc-revert` (návrat do stavu z inventury + nahlášení
+   `status=reverted` + úklid) a `mtc-confirm-tick`, scheduler `mtc-confirm` ho spouští každou minutu.
+2. Tik přičítá globální počítadlo; po `confirm_minutes` (výchozí 5) ticích spustí návrat.
+   Nezávisí na tom, kdy RouterOS scheduler poprvé spustí, ani na půlnoci; po restartu se počítá znovu.
+3. Provede se změna a pošle se ack → plán `confirming`, termín `confirm_deadline`.
+4. Další check-in zařízení (cesta ke správě funguje) → controller pošle `confirm_plan`
+   (smaže scheduler a skripty) → plán `applied`.
+5. Když se zařízení neozve, po N minutách se samo vrátí a nahlásí `reverted` → plán
+   `rolled_back`, alert `change_rolled_back`. Plán v `confirming` po termínu → alert `change_unconfirmed`.
+
+Ochrany: plán propadne, když se konfigurace portů od jeho vzniku změnila (`portcfg.config_basis`);
+řádky bridge VLAN s více ID nebo rozsahem se neupravují; změna uplinku (root port STP, port ke
+spravovanému zařízení) dostane varování. Změnu smí zadat technik, aplikovat (`apply`) jen správce.
+
 ## Moduly
 
 ### Firmware

@@ -13,19 +13,27 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import inventory, ntp
+from . import inventory, ntp, portcfg
 from .config import Settings
 from .db import Database, Tx, tenant_scope
 from .services import NotFound, ServiceError, _s, audit, enqueue
 
-MODULES = {"ntp", "vlan", "firewall", "capsman"}
+MODULES = {"ntp", "ports", "vlan", "firewall", "capsman"}
+MANAGEABLE = {"ntp", "ports"}
+CONFIRM_MINUTES = 5  # výchozí okno pro potvrzení změny s automatickým návratem
+
+
+def basis_for(module: str, inv: dict) -> str:
+    if module == "ports":
+        return portcfg.config_basis(inv)
+    return inventory.basis_sha(inv, ntp.SECTIONS if module == "ntp" else [])
 
 
 def set_module_mode(db: Database, tenant_id: Any, device_id: Any, module: str, mode: str,
                     user_id: Any = None, ip: str | None = None) -> None:
     if module not in MODULES or mode not in ("observe", "manage"):
         raise ServiceError("neplatný modul nebo režim")
-    if module != "ntp" and mode == "manage":
+    if module not in MANAGEABLE and mode == "manage":
         raise ServiceError(f"modul {module} zatím umí jen režim observe")
     with tenant_scope(db, tenant_id) as tx:
         if not tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND state <> 'removed'", {"d": str(device_id)}):
@@ -139,8 +147,7 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
         if p["module"] in settings.security.four_eyes_modules and str(p["created_by"]) == str(user_id):
             raise ServiceError("tento plán musí schválit jiný uživatel než autor")
         inv = inventory.load(tx, p["device_id"])
-        sections = ntp.SECTIONS if p["module"] == "ntp" else []
-        if inventory.basis_sha(inv, sections) != p["basis_sha"]:
+        if basis_for(p["module"], inv) != p["basis_sha"]:
             tx.execute("UPDATE config_plan SET status = 'superseded' WHERE id = %(i)s", {"i": plan_id})
             superseded = True
         else:
@@ -165,16 +172,77 @@ def discard_plan(db: Database, tenant_id: Any, plan_id: int, user_id: Any, ip: s
         audit(tx, "plan.discard", tenant_id=tenant_id, user_id=user_id, target=f"plan:{plan_id}", ip=ip)
 
 
-def plan_script(tx: Tx, plan_id: int, device_id: Any) -> str:
-    r = tx.fetchone("SELECT script FROM config_plan WHERE id = %(i)s AND device_id = %(d)s AND status = 'queued'",
+def create_port_plan(db: Database, tenant_id: Any, device_id: Any, port: str, desired: dict,
+                     user_id: Any = None, ip: str | None = None, uplinks: set[str] | None = None) -> dict:
+    """Plán změny portu (draft) s návratovým skriptem; předchozí draft pro stejný port zruší."""
+    with tenant_scope(db, tenant_id) as tx:
+        if not tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND state IN ('adopted', 'offline')",
+                           {"d": str(device_id)}):
+            raise NotFound("zařízení neexistuje nebo není adoptované")
+        inv = inventory.load(tx, device_id)
+        if not inv:
+            raise ServiceError("inventura zařízení zatím neproběhla")
+        try:
+            p = portcfg.plan(inv, port, desired, uplinks)
+        except portcfg.PortError as e:
+            raise ServiceError(str(e)) from e
+        if not p["changes"]:
+            raise ServiceError("žádná změna oproti aktuálnímu stavu")
+        tx.execute("""UPDATE config_plan SET status = 'superseded' WHERE device_id = %(d)s AND module = 'ports'
+                      AND status = 'draft' AND changes->>'port' = %(p)s""", {"d": str(device_id), "p": port})
+        row = tx.fetchone(
+            """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, revert_script,
+                                        confirm_minutes, basis_sha, created_by)
+               VALUES (%(t)s, %(d)s, 'ports', %(sum)s, %(chg)s, %(sc)s, %(rv)s, %(cm)s, %(b)s, %(u)s) RETURNING id""",
+            {"t": str(tenant_id), "d": str(device_id), "sum": p["summary"],
+             "chg": {"port": port, "changes": p["changes"], "warnings": p["warnings"]},
+             "sc": p["apply"], "rv": p["revert"], "cm": CONFIRM_MINUTES, "b": portcfg.config_basis(inv),
+             "u": _s(user_id)})
+        audit(tx, "plan.create", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+              after={"plan_id": row["id"], "module": "ports", "summary": p["summary"]}, ip=ip)
+    return {"plan_id": row["id"], "summary": p["summary"], "warnings": p["warnings"], "changes": p["changes"]}
+
+
+def plan_script(tx: Tx, plan_id: int, device_id: Any) -> dict:
+    r = tx.fetchone("""SELECT script, revert_script, confirm_minutes FROM config_plan
+                       WHERE id = %(i)s AND device_id = %(d)s AND status = 'queued'""",
                     {"i": plan_id, "d": str(device_id)})
     if not r:
         raise ServiceError("plán k aplikaci neexistuje")
-    return r["script"]
+    return r
 
 
 def finish_plan(tx: Tx, command_id: int, ok: bool) -> None:
+    """Výsledek aplikace. Plán s návratovým skriptem čeká na potvrzení (confirming)."""
     tx.execute(
-        """UPDATE config_plan SET status = %(st)s, finished_at = now()
+        """UPDATE config_plan SET finished_at = now(),
+               status = CASE WHEN NOT %(ok)s THEN 'failed'::plan_status
+                             WHEN revert_script IS NOT NULL THEN 'confirming'::plan_status
+                             ELSE 'applied'::plan_status END,
+               confirm_deadline = CASE WHEN %(ok)s AND revert_script IS NOT NULL
+                                       THEN now() + make_interval(mins => confirm_minutes) END
            WHERE command_id = %(c)s AND status = 'queued'""",
-        {"st": "applied" if ok else "failed", "c": command_id})
+        {"ok": ok, "c": command_id})
+
+
+def pending_confirm(tx: Tx, device_id: Any) -> dict | None:
+    """Plán čekající na potvrzení, pro který ještě není ve frontě potvrzení."""
+    return tx.fetchone(
+        """SELECT p.id, p.tenant_id FROM config_plan p WHERE p.device_id = %(d)s AND p.status = 'confirming'
+             AND NOT EXISTS (SELECT 1 FROM device_command c WHERE c.plan_id = p.id AND c.kind = 'confirm_plan'
+                             AND c.status IN ('queued', 'sent'))
+           ORDER BY p.id LIMIT 1""", {"d": str(device_id)})
+
+
+def confirm_done(tx: Tx, plan_id: int, ok: bool) -> None:
+    if ok:
+        tx.execute("""UPDATE config_plan SET status = 'applied', confirmed_at = now()
+                      WHERE id = %(i)s AND status = 'confirming'""", {"i": plan_id})
+
+
+def rolled_back(tx: Tx, command_id: int) -> dict | None:
+    return tx.fetchone(
+        """UPDATE config_plan SET status = 'rolled_back', finished_at = now()
+           WHERE command_id = %(c)s AND status IN ('confirming', 'queued', 'applied', 'failed')
+           RETURNING id, device_id, summary""",
+        {"c": command_id})

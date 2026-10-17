@@ -45,7 +45,7 @@ SECTIONS: list[Section] = [
     Section("bridges", "/interface/bridge",
             "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority"),
     Section("bridge_ports", "/interface/bridge/port",
-            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment"),
+            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment,edge"),
     Section("bridge_vlans", "/interface/bridge/vlan",
             "bridge,vlan-ids,tagged,untagged,current-tagged,current-untagged,disabled,dynamic"),
     Section("vlans", "/interface/vlan", "name,vlan-id,interface,disabled,comment"),
