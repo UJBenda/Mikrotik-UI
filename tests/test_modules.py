@@ -193,3 +193,31 @@ def test_backups_store_diff_and_rbac():
         assert tech.post(f"/api/admin/tenants/{tid}/devices/{gw}/backup").status_code == 200
     finally:
         drop_db(name)
+
+
+def test_update_check_and_indicator():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        from test_inventory_backup import FakeApi
+        calls = []
+
+        def fake_device_api(tx, box_, dev, timeout=10.0):
+            api = FakeApi({("POST", "/system/package/update/check-for-updates"): [{"status": "New version is available"}]})
+            calls.append(api)
+            return api
+
+        orig = services.device_api
+        services.device_api = fake_device_api
+        try:
+            assert worker.check_updates(db, box) == 1
+            assert worker.check_updates(db, box) == 0  # do 24 h znovu ne
+        finally:
+            services.device_api = orig
+        inventory.store(db, tid, gw, {"update": {"channel": "stable", "installed-version": "7.20.1",
+                                                 "latest-version": "7.24.5"}}, [])
+        c = _login(app)
+        d = c.get(f"/api/admin/tenants/{tid}/devices").json()[0]
+        assert d["update_available"] and d["latest_version"] == "7.24.5" and d["update_channel"] == "stable"
+    finally:
+        drop_db(name)

@@ -69,6 +69,34 @@
     </div>
 
     <div class="card">
+      <h2>Lokalita <select id="site-sel"></select>
+        <button id="topo-btn" type="button" class="small secondary">Topologie</button></h2>
+      <div class="grid">
+        <div>
+          <h3>NTP politika</h3>
+          <form id="ntp-form">
+            <label>Primární NTP (zařízení) <select name="primary_device_id" id="ntp-primary"></select></label>
+            <label>Upstream servery <input name="upstream" placeholder="tik.cesnet.cz, tak.cesnet.cz"></label>
+            <label>Časová zóna <input name="timezone" placeholder="Europe/Prague"></label>
+            <button>Uložit politiku</button>
+            <button type="button" id="ntp-plan" class="secondary">Vygenerovat plány</button>
+          </form>
+          <div id="ntp-result" class="muted"></div>
+        </div>
+        <div id="topo-wrap" hidden>
+          <h3>Topologie (MNDP/LLDP)</h3>
+          <svg id="topo" viewBox="0 0 800 400" role="img" aria-label="Topologie lokality"></svg>
+          <p class="muted">Plné uzly = spravovaná zařízení, prázdné = sousedé mimo správu.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Plány změn ke schválení <button id="plans-refresh" type="button" class="small secondary">Obnovit</button></h2>
+      <div id="plans"></div>
+    </div>
+
+    <div class="card">
       <h2>Zařízení <button id="refresh" type="button" class="small">Obnovit</button></h2>
       <table>
         <thead><tr><th>Stav</th><th>Sériové č.</th><th>Model</th><th>RouterOS</th><th>Lokalita</th><th>Tunel IP</th><th>SSTP</th><th>Poslední check-in</th><th>Akce</th></tr></thead>
@@ -82,6 +110,32 @@
         <thead><tr><th>Čas</th><th>Uživatel</th><th>Akce</th><th>Cíl</th><th>IP</th></tr></thead>
         <tbody id="audit"></tbody>
       </table>
+    </div>
+  </section>
+
+  <section id="detail" hidden>
+    <div class="card">
+      <h2><span id="d-title"></span> <button id="d-close" type="button" class="small secondary">Zpět</button>
+        <button id="d-backup" type="button" class="small secondary">Zálohovat teď</button></h2>
+      <div id="d-warn"></div>
+      <div class="grid">
+        <div><h3>Přehled</h3><table><tbody id="d-summary"></tbody></table></div>
+        <div><h3>Moduly</h3><table><tbody id="d-modules"></tbody></table>
+             <h3>NTP</h3><table><tbody id="d-ntp"></tbody></table></div>
+      </div>
+      <h3>VLAN a bridge <span id="d-vlan-status" class="badge"></span></h3>
+      <ul id="d-vlan"></ul>
+      <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
+      <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
+      <h3>Rozhraní</h3>
+      <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
+      <h3>Sousedé</h3>
+      <table><thead><tr><th>Port</th><th>Identita</th><th>Model</th><th>Adresa</th><th>MAC</th></tr></thead><tbody id="d-neigh"></tbody></table>
+      <h3>Zálohy</h3>
+      <table><thead><tr><th>Čas</th><th>Důvod</th><th>Velikost</th><th>Změna</th><th></th></tr></thead><tbody id="d-backups"></tbody></table>
+      <pre id="d-diff" hidden></pre>
+      <h3>Plány a příkazy</h3>
+      <table><thead><tr><th>Čas</th><th>Co</th><th>Stav</th></tr></thead><tbody id="d-history"></tbody></table>
     </div>
   </section>
   <div id="msg" role="status"></div>

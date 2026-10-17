@@ -163,6 +163,28 @@ def run_backups(db: Database, box: SecretBox, limit: int = BACKUPS_PER_TICK) -> 
     return done
 
 
+UPDATE_CHECK_HOURS = 24
+
+
+def check_updates(db: Database, box: SecretBox, limit: int = 20) -> int:
+    """Nechá zařízení zjistit dostupnou verzi v jeho kanálu (zařízení se ptá
+    upgrade.mikrotik.com samo). Výsledek přinese další inventura."""
+    due = _due(db, box, f"update_checked_at IS NULL OR update_checked_at < now() - interval '{UPDATE_CHECK_HOURS} hours'",
+               limit)
+    n = 0
+    for d, api in due:
+        api.timeout = 45.0
+        try:
+            api.post("/system/package/update/check-for-updates", {})
+            n += 1
+        except Exception as e:
+            log.info("kontrola aktualizací %s selhala: %s", d["serial"], e)
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET update_checked_at = now(), inventory_at = NULL WHERE id = %(d)s",
+                       {"d": str(d["id"])})
+    return n
+
+
 def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvider]) -> None:
     if not providers:
         return
@@ -197,7 +219,8 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                            ("requeue", lambda: requeue_stale(db)),
                            ("verify", lambda: verify_provisioning(db, box)),
                            ("inventory", lambda: poll_inventory(db, box)),
-                           ("backup", lambda: run_backups(db, box))):
+                           ("backup", lambda: run_backups(db, box)),
+                           ("updates", lambda: check_updates(db, box))):
             try:
                 step()
             except Exception:

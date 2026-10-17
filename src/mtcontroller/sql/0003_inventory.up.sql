@@ -15,7 +15,8 @@ CREATE TABLE device_inventory (
 ALTER TABLE device
   ADD COLUMN inventory_at    timestamptz,
   ADD COLUMN inventory_error text,
-  ADD COLUMN backup_at       timestamptz;
+  ADD COLUMN backup_at       timestamptz,
+  ADD COLUMN update_checked_at timestamptz;
 
 -- surové vzorky čítačů rozhraní (retence krátká, viz hourly)
 CREATE TABLE interface_sample (

@@ -298,3 +298,63 @@ Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko vý
 | Servisní účet na zařízení | – | `mtc-ctl`, skupina `mtc` (api, rest-api), přihlášení jen z 10.200.0.1 | Cizí účet stejného jména se nepřepíše |
 | Příkazy | Fronta skriptů | Fronta `kind + params`, skript se renderuje až při doručení | Tajemství nejsou ve frontě, jen šifrovaně v `device_secret` |
 | Failover koncentrátoru | Skript na zařízení | Řídí controller: 5 check-inů s neběžícím tunelem → příkaz k přepnutí | Logika na jednom místě; routování poolu přes záložní koncentrátor je další krok |
+
+## Moduly a převzetí stávající konfigurace (F1)
+
+Controller nesmí nic převzít ani předělat sám od sebe. Platí tato pravidla:
+
+1. **Adopce mění jen objekty `mtc`** (tunel `mtc-sstp`, účet `mtc-ctl`, skupina `mtc`,
+   check-in skript, firewall pravidla s komentářem `mtc:`). Nic jiného.
+2. **Inventura je jen čtení**: každých 5 minut přes REST (pinning) – systém, rozhraní,
+   bridge, porty, VLAN, adresy, sousedé, NTP, hodiny, balíčky, dostupná aktualizace.
+   Hesla se nečtou (uživatelé, PPP secrety, wifi klíče) a klíče s hesly se filtrují.
+3. **Zálohy**: denně `/export show-sensitive` přes REST, uložené šifrovaně. Změna
+   konfigurace mimo controller se zapíše do auditu (`device.config_changed`, drift).
+4. **Režim modulu per zařízení**: `observe` (výchozí – jen hlásí odchylky) nebo
+   `manage` (smí zapisovat). Přepnutí smí jen tenant_admin a je auditované.
+5. **Změny jen přes plány**: požadovaný stav → diff proti inventuře → plán (skript +
+   popis) → schválení → doručení frontou příkazů → potvrzení. Plán je vázaný na
+   konkrétní stav zařízení (`basis_sha`); když se zařízení mezitím změní, plán propadne.
+   Pro moduly v `security.four_eyes_modules` (výchozí VLAN, firewall) musí schválit
+   jiný uživatel než autor.
+
+### VLAN a bridge
+
+Cílový model: **jeden bridge s `vlan-filtering=yes`**, tagování v `/interface bridge vlan`,
+přístupové porty přes `pvid`, L3 přes VLAN rozhraní na bridge, `ingress-filtering`
+zapnutý. Analýza (`analysis.analyze_vlan`) hlásí:
+
+| Kód | Závažnost | Význam |
+| --- | --- | --- |
+| `multiple_bridges` | warning | víc bridgů s porty (legacy) |
+| `vlan_iface_bridged` | warning | VLAN rozhraní jako port bridge (legacy) |
+| `vlan_on_physical` | warning/info | VLAN rozhraní na fyzickém portu (v bridge = obchází ho) |
+| `nested_bridge` | error | bridge jako port jiného bridge |
+| `bridge_vlan_without_filtering` | warning | VLAN na bridge bez filtrování |
+| `bridge_not_tagged` | error | VLAN rozhraní na bridge, ale bridge v té VLAN není tagovaný |
+| `ingress_filtering_off` | warning | riziko VLAN hoppingu |
+
+Legacy zapojení se **nepředělává automaticky**. Pro vzor „bridge na každou VLAN + VLAN
+rozhraní na trunku" umí controller vygenerovat **náhled migrace** (kroky + skript);
+složitější zapojení vrací důvody, proč automaticky nejde. Spouštění migrace přijde,
+až bude ověřené v laboratoři (s rollbackem, od nejvzdálenějšího zařízení, v okně údržby
+a s ohledem na HW offload – na některých starších čipech vlan-filtering přepne provoz na CPU).
+
+### NTP
+
+Politika lokality: primární zařízení (synchronizuje upstream, typicky `tik/tak.cesnet.cz`,
+a běží jako NTP server), ostatní zařízení berou čas z primárního (adresa ve stejné síti)
+s prvním upstreamem jako zálohou, všude stejná časová zóna. U klientů se NTP server
+nemění. NTP je první zápisový modul – ověřujeme na něm celý mechanismus plánů.
+
+### Firewall (plán)
+
+1. address-listy spravované controllerem (např. management sítě),
+2. vlastní chainy `mtc-*` + jump pravidla, zbytek firewallu ruční,
+3. plná správa se šablonami jen tam, kde ji admin výslovně zapne.
+
+### Verze RouterOS
+
+Worker denně nechá zařízení zkontrolovat dostupnou verzi v jeho kanálu
+(`/system/package/update/check-for-updates`). Tabulka známých problémů verzí
+(`ros_versions.py`) se zobrazuje u zařízení. Hromadný rollout aktualizací je F3.

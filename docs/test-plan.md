@@ -171,6 +171,23 @@ Stejně adoptuj druhý testovací MikroTik.
 - **Odebrat**: zařízení smaže vše, co vytvořil controller (tunel, účet, firewall
   pravidla `mtc:`, check-in skript); v UI zmizí, worker zakáže účet na koncentrátoru.
 
+## 7b. Nové funkce F1 (po adopci)
+
+Všechno níže je jen čtení, kromě NTP plánu, který se aplikuje až po schválení.
+
+| Funkce | Kde | Očekávání |
+| --- | --- | --- |
+| Inventura | klik na zařízení v UI | do 5 min po adopci: přehled, rozhraní, sousedé, NTP; chyba se ukáže nahoře |
+| Analýza VLAN | detail zařízení | stav „odpovídá modelu" / „bez VLAN" / „starý způsob"; u starého způsobu tlačítko Náhled migrace (jen náhled!) |
+| Záloha | detail → Zálohovat teď | do minuty řádek v Zálohách; „Rozdíl" ukáže diff se skrytými hesly |
+| Drift | změň ručně identitu MikroTiku, Zálohovat teď | v auditu `device.config_changed` |
+| Topologie | Lokalita → Topologie | spravovaná zařízení a sousedé (MNDP/LLDP) s porty |
+| Aktualizace | seznam zařízení | do 24 h (nebo po restartu workeru) se u verze ukáže ↑ dostupná verze |
+| NTP | Lokalita → NTP politika → Uložit → Vygenerovat plány | v Plánech změn plán pro každé zařízení; Schválit odmítne, dokud na zařízení nepovolíš správu NTP (detail → Moduly) |
+
+Záloha přes REST (`/file/read`) je zatím ověřená jen proti simulaci. Když selže,
+v `journalctl -u mtc-worker` bude „záloha … selhala" s důvodem – pošli mi ho.
+
 ## 8. Záložní koncentrátor (volitelné, druhý MikroTik)
 
 1. Druhý blok `[[tunnel.concentrators]]` s `name = "vpn2"` v config.toml, krok 2 pro vpn2.

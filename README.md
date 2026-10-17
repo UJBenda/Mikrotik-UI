@@ -20,8 +20,15 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] SSTP tunel na každé zařízení, účty na koncentrátoru přes REST s pinningem certifikátu
 - [x] Ověření adopce přes REST v tunelu, offline detekce, failover mezi koncentrátory
 - [x] Generátor konfigurace koncentrátoru (`mtc-admin concentrator-script`)
+- [x] Inventura přes REST (jen čtení), metriky rozhraní (5 min / hodinové agregace)
+- [x] Zálohy konfigurace (šifrovaně), drift, diff se skrytými hesly
+- [x] Analýza VLAN/bridge proti cílovému modelu + náhled migrace
+- [x] Modul NTP s plány změn (observe/manage, schválení, zneplatnění)
+- [x] Topologie lokality (MNDP/LLDP), dostupné aktualizace RouterOS, známé problémy verzí
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
-- [ ] Polling metrik, topologie, VLAN, CAPsMAN, PtP (F1+)
+- [ ] Klienti (DHCP/ARP/bridge host/wifi), alerty, VLAN správa, CAPsMAN, PtP, firewall
+
+Mapování funkcí UniFi: [docs/unifi-parity.md](docs/unifi-parity.md).
 
 ## Struktura
 

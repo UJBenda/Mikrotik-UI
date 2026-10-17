@@ -217,7 +217,11 @@ async def adoption_tokens(request: Request, p: Principal, tid: str) -> Response:
 
 _DEVICE_COLS = """d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state,
                   host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
-                  d.last_checkin_at, d.last_status, d.approved_at, d.adopted_at, d.created_at"""
+                  d.last_checkin_at, d.last_status, d.approved_at, d.adopted_at, d.created_at,
+                  (SELECT i.data->>'latest-version' FROM device_inventory i
+                    WHERE i.device_id = d.id AND i.section = 'update') AS latest_version,
+                  (SELECT i.data->>'channel' FROM device_inventory i
+                    WHERE i.device_id = d.id AND i.section = 'update') AS update_channel"""
 
 
 @endpoint(READ)
@@ -232,6 +236,8 @@ async def devices(request: Request, p: Principal, tid: str) -> Response:
         for r in rows:
             r["warnings"] = [{"severity": i.severity, "text": i.text, "source": i.source}
                              for i in ros_versions.issues_for(r.get("ros_version") or "")]
+            lv = r.get("latest_version")
+            r["update_available"] = bool(lv) and ros_versions.parse(lv) > ros_versions.parse(r.get("ros_version") or "")
         return rows
 
     return json_response(await run_in_threadpool(q))
