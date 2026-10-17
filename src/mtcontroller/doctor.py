@@ -152,6 +152,27 @@ def check_network(s: Settings, route_get: Callable[[str], dict | None] = _route_
     return out
 
 
+def _worker_caps() -> str:
+    try:
+        r = subprocess.run(["systemctl", "show", "mtc-worker", "-p", "AmbientCapabilities", "--value"],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip().lower()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def check_routes(s: Settings, caps: Callable[[], str] = _worker_caps) -> list[Check]:
+    if not s.tunnel.manage_routes:
+        if len(s.tunnel.concentrators) > 1:
+            return [Check(WARN, "routy přes koncentrátory",
+                          "dva koncentrátory bez tunnel.manage_routes – po failoveru zařízení nepůjde REST")]
+        return []
+    if "cap_net_admin" not in caps():
+        return [Check(FAIL, "routy přes koncentrátory",
+                      "manage_routes = true, ale mtc-worker nemá CAP_NET_ADMIN – spusť znovu deploy/install.sh")]
+    return [Check(OK, "routy přes koncentrátory", "worker udržuje /32 routy podle aktivních relací")]
+
+
 def check_concentrators(s: Settings, providers=None) -> list[Check]:
     out = []
     if not s.tunnel.concentrators:
@@ -201,7 +222,7 @@ def check_files(s: Settings) -> list[Check]:
 def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     checks: list[Check] = []
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
-               lambda: check_database(s, app_db, owner_db), lambda: check_network(s),
+               lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s),
                lambda: check_concentrators(s, providers), lambda: check_notify(s)):
         try:
             checks.extend(fn())

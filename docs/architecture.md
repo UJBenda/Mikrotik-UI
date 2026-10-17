@@ -297,7 +297,7 @@ Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko vý
 | Ověření zařízení | – | Otisk certifikátu www-ssl hlásí zařízení přes autentizovaný check-in, REST přes tunel ho pinuje | Žádná slepá důvěra (TOFU) |
 | Servisní účet na zařízení | – | `mtc-ctl`, skupina `mtc` (api, rest-api), přihlášení jen z 10.200.0.1 | Cizí účet stejného jména se nepřepíše |
 | Příkazy | Fronta skriptů | Fronta `kind + params`, skript se renderuje až při doručení | Tajemství nejsou ve frontě, jen šifrovaně v `device_secret` |
-| Failover koncentrátoru | Skript na zařízení | Řídí controller: 5 check-inů s neběžícím tunelem → příkaz k přepnutí | Logika na jednom místě; routování poolu přes záložní koncentrátor je další krok |
+| Failover koncentrátoru | Skript na zařízení | Řídí controller: 5 check-inů s neběžícím tunelem → příkaz k přepnutí | Logika na jednom místě; routy /32 přes aktivní koncentrátor udržuje worker (`tunnel.manage_routes`, modul `routes.py`, jen vlastní routy `proto 186`, CAP_NET_ADMIN drop-in) |
 
 ## Moduly a převzetí stávající konfigurace (F1)
 

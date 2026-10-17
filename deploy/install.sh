@@ -121,6 +121,13 @@ mtc-admin migrate
 
 say "systemd"
 install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" /etc/systemd/system/
+# routy na zařízení přes aktivní koncentrátor (tunnel.manage_routes) potřebují CAP_NET_ADMIN
+if grep -Eq '^[[:space:]]*manage_routes[[:space:]]*=[[:space:]]*true' "$ETC/config.toml"; then
+  install -d -m 0755 /etc/systemd/system/mtc-worker.service.d
+  install -m 0644 "$SRC/deploy/systemd/mtc-worker-routes.conf" /etc/systemd/system/mtc-worker.service.d/routes.conf
+else
+  rm -f /etc/systemd/system/mtc-worker.service.d/routes.conf
+fi
 systemctl daemon-reload
 systemctl enable mtc-web mtc-worker >/dev/null
 systemctl restart mtc-web mtc-worker

@@ -79,6 +79,13 @@ class ConcentratorConfig(BaseModel):
     api_password_file: Path
     # SHA-256 otisk certifikátu www-ssl koncentrátoru (pinning), hex bez dvojteček
     api_fingerprint: str
+    # brána na tunely v síti controlleru (pro tunnel.manage_routes); výchozí = host z api_url
+    route_via: str | None = None
+
+    @field_validator("route_via")
+    @classmethod
+    def _route_via(cls, v: str | None) -> str | None:
+        return str(ipaddress.ip_address(v)) if v else None
 
     @field_validator("connect_host")
     @classmethod
@@ -111,6 +118,9 @@ class TunnelConfig(BaseModel):
     # adresa controlleru, ze které chodí správa do tunelů (zařízení ji vidí jako zdroj)
     controller_ip: str = "10.10.0.10"
     concentrators: list[ConcentratorConfig] = Field(default_factory=list)
+    # worker udržuje routy /32 na zařízení přes koncentrátor, ke kterému jsou
+    # připojená (failover mezi koncentrátory); potřebuje CAP_NET_ADMIN
+    manage_routes: bool = False
 
     @field_validator("provider")
     @classmethod

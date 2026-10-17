@@ -235,9 +235,18 @@ Neodeslané notifikace worker zkouší znovu (max. 5×); stejně funguje JSON we
 3. Test: na vpn1 vypni SSTP server (`/interface sstp-server server set enabled=no`).
    Po 5 check-inech s neběžícím tunelem pošle controller zařízení příkaz k přepnutí
    na vpn2 (v auditu `device.concentrator_failover`).
-4. **Omezení**: controller routuje pool `10.200.0.0/16` přes jeden koncentrátor.
-   Po přepnutí na vpn2 je potřeba změnit routu (`ip route replace 10.200.0.0/16 via <vpn2>`).
-   Automatické směrování přes oba (OSPF z koncentrátorů / per-zařízení /32) je další krok.
+4. **Routy na controlleru**: zapni v config.toml `manage_routes = true` (sekce `[tunnel]`)
+   a spusť znovu `./deploy/install.sh` (nasadí workeru CAP_NET_ADMIN; jinak nic nemění).
+   Worker pak každou minutu udržuje routy `/32` na zařízení přes koncentrátor, ke kterému
+   jsou připojená:
+   ```sh
+   ip route show proto 186        # 10.200.1.5 via 10.10.0.2 …
+   mtc-admin doctor               # [OK] routy přes koncentrátory
+   ```
+   Statickou routu celého poolu přes vpn1 nech – je to záloha, /32 má přednost.
+   Bez `manage_routes` po přepnutí na vpn2 nepůjde REST (inventura, zálohy), dokud
+   ručně nezměníš routu (`ip route replace 10.200.0.0/16 via <vpn2>`); check-in
+   a příkazy fungují i tak.
 
 ## 9. Produkční režim (místo --lab)
 

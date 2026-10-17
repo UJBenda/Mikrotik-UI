@@ -32,6 +32,10 @@ pool = "10.200.0.0/16"
 tenant_block_prefix = 24
 # IP controlleru, ze které jde správa do tunelů (statická routa poolu přes koncentrátor).
 controller_ip = "10.10.0.10"
+# Dva koncentrátory: worker udržuje routy /32 na zařízení přes ten, ke kterému
+# jsou právě připojená (jinak po failoveru nejde REST). Potřebuje CAP_NET_ADMIN –
+# viz docs/install.md (drop-in pro mtc-worker). U jednoho koncentrátoru netřeba.
+manage_routes = false
 
 # Jeden blok na každý koncentrátor. První je primární.
 [[tunnel.concentrators]]
@@ -43,6 +47,7 @@ api_password_file = "/etc/mtcontroller/vpn1.password"
 # SHA-256 otisk certifikátu www-ssl na koncentrátoru:
 #   vypíše ho concentrator-script po nastavení koncentrátoru (certifikát mtc-api)
 api_fingerprint = "0000000000000000000000000000000000000000000000000000000000000000"
+# route_via = "10.10.0.1"   # brána na tunely, výchozí = adresa z api_url
 
 # [[tunnel.concentrators]]
 # name = "vpn2"

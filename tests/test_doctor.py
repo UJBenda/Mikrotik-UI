@@ -88,3 +88,14 @@ def test_run_never_raises(tmp_path):
     checks = doctor.run(s, app_db=None, owner_db=None, providers=[])
     assert any(c.status == doctor.FAIL for c in checks)
     assert doctor.render(checks)
+
+
+def test_routes_check(tmp_path):
+    s = make_settings(tmp_path, concentrators=2)
+    assert doctor.check_routes(s)[0].status == doctor.WARN  # dva koncentrátory bez manage_routes
+    s.tunnel.manage_routes = True
+    assert doctor.check_routes(s, caps=lambda: "")[0].status == doctor.FAIL
+    assert doctor.check_routes(s, caps=lambda: "cap_net_admin")[0].status == doctor.OK
+    one = tmp_path / "one"
+    one.mkdir()
+    assert doctor.check_routes(make_settings(one)) == []  # jeden koncentrátor: nic k hlášení

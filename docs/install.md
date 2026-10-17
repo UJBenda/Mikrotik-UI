@@ -38,6 +38,14 @@ aplikují se nové migrace, služby se restartují).
 5. Routa na tunelový pool přes koncentrátor.
 6. Firewall hostu: z internetu jen 443 (a 80 pro obnovu certifikátu), SSH jen z admin sítě.
 
+## Dva koncentrátory
+
+V `[tunnel]` nastav `manage_routes = true` a spusť znovu `./deploy/install.sh`.
+Skript přidá drop-in `/etc/systemd/system/mtc-worker.service.d/routes.conf`
+(CAP_NET_ADMIN a netlink – nic jiného) a worker udržuje routy `/32` na zařízení
+přes koncentrátor, ke kterému jsou připojená (`ip route show proto 186`).
+Brána je adresa z `api_url`, jinak `route_via` u koncentrátoru.
+
 ## Zálohy
 
 - `/etc/mtcontroller/master.key` – **offline** (bez něj nejdou dešifrovat hesla zařízení).
