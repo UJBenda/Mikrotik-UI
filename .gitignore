@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+
+# lokální konfigurace a tajemství nikdy do gitu
+config.toml
+*.key
+*.pem
+*.crt
+master.key

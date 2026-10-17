@@ -1,0 +1,41 @@
+[Unit]
+Description=MikroTik Controller – web UI a API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mtcontroller
+Group=mtcontroller
+Environment=MTC_CONFIG=/etc/mtcontroller/config.toml
+ExecStart=/opt/mtcontroller/venv/bin/mtc-web
+Restart=on-failure
+RestartSec=5
+
+# sandbox
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ReadWritePaths=/var/lib/mtcontroller
+ReadOnlyPaths=/etc/mtcontroller
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
