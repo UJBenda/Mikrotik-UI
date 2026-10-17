@@ -116,7 +116,7 @@ def conditions(tx: Tx) -> list[Active]:
                       d.identity, d.serial, d.id
                FROM audit_log a JOIN device d ON d.id = substr(a.target, 8)::uuid
                WHERE a.action IN ('device.config_changed', 'device.cert_changed')
-                 AND a.target LIKE 'device:%%' AND a.at > now() - interval '24 hours'
+                 AND a.target LIKE 'device:%' AND a.at > now() - interval '24 hours'
                ORDER BY a.target, a.id DESC"""):
         if r["action"] == "device.cert_changed":
             out.append(Active(r["tenant_id"], r["device_id"], "cert_changed", "", "critical",

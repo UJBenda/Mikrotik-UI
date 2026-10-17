@@ -44,6 +44,12 @@ def fresh_db():
     su = PgConnection("postgres", name)
     su.query("REVOKE ALL ON SCHEMA public FROM PUBLIC; ALTER SCHEMA public OWNER TO mtc_owner")
     su.close()
+    if os.environ.get("MTC_TEST_PSYCOPG"):
+        # produkční cesta: skutečný psycopg (serverové parametry, typy)
+        from mtcontroller.db import PsycopgDatabase
+
+        migrate.upgrade(PsycopgDatabase(f"dbname={name} user=mtc_owner host=/var/run/postgresql"))
+        return PsycopgDatabase(f"dbname={name} user=mtc_app host=/var/run/postgresql"), name
     migrate.upgrade(PgWireDatabase("mtc_owner", name))
     return PgWireDatabase("mtc_app", name), name
 

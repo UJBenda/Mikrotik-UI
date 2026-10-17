@@ -19,4 +19,6 @@
 - Tajemství nikdy v plaintextu v DB ani v logu: `security.SecretBox` s kontextem
   vázaným na záznam.
 - Každá akce měnící stav zapisuje `audit_log`.
-- Testy: `python3 -m pytest` a `sudo -u postgres tests/db/run.sh`.
+- Testy: `python3 -m pytest` a `sudo -u postgres tests/db/run.sh`. Výchozí testy jdou
+  přes `tests/pgwire.py`; `MTC_TEST_PSYCOPG=1` pustí DB testy přes skutečný psycopg
+  (produkční cesta – serverové parametry: žádné `interval %(x)s`, osamělé `%`).
