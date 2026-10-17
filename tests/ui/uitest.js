@@ -90,6 +90,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
+    if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
     const diffBtn = byId["d-backups"].children[0].children[4].children[0];
     if (diffBtn && diffBtn.onclick) await diffBtn.onclick();
     const diffShown = !byId["d-diff"].hidden;

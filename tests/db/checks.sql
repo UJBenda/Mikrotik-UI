@@ -257,5 +257,27 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 15) changelogy RouterOS: číst smí každý, zapisovat jen provozovatel
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO ros_release (version, changelog) VALUES ('7.20.5', 'x');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM ros_release) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant nevidí changelog'; END IF;
+  BEGIN
+    INSERT INTO ros_release (version, changelog) VALUES ('7.20.6', 'evil');
+    RAISE EXCEPTION 'FAIL: tenant zapsal changelog';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE ros_release SET changelog = 'evil';
+  IF (SELECT changelog FROM ros_release WHERE version = '7.20.5') <> 'x' THEN
+    RAISE EXCEPTION 'FAIL: tenant změnil changelog';
+  END IF;
+  RAISE NOTICE 'OK 15 changelogy čte každý, zapisuje jen provozovatel';
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

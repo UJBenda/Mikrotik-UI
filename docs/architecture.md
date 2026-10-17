@@ -299,6 +299,17 @@ Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko vý
 | Příkazy | Fronta skriptů | Fronta `kind + params`, skript se renderuje až při doručení | Tajemství nejsou ve frontě, jen šifrovaně v `device_secret` |
 | Failover koncentrátoru | Skript na zařízení | Řídí controller: 5 check-inů s neběžícím tunelem → příkaz k přepnutí | Logika na jednom místě; routy /32 přes aktivní koncentrátor udržuje worker (`tunnel.manage_routes`, modul `routes.py`, jen vlastní routy `proto 186`, CAP_NET_ADMIN drop-in) |
 
+## Sledování nových verzí RouterOS
+
+- Dostupnou verzi zjišťuje každé zařízení samo ve svém kanálu (`check-for-updates`
+  přes REST, jednou za 24 h); controller ji vidí v inventuře (`update`).
+- Známé problémy verzí (`ros_versions.KNOWN_ISSUES`) se zobrazují u zařízení; aktualizaci
+  na verzi s kritickým problémem controller odmítne.
+- Changelogy (`releases.py`, tabulka `ros_release`, migrace 0005) stahuje worker jednou
+  denně z download.mikrotik.com pro všechny mezilehlé verze přechodů ve flotile.
+  Globální data: číst smí každý, zapisovat jen provozovatel (RLS, kontrola 15).
+  U zařízení se ukazují důležité změny a změny komponent, které zařízení používá.
+
 ## Moduly a převzetí stávající konfigurace (F1)
 
 Controller nesmí nic převzít ani předělat sám od sebe. Platí tato pravidla:

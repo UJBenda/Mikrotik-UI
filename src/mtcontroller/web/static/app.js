@@ -529,6 +529,27 @@ function renderWifi(w) {
   }
 }
 
+// --- release notes ------------------------------------------------------------------------
+
+async function loadReleaseNotes(id) {
+  let n;
+  try { n = await api("GET", `/tenants/${tenantId}/devices/${id}/release-notes`); } catch (e) { return; }
+  if (detailId !== id || !n.target) return;
+  $("d-notes").hidden = false;
+  $("d-notes-h").textContent = `Co přinese ${n.target}` +
+    (n.versions.length ? ` (changelogy ${n.versions.map((v) => v.version).join(", ")})` : "");
+  const ul = $("d-notes-list"); ul.textContent = "";
+  for (const e of n.relevant.slice(0, 200)) {
+    const li = el("li", `${e.component ? e.component + " – " : ""}${e.text}`, e.important ? "sev-warning" : "");
+    li.title = e.version;
+    ul.appendChild(li);
+  }
+  $("d-notes-more").textContent = !n.versions.length
+    ? "Changelog zatím není stažený (controller ho stahuje jednou denně z download.mikrotik.com)."
+    : `Zobrazeny změny týkající se funkcí tohoto zařízení a důležité změny (!); dalších změn: ${n.other_count}.` +
+      (n.complete ? "" : " Changelog cílové verze zatím chybí.");
+}
+
 // --- STP lokality ------------------------------------------------------------------------
 
 $("stp-btn").addEventListener("click", async () => {
@@ -579,6 +600,8 @@ async function openDetail(id) {
   const up = $("d-upgrade");
   up.hidden = !(listed && listed.update_available && dev.state === "adopted");
   if (!up.hidden) { up.textContent = `Aktualizovat → ${listed.latest_version}`; up.onclick = () => upgradeDevice(listed); }
+  $("d-notes").hidden = true;
+  if (!up.hidden) loadReleaseNotes(id);
   const fw = $("d-firmware");
   fw.hidden = !(dev.state === "adopted" && sm.firmware && sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware);
   if (!fw.hidden) {

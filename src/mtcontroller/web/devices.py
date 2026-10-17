@@ -99,6 +99,31 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(READ)
+async def release_notes(request: Request, p: Principal, tid: str) -> Response:
+    """Co přinese dostupná aktualizace – změny relevantní pro toto zařízení."""
+    from .. import releases
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            d = tx.fetchone("SELECT ros_version FROM device WHERE id = %(d)s", {"d": did})
+            if not d:
+                raise NotFound("zařízení neexistuje")
+            inv = inventory.load(tx, did)
+        upd = inv.get("update") if isinstance(inv.get("update"), dict) else {}
+        cur = (d["ros_version"] or "").split(" ")[0]
+        target = str(upd.get("latest-version") or "")
+        if not target or ros_versions.parse(target) <= ros_versions.parse(cur):
+            return {"current": cur, "target": None, "versions": [], "relevant": [], "other_count": 0,
+                    "complete": False}
+        return releases.notes_for(st.db, cur, target, inv)
+
+    return json_response(await run_in_threadpool(q))
+
+
 @endpoint(MANAGE)
 async def device_module(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
@@ -427,6 +452,7 @@ def routes() -> list[Route]:
         Route(d + "/backups/{backup_id}/download", backup_download, methods=["GET"]),
         Route(d + "/vlan-migration", vlan_migration, methods=["GET"]),
         Route(d + "/metrics", metrics, methods=["GET"]),
+        Route(d + "/release-notes", release_notes, methods=["GET"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),

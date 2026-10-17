@@ -1101,6 +1101,32 @@
      "device": "core"
     }
    ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/release-notes": {
+   "current": "7.20.1",
+   "target": "7.24.5",
+   "versions": [
+    {
+     "version": "7.24.5",
+     "released": "2025-Oct-20 12:00"
+    }
+   ],
+   "relevant": [
+    {
+     "important": true,
+     "component": "system",
+     "text": "zmena",
+     "version": "7.24.5"
+    },
+    {
+     "important": false,
+     "component": "bridge",
+     "text": "oprava",
+     "version": "7.24.5"
+    }
+   ],
+   "other_count": 3,
+   "complete": true
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

@@ -30,6 +30,7 @@ from ..tunnel import TunnelAccount, TunnelProvider, build_providers
 log = logging.getLogger("mtc.worker")
 
 TICK = 30
+RELEASES_EVERY = 24 * 3600  # changelogy RouterOS (download.mikrotik.com)
 RECONCILE_EVERY = 600
 OFFLINE_AFTER_MIN = 5
 RESEND_AFTER_MIN = 10
@@ -221,10 +222,10 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
-    from .. import alerts, inventory, notify, routes
+    from .. import alerts, inventory, notify, releases, routes
 
-    last_reconcile = 0.0
-    last_rollup = 0.0
+    # -inf: monotonic() počítá od startu systému, 0.0 by po čerstvém bootu oddálilo první běh
+    last_reconcile = last_rollup = last_releases = float("-inf")
     log.info("worker běží (%d koncentrátorů)", len(providers))
     while not stop.is_set():
         # každý krok zvlášť: chyba jednoho (např. nedostupný koncentrátor) nesmí zastavit ostatní
@@ -248,6 +249,14 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                 last_rollup = now
             except Exception:
                 log.exception("agregace metrik selhala")
+        if now - last_releases > RELEASES_EVERY:
+            last_releases = now
+            try:
+                n = releases.sync(db)
+                if n:
+                    log.info("staženo %d changelogů RouterOS", n)
+            except Exception:
+                log.exception("stažení changelogů selhalo")
         if now - last_reconcile > RECONCILE_EVERY:
             try:
                 reconcile_tunnels(db, box, providers)

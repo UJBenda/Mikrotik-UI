@@ -30,6 +30,7 @@ viditelná odchylka zařízení, vědomé srovnání.
 | Site overview, seznam zařízení | `/system/resource`, `/system/routerboard` | inventura | F1 – tato noc |
 | Backups | `/export` + `/file/read` po 32 KiB přes REST | zálohy | F1 – tato noc (experimentální) |
 | Update Manager | `/system/package/update`, `/system/routerboard` | verze a aktualizace | aktualizace RouterOS a RouterBOOT jedním tlačítkem (blokuje verze s kritickým známým problémem, alert když se nepovede); hromadný rollout F3 |
+| Release notes u aktualizace | `download.mikrotik.com/routeros/<verze>/CHANGELOG` | aktualizace | changelogy všech mezilehlých verzí, filtr na komponenty, které zařízení používá; důležité změny (`!)`) nahoře |
 | Topology | `/ip/neighbor` (MNDP/LLDP), bridge host | topologie | F2 (sousedé už v inventuře) |
 | Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | hotovo (seznam + poloha) |
 | Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan`, `/interface/ethernet/monitor`, `poe/monitor` | VLAN | tabulka portů (rychlost, duplex, SFP, PoE, PVID/tagované VLAN) + analýza hotové (jen čtení), správa F3 |
