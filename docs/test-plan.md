@@ -277,6 +277,40 @@ Neodeslané notifikace worker zkouší znovu (max. 5×); stejně funguje JSON we
 - Firewall controlleru (nftables): z internetu jen 443 (a 80 pro ACME), SSH a admin UI jen z admin sítě.
 - Zálohuj offline `/etc/mtcontroller/master.key` a databázi (`pg_dump mtcontroller`).
 
+## 9b. Ověření předpokladů na testovacím MikroTiku (pro další fáze)
+
+Tyhle věci jsem nemohl vyzkoušet bez skutečného RouterOS. Stačí pustit a poslat mi
+výstup (nebo jen „OK“ / „nefunguje: …“). Body 1–4 se týkají toho, co už je hotové,
+body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
+
+1. **Otisk certifikátu REST** (pinning) – na controlleru:
+   ```sh
+   echo | openssl s_client -connect 10.200.1.1:443 2>/dev/null | openssl x509 -noout -fingerprint -sha256
+   ```
+   a na zařízení `/certificate print detail where name=mtc-rest` – sedí `fingerprint` (bez dvojteček)?
+2. **Monitor portů přes REST** (sloupce Linka/PoE/STP v detailu):
+   ```sh
+   curl -sk -u mtc-ctl:HESLO -X POST https://10.200.1.1/rest/interface/ethernet/monitor \
+     -H 'content-type: application/json' -d '{"numbers":"ether1","once":"true"}'
+   ```
+   (heslo se nikde nezobrazuje – stačí, že v detailu zařízení jsou vyplněné sloupce Linka a STP)
+3. **Kontrola aktualizací** – v detailu je „Kanál / dostupná“ a u starší verze tlačítko Aktualizovat.
+4. **Release notes** – controller potřebuje odchozí HTTPS na `download.mikrotik.com`:
+   `curl -sI https://download.mikrotik.com/routeros/7.20/CHANGELOG | head -1`.
+5. **Jednorázový scheduler za N minut** (základ automatického návratu změny):
+   ```
+   /system scheduler add name=mtc-test start-date=[/system clock get date] start-time=[/system clock get time] interval=2m on-event=":log warning MTC-TEST; /system scheduler remove [find name=mtc-test]"
+   ```
+   Za ~2 min v `/log print where message~"MTC-TEST"` jeden řádek a scheduler zmizí?
+6. **Obnova zálohy ze skriptu** (jen na testovacím kusu – restartuje ho!):
+   ```
+   /system backup save name=mtc-test password=Test12345
+   /system script add name=mtc-restore source="/system backup load name=mtc-test.backup password=Test12345"
+   /system script run mtc-restore
+   ```
+   Restartuje se a obnoví bez potvrzování? (V terminálu se `backup load` ptá – jde o to,
+   jestli se ptá i ze skriptu.) Po testu: `/system script remove mtc-restore`, `/file remove mtc-test.backup`.
+
 ## 10. Řešení problémů
 
 | Příznak | Kde hledat |
