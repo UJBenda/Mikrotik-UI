@@ -283,3 +283,18 @@ Všechny tabulky kromě globálních číselníků nesou `tenant_id` a jsou pod 
 | F4 WiFi a compliance | CAPsMAN (obě generace), PtP; baseline compliance, CVE, rogue DHCP/AP |
 
 Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko výpadku nese až F3.
+
+## Implementace F0 – rozhodnutí a odchylky od návrhu
+
+| Téma | Návrh | Implementace | Důvod |
+| --- | --- | --- | --- |
+| Web framework | FastAPI | Starlette (FastAPI je nad ním) | Celý stack z Debian apt, bez PyPI |
+| DB vrstva | SQLAlchemy + Alembic | psycopg + ruční SQL + vlastní migrátor (`sql/NNNN_*.up.sql`) | Méně vrstev, RLS a triggery jsou v SQL stejně |
+| Autentizace check-inu | HMAC podpis | Bearer klíč (256 bitů, v DB hash) přes ověřené TLS | RouterOS skriptování neumí HMAC |
+| Klientské certifikáty SSTP | Ano | Zatím ne (unikátní heslo per zařízení + ověřený certifikát serveru) | Další krok; vlastní CA je v plánu |
+| REST koncentrátoru | – | Port 8443, jen z IP controlleru, pinning otisku certifikátu | 443 patří SSTP |
+| Správa do tunelu | Routa na controller na zařízení | Koncentrátor src-natuje controller na 10.200.0.1 | Zařízení nepotřebuje routu, check-in nikdy neskončí v tunelu, zařízení nevidí IP controlleru |
+| Ověření zařízení | – | Otisk certifikátu www-ssl hlásí zařízení přes autentizovaný check-in, REST přes tunel ho pinuje | Žádná slepá důvěra (TOFU) |
+| Servisní účet na zařízení | – | `mtc-ctl`, skupina `mtc` (api, rest-api), přihlášení jen z 10.200.0.1 | Cizí účet stejného jména se nepřepíše |
+| Příkazy | Fronta skriptů | Fronta `kind + params`, skript se renderuje až při doručení | Tajemství nejsou ve frontě, jen šifrovaně v `device_secret` |
+| Failover koncentrátoru | Skript na zařízení | Řídí controller: 5 check-inů s neběžícím tunelem → příkaz k přepnutí | Logika na jednom místě; routování poolu přes záložní koncentrátor je další krok |

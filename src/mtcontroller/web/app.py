@@ -1,50 +1,92 @@
-"""FastAPI aplikace.
+"""ASGI aplikace (Starlette).
 
-Jedna aplikace obsluhuje dva hostname, ale routery jsou striktně oddělené:
-- admin UI/API (`/api/admin/...`) jen pro Host == web.ui_host,
-- check-in a adopce (`/api/checkin`, `/adopt/...`) jen pro Host == web.checkin_host.
-nginx navíc pouští admin hostname jen z admin sítě.
+Jedna aplikace obsluhuje dva hostname a routy jsou podle nich striktně oddělené:
+- admin UI a API (`/`, `/static/…`, `/api/admin/…`) jen na web.ui_host,
+- check-in a adopce (`/api/checkin…`, `/adopt/…`) jen na web.checkin_host.
+Cokoli jiného je 404. nginx navíc pouští admin hostname jen z admin sítě.
 """
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from .. import __version__
-from ..config import Settings, get_settings
+from ..config import Settings
+from ..db import Database
+from ..security import SecretBox
+from ..tunnel import TunnelProvider
 
-CHECKIN_PATHS = ("/api/checkin", "/adopt/")
-ADMIN_PATHS = ("/api/admin",)
+log = logging.getLogger("mtc.web")
+
+CHECKIN_PREFIXES = ("/api/checkin", "/adopt/")
+SHARED_PATHS = ("/healthz",)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or get_settings()
-    app = FastAPI(
-        title="MikroTik Controller",
-        version=__version__,
-        docs_url=None,  # žádná veřejná dokumentace API
-        redoc_url=None,
-        openapi_url=None,
-    )
+@dataclass
+class AppState:
+    settings: Settings
+    db: Database
+    box: SecretBox
+    providers: list[TunnelProvider] = field(default_factory=list)
 
-    @app.middleware("http")
+
+def json_response(data: Any, status: int = 200, headers: dict | None = None) -> Response:
+    return Response(json.dumps(data, default=str, ensure_ascii=False), status_code=status,
+                    media_type="application/json", headers=headers)
+
+
+def script_response(script: str, status: int = 200) -> Response:
+    return Response(script, status_code=status, media_type="text/plain; charset=us-ascii")
+
+
+def client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
+def create_app(state: AppState) -> Starlette:
+    from . import admin, checkin
+
+    settings = state.settings
+    ui_host, checkin_host = settings.web.ui_host, settings.web.checkin_host
+
     async def host_separation(request: Request, call_next):
         host = (request.headers.get("host") or "").split(":")[0].lower()
         path = request.url.path
-        if path.startswith(ADMIN_PATHS) and host != settings.web.ui_host:
-            return JSONResponse({"detail": "not found"}, status_code=404)
-        if path.startswith(CHECKIN_PATHS) and host != settings.web.checkin_host:
-            return JSONResponse({"detail": "not found"}, status_code=404)
+        is_checkin = path.startswith(CHECKIN_PREFIXES)
+        if path not in SHARED_PATHS:
+            if is_checkin and host != checkin_host:
+                return json_response({"detail": "not found"}, 404)
+            if not is_checkin and host != ui_host:
+                return json_response({"detail": "not found"}, 404)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if not is_checkin:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         return response
 
-    @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok", "version": __version__}
+    async def healthz(request: Request) -> Response:
+        return json_response({"status": "ok", "version": __version__})
 
+    routes = [Route("/healthz", healthz)] + checkin.routes() + admin.routes()
+    app = Starlette(routes=routes, middleware=[Middleware(BaseHTTPMiddleware, dispatch=host_separation)])
+    app.state.mtc = state
     return app
+
+
+def get_state(request: Request) -> AppState:
+    return request.app.state.mtc

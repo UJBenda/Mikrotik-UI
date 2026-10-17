@@ -164,6 +164,32 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 12) fronta příkazů: tenant nevidí ani nevloží příkaz pro cizí zařízení
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_command (tenant_id, device_id, kind)
+SELECT tenant_id, id, 'reboot' FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_command) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí příkazy tenanta B';
+  END IF;
+  BEGIN
+    INSERT INTO device_command (tenant_id, device_id, kind)
+    SELECT '00000000-0000-0000-0000-0000000000a1', id, 'reboot' FROM device WHERE serial = 'SER-B1';
+    -- SELECT z device pod RLS nic nevrátí, takže nic nevloží; zkusíme i přímo:
+    INSERT INTO device_command (tenant_id, device_id, kind)
+    VALUES ('00000000-0000-0000-0000-0000000000b1',
+            (SELECT id FROM device LIMIT 1), 'reboot');
+    RAISE EXCEPTION 'FAIL: příkaz do cizího tenanta prošel';
+  EXCEPTION WHEN insufficient_privilege OR not_null_violation THEN
+    RAISE NOTICE 'OK 12 fronta příkazů izolovaná';
+  END;
+END $$;
+COMMIT;
+
 -- 11) superadmin role musí být globální
 BEGIN;
 DO $$ BEGIN

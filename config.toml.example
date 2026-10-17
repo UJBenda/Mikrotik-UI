@@ -1,36 +1,53 @@
-# Kopírovat do /etc/mtcontroller/config.toml (root:mtcontroller, 0640).
-# Každou hodnotu lze přepsat proměnnou prostředí MTC_<SEKCE>__<KLÍČ>,
-# např. MTC_DATABASE__DSN.
+# /etc/mtcontroller/config.toml (root:mtcontroller, 0640).
+# Každou hodnotu lze přepsat proměnnou MTC_<SEKCE>__<KLÍČ>, např. MTC_WEB__UI_HOST.
 
 [database]
-# Aplikace se připojuje rolí bez BYPASSRLS (viz docs/install.md).
-dsn = "postgresql+psycopg://mtc_app@/mtcontroller?host=/run/postgresql"
-# Role vlastnící schéma, používá ji jen `alembic upgrade`.
-migrate_dsn = "postgresql+psycopg://mtc_owner@/mtcontroller?host=/run/postgresql"
+# libpq conninfo; unix socket + peer autentizace, žádné heslo po síti.
+dsn = "dbname=mtcontroller user=mtc_app host=/run/postgresql"
+# Migrace běží jako root (pg_ident mapuje root -> mtc_owner).
+migrate_dsn = "dbname=mtcontroller user=mtc_owner host=/run/postgresql"
+app_role = "mtc_app"
 
 [web]
-# nginx terminuje TLS a proxuje na localhost.
 listen_host = "127.0.0.1"
 listen_port = 8080
-# Hostname admin UI (dostupné jen z admin sítě / VPN).
+# Admin UI – nginx ho pustí jen z admin sítě / VPN.
 ui_host = "mtc-admin.example.cz"
-# Hostname pro check-in a adopci (z internetu).
+# Check-in a adopce – dostupné z internetu.
 checkin_host = "mtc-checkin.example.cz"
+session_hours = 8
 
 [security]
-# 32 bajtů náhodných dat (base64), soubor 0640 root:mtcontroller.
 master_key_file = "/etc/mtcontroller/master.key"
 adoption_token_ttl_minutes = 60
+# Kontrola certifikátu při /tool fetch na zařízení. "no" jen v laboratoři!
+device_check_certificate = "yes-without-crl"
 
 [paths]
 data_dir = "/var/lib/mtcontroller"
 
 [tunnel]
-# Provider tunelů: "mikrotik" (fyzický koncentrátor) nebo později "radius".
 provider = "mikrotik"
 pool = "10.200.0.0/16"
 tenant_block_prefix = 24
-# Hostname, na které míří SSTP klienti. Druhý je záloha.
-concentrator_hosts = ["vpn1.example.cz", "vpn2.example.cz"]
-# Management adresa koncentrátoru, kam controller volá REST API.
-concentrator_api = "https://10.10.0.1"
+# IP controlleru, ze které jde správa do tunelů (statická routa poolu přes koncentrátor).
+controller_ip = "10.10.0.10"
+
+# Jeden blok na každý koncentrátor. První je primární.
+[[tunnel.concentrators]]
+name = "vpn1"
+connect_host = "vpn1.example.cz"
+api_url = "https://10.10.0.1:8443"
+api_user = "mtc-controller"
+api_password_file = "/etc/mtcontroller/vpn1.password"
+# SHA-256 otisk certifikátu www-ssl na koncentrátoru:
+#   vypíše ho concentrator-script po nastavení koncentrátoru (certifikát mtc-api)
+api_fingerprint = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# [[tunnel.concentrators]]
+# name = "vpn2"
+# connect_host = "vpn2.example.cz"
+# api_url = "https://10.10.0.2:8443"
+# api_user = "mtc-controller"
+# api_password_file = "/etc/mtcontroller/vpn2.password"
+# api_fingerprint = "..."

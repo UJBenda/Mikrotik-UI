@@ -117,6 +117,29 @@ class SecretBox:
         return AESGCM(dek).decrypt(c[:12], c[12:], context)
 
 
+_box: SecretBox | None = None
+
+
+def get_box() -> SecretBox:
+    global _box
+    if _box is None:
+        from .config import get_settings
+
+        _box = SecretBox.from_file(get_settings().security.master_key_file)
+    return _box
+
+
+def set_box(box: SecretBox | None) -> None:
+    """Pro testy."""
+    global _box
+    _box = box
+
+
+def random_password(nbytes: int = 24) -> str:
+    """Heslo pro SSTP / API účet zařízení: jen [A-Za-z0-9_-], bezpečné pro RouterOS."""
+    return secrets.token_urlsafe(nbytes)
+
+
 def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode().rstrip("=")
 

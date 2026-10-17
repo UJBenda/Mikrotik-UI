@@ -9,20 +9,31 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 DEFAULT_CONFIG_PATH = Path("/etc/mtcontroller/config.toml")
 ENV_PREFIX = "MTC_"
+_HOST = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$")
+
+
+def _hostname(v: str) -> str:
+    v = v.strip().lower()
+    if not _HOST.match(v):
+        raise ValueError(f"neplatný hostname: {v!r}")
+    return v
 
 
 class DatabaseConfig(BaseModel):
-    dsn: str = "postgresql+psycopg://mtc_app@/mtcontroller?host=/run/postgresql"
-    migrate_dsn: str = "postgresql+psycopg://mtc_owner@/mtcontroller?host=/run/postgresql"
+    # libpq conninfo; přes unix socket a peer autentizaci (bez hesla po síti)
+    dsn: str = "dbname=mtcontroller user=mtc_app host=/run/postgresql"
+    migrate_dsn: str = "dbname=mtcontroller user=mtc_owner host=/run/postgresql"
+    app_role: str = "mtc_app"
 
 
 class WebConfig(BaseModel):
@@ -30,23 +41,74 @@ class WebConfig(BaseModel):
     listen_port: int = 8080
     ui_host: str = "localhost"
     checkin_host: str = "localhost"
+    session_hours: int = Field(default=8, ge=1, le=24)
+
+    @field_validator("ui_host", "checkin_host")
+    @classmethod
+    def check_hosts(cls, v: str) -> str:
+        return _hostname(v)
 
 
 class SecurityConfig(BaseModel):
     master_key_file: Path = Path("/etc/mtcontroller/master.key")
     adoption_token_ttl_minutes: int = Field(default=60, ge=5, le=24 * 60)
+    # RouterOS fetch: "yes-without-crl" (doporučeno), "yes", nebo "no" jen pro laboratoř
+    device_check_certificate: str = "yes-without-crl"
+
+    @field_validator("device_check_certificate")
+    @classmethod
+    def _cc(cls, v: str) -> str:
+        if v not in {"yes", "yes-without-crl", "no"}:
+            raise ValueError("device_check_certificate: yes | yes-without-crl | no")
+        return v
 
 
 class PathsConfig(BaseModel):
     data_dir: Path = Path("/var/lib/mtcontroller")
 
 
+class ConcentratorConfig(BaseModel):
+    name: str
+    # hostname, na který se připojují SSTP klienti (musí sedět s certifikátem SSTP serveru)
+    connect_host: str
+    # REST API koncentrátoru z pohledu controlleru, např. https://10.10.0.1:8443 (443 patří SSTP)
+    api_url: str
+    api_user: str = "mtc-controller"
+    api_password_file: Path
+    # SHA-256 otisk certifikátu www-ssl koncentrátoru (pinning), hex bez dvojteček
+    api_fingerprint: str
+
+    @field_validator("connect_host")
+    @classmethod
+    def check_connect_host(cls, v: str) -> str:
+        return _hostname(v)
+
+    @field_validator("api_url")
+    @classmethod
+    def _https(cls, v: str) -> str:
+        if not v.startswith("https://"):
+            raise ValueError("api_url musí být https://")
+        return v.rstrip("/")
+
+    @field_validator("api_fingerprint")
+    @classmethod
+    def _fp(cls, v: str) -> str:
+        v = v.replace(":", "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", v):
+            raise ValueError("api_fingerprint musí být SHA-256 (64 hex znaků)")
+        return v
+
+    def password(self) -> str:
+        return self.api_password_file.read_text().strip()
+
+
 class TunnelConfig(BaseModel):
     provider: str = "mikrotik"
     pool: str = "10.200.0.0/16"
     tenant_block_prefix: int = 24
-    concentrator_hosts: list[str] = Field(default_factory=list)
-    concentrator_api: str = ""
+    # adresa controlleru, ze které chodí správa do tunelů (zařízení ji vidí jako zdroj)
+    controller_ip: str = "10.10.0.10"
+    concentrators: list[ConcentratorConfig] = Field(default_factory=list)
 
     @field_validator("provider")
     @classmethod
@@ -62,6 +124,20 @@ class TunnelConfig(BaseModel):
         if not net.is_private:
             raise ValueError("tunnel.pool musí být privátní rozsah")
         return str(net)
+
+    @field_validator("controller_ip")
+    @classmethod
+    def _cip(cls, v: str) -> str:
+        return str(ipaddress.ip_address(v))
+
+    @model_validator(mode="after")
+    def _controller_outside_pool(self) -> "TunnelConfig":
+        if ipaddress.ip_address(self.controller_ip) in ipaddress.ip_network(self.pool):
+            raise ValueError("controller_ip nesmí ležet v tunelovém poolu")
+        names = [c.name for c in self.concentrators]
+        if len(names) != len(set(names)):
+            raise ValueError("jména koncentrátorů musí být unikátní")
+        return self
 
 
 class Settings(BaseModel):

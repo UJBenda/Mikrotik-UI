@@ -1,0 +1,93 @@
+"""Generátor konfigurace koncentrátoru (RouterOS v7) – `mtc-admin concentrator-script NAME`.
+
+Předpoklady na koncentrátoru (ručně, jednou):
+1. veřejný certifikát pro SSTP: `/certificate enable-ssl-certificate dns-name=<connect_host>`
+   (Let's Encrypt; potřebuje dočasně dostupný port 80 z internetu),
+2. soubor api_password_file na controlleru (vytvoří install.sh); heslo se vloží do skriptu.
+
+Skript je idempotentní: lze ho pustit znovu po změně konfigurace.
+"""
+
+from __future__ import annotations
+
+from urllib.parse import urlsplit
+
+from . import ipam
+from .config import ConcentratorConfig, Settings
+from .routeros import q
+from .tunnel.mikrotik import PPP_PROFILE
+
+
+def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password: str) -> str:
+    ctrl = settings.tunnel.controller_ip
+    local = str(ipam.concentrator_address(settings.tunnel.pool))
+    api_port = urlsplit(c.api_url).port or 443
+    if api_port == 443:
+        raise ValueError("REST API koncentrátoru nesmí být na 443 (ten patří SSTP) – použij např. https://x:8443")
+    return f"""# MikroTik controller - koncentrator {c.name} ({c.connect_host})
+# Vygenerovano: mtc-admin concentrator-script {c.name}
+# Vloz do terminalu koncentratoru nebo nahraj jako soubor a /import.
+{{
+:local ctrl {q(ctrl)}
+:local sstpHost {q(c.connect_host)}
+
+# heslo uctu controlleru (z {c.api_password_file})
+:local apiPassword {q(api_password)}
+
+# --- certifikat SSTP (Let's Encrypt pro $sstpHost) ---
+:local sstpCert ""
+:do {{ :set sstpCert [/certificate get ([/certificate find common-name=$sstpHost private-key=yes]->0) name] }} on-error={{}}
+:if ($sstpCert = "") do={{ :error ("mtc: chybi certifikat pro " . $sstpHost . " - spust /certificate enable-ssl-certificate dns-name=" . $sstpHost) }}
+
+# --- seznam rozhrani tunelu a PPP profil ---
+:if ([:len [/interface list find name="TUNNELS"]] = 0) do={{ /interface list add name="TUNNELS" comment="mtc" }}
+:if ([:len [/ppp profile find name="{PPP_PROFILE}"]] = 0) do={{ /ppp profile add name="{PPP_PROFILE}" }}
+/ppp profile set [find name="{PPP_PROFILE}"] local-address={q(local)} interface-list="TUNNELS" only-one=yes change-tcp-mss=yes use-encryption=required use-compression=no comment="mtc"
+
+# --- SSTP server na 443 ---
+/interface sstp-server server set enabled=yes port=443 certificate=$sstpCert authentication=mschap2 default-profile="{PPP_PROFILE}"
+
+# --- REST API pro controller (self-signed, controller ho pinuje otiskem) ---
+:if ([:len [/certificate find name="mtc-api"]] = 0) do={{
+  /certificate add name="mtc-api" common-name={q(c.name)} key-size=prime256v1 days-valid=3650 key-usage=tls-server
+  /certificate sign "mtc-api"
+  :delay 5s
+}}
+/ip service set www-ssl certificate="mtc-api" port={api_port} address=($ctrl . "/32") disabled=no
+:if ([:len [/user group find name="mtc-controller"]] = 0) do={{
+  :do {{ /user group add name="mtc-controller" policy=read,write,api,rest-api comment="mtc" }} on-error={{ /user group add name="mtc-controller" policy=read,write,api,web comment="mtc" }}
+}}
+:if ([:len [/user find name={q(c.api_user)}]] = 0) do={{
+  /user add name={q(c.api_user)} group="mtc-controller" password=$apiPassword address=($ctrl . "/32") comment="mtc"
+}} else={{
+  /user set [find name={q(c.api_user)}] group="mtc-controller" password=$apiPassword address=($ctrl . "/32")
+}}
+
+# --- firewall: tunely se nevidi, do tunelu smi jen controller ---
+/ip firewall address-list remove [find list="mtc-controller"]
+/ip firewall address-list add list="mtc-controller" address=$ctrl comment="mtc"
+/ip firewall filter remove [find comment~"^mtc:"]
+/ip firewall filter add chain=input protocol=tcp dst-port=443 action=accept comment="mtc: SSTP"
+/ip firewall filter add chain=input src-address-list="mtc-controller" protocol=tcp dst-port={api_port} action=accept comment="mtc: controller API"
+/ip firewall filter add chain=input in-interface-list="TUNNELS" action=drop comment="mtc: drop input z tunelu"
+/ip firewall filter add chain=forward in-interface-list="TUNNELS" connection-state=established,related action=accept comment="mtc: odpovedi z tunelu"
+/ip firewall filter add chain=forward src-address-list="mtc-controller" out-interface-list="TUNNELS" protocol=tcp dst-port=443 action=accept comment="mtc: controller REST do tunelu"
+/ip firewall filter add chain=forward src-address-list="mtc-controller" out-interface-list="TUNNELS" protocol=icmp action=accept comment="mtc: controller ping do tunelu"
+/ip firewall filter add chain=forward in-interface-list="TUNNELS" action=drop comment="mtc: drop z tunelu"
+/ip firewall filter add chain=forward out-interface-list="TUNNELS" action=drop comment="mtc: drop do tunelu"
+# sprava z controlleru do tunelu se preklada na tunelovou adresu koncentratoru:
+# zarizeni nepotrebuje zadnou routu a skutecnou IP controlleru nevidi
+/ip firewall nat remove [find comment~"^mtc:"]
+/ip firewall nat add chain=srcnat src-address-list="mtc-controller" out-interface-list="TUNNELS" action=src-nat to-addresses={q(local)} comment="mtc: controller do tunelu"
+:if ([:len [/ip firewall nat find]] > 1) do={{
+  /ip firewall nat move [find comment="mtc: controller do tunelu"] destination=([/ip firewall nat find]->0)
+}}
+:if ([:len [/ip firewall filter find]] > 8) do={{
+  :foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
+    /ip firewall filter move [find comment=$c] destination=([/ip firewall filter find]->0)
+  }}
+}}
+:log info "mtc: koncentrator nastaven"
+:put ("mtc: hotovo. Otisk certifikatu mtc-api (api_fingerprint do config.toml): " . [/certificate get [find name="mtc-api"] fingerprint])
+}}
+"""

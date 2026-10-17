@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MikroTik Controller</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>MikroTik Controller</h1>
+  <div id="who"></div>
+</header>
+
+<main>
+  <section id="login" hidden>
+    <h2>Přihlášení</h2>
+    <form id="login-form">
+      <label>E-mail <input name="email" type="email" autocomplete="username" required></label>
+      <label>Heslo <input name="password" type="password" autocomplete="current-password" required></label>
+      <button>Přihlásit</button>
+    </form>
+  </section>
+
+  <section id="mfa" hidden>
+    <h2>Ověření (MFA)</h2>
+    <div id="mfa-setup" hidden>
+      <p>Přidej účet do autentizační aplikace (Aegis, Google Authenticator, Bitwarden…) ručně tímto klíčem:</p>
+      <p><code id="mfa-secret"></code></p>
+      <p class="muted">Nebo URI: <code id="mfa-uri"></code></p>
+    </div>
+    <form id="mfa-form">
+      <label>Kód z aplikace <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+      <button>Ověřit</button>
+    </form>
+  </section>
+
+  <section id="app" hidden>
+    <div class="row">
+      <label>Tenant <select id="tenant"></select></label>
+      <form id="tenant-form" class="inline superadmin" hidden>
+        <input name="name" placeholder="Nový tenant (firma)" required>
+        <button>Založit</button>
+      </form>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Lokality</h2>
+        <ul id="sites"></ul>
+        <form id="site-form" class="inline">
+          <input name="name" placeholder="Nová lokalita" required>
+          <button>Přidat</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Adopce zařízení</h2>
+        <form id="token-form" class="inline">
+          <select name="site_id" id="token-site"></select>
+          <button>Vygenerovat příkaz</button>
+        </form>
+        <div id="token-out" hidden>
+          <p>Vlož do terminálu MikroTiku (platí do <span id="token-exp"></span>, jednorázově):</p>
+          <pre id="token-cmd"></pre>
+          <button id="token-copy" type="button">Kopírovat</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Zařízení <button id="refresh" type="button" class="small">Obnovit</button></h2>
+      <table>
+        <thead><tr><th>Stav</th><th>Sériové č.</th><th>Model</th><th>RouterOS</th><th>Lokalita</th><th>Tunel IP</th><th>SSTP</th><th>Poslední check-in</th><th>Akce</th></tr></thead>
+        <tbody id="devices"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Audit</h2>
+      <table>
+        <thead><tr><th>Čas</th><th>Uživatel</th><th>Akce</th><th>Cíl</th><th>IP</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table>
+    </div>
+  </section>
+  <div id="msg" role="status"></div>
+</main>
+</body>
+</html>

@@ -2,62 +2,49 @@
 
 from __future__ import annotations
 
-import httpx
-
+from ..rosapi import RosApi
 from . import TunnelAccount, TunnelProvider
 
-PPP_PROFILE = "mtc-tunnel"  # profil s interface-list=TUNNELS, only-one=yes
+PPP_PROFILE = "mtc-tunnel"  # profil s interface-list=TUNNELS, only-one=yes (viz concentrator.rsc)
+COMMENT_PREFIX = "mtc: "
 
 
 class MikrotikProvider(TunnelProvider):
-    def __init__(self, base_url: str, username: str, password: str,
-                 ca_file: str | None = None) -> None:
-        # Ověření certifikátu koncentrátoru je povinné; vlastní CA přes ca_file.
-        self._client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/") + "/rest",
-            auth=(username, password),
-            verify=ca_file or True,
-            timeout=15.0,
-        )
+    def __init__(self, name: str, api: RosApi) -> None:
+        self.name = name
+        self.api = api
 
-    async def _find(self, username: str) -> dict | None:
-        r = await self._client.get("/ppp/secret", params={"name": username})
-        r.raise_for_status()
-        rows = r.json()
+    @classmethod
+    def from_config(cls, c) -> "MikrotikProvider":
+        return cls(c.name, RosApi(c.api_url, c.api_user, c.password(), c.api_fingerprint))
+
+    def _find(self, username: str) -> dict | None:
+        rows = self.api.get("/ppp/secret", name=username)
         return rows[0] if rows else None
 
-    async def ensure_account(self, account: TunnelAccount) -> None:
+    def ensure_account(self, account: TunnelAccount) -> None:
         body = {
             "name": account.username,
             "password": account.password,
             "service": "sstp",
             "profile": PPP_PROFILE,
             "remote-address": account.remote_address,
-            "comment": account.comment,
-            "disabled": "false",
+            "comment": COMMENT_PREFIX + account.comment,
+            "disabled": "no",
         }
-        existing = await self._find(account.username)
+        existing = self._find(account.username)
         if existing:
-            r = await self._client.patch(f"/ppp/secret/{existing['.id']}", json=body)
+            self.api.patch(f"/ppp/secret/{existing['.id']}", body)
         else:
-            r = await self._client.put("/ppp/secret", json=body)
-        r.raise_for_status()
+            self.api.put("/ppp/secret", body)
 
-    async def disable_account(self, username: str) -> None:
-        existing = await self._find(username)
+    def disable_account(self, username: str) -> None:
+        existing = self._find(username)
         if existing:
-            r = await self._client.patch(f"/ppp/secret/{existing['.id']}",
-                                         json={"disabled": "true"})
-            r.raise_for_status()
-        r = await self._client.get("/ppp/active", params={"name": username})
-        r.raise_for_status()
-        for row in r.json():
-            await self._client.delete(f"/ppp/active/{row['.id']}")
+            self.api.patch(f"/ppp/secret/{existing['.id']}", {"disabled": "yes"})
+        for row in self.api.get("/ppp/active", name=username) or []:
+            self.api.delete(f"/ppp/active/{row['.id']}")
 
-    async def active_sessions(self) -> dict[str, str]:
-        r = await self._client.get("/ppp/active", params={"service": "sstp"})
-        r.raise_for_status()
-        return {row["name"]: row.get("address", "") for row in r.json()}
-
-    async def aclose(self) -> None:
-        await self._client.aclose()
+    def active_sessions(self) -> dict[str, str]:
+        rows = self.api.get("/ppp/active", service="sstp") or []
+        return {r["name"]: r.get("address", "") for r in rows}

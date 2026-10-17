@@ -10,44 +10,47 @@ Instalace na Debian: [docs/install.md](docs/install.md).
 
 ## Stav
 
-Fáze **F0 – Základ** (rozpracováno):
+Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](docs/test-plan.md)).
 
-- [x] Kostra projektu, konfigurace, systemd unity, nginx
-- [x] Datový model: tenanti, lokality, zařízení, tajemství, uživatelé, role, audit
-- [x] Row-level security mezi tenanty, append-only audit, jednorázové adopční tokeny
-- [x] Šifrování tajemství (envelope, AES-256-GCM), hesla (scrypt), tokeny
-- [x] Přidělování tunelových IP (IPAM)
-- [x] Abstrakce koncentrátoru + provider pro fyzický MikroTik
-- [ ] Adopce zařízení (bootstrap skript, schválení, provisioning)
-- [ ] HTTPS check-in (HMAC, fronta příkazů, upload záloh)
-- [ ] Přihlášení, MFA, RBAC v API
-- [ ] Vlastní CA pro klientské certifikáty
+- [x] Instalace na Debian 13 jen z apt (`deploy/install.sh`), systemd sandbox, nginx
+- [x] Multi-tenant datový model, row-level security, append-only audit
+- [x] Admin UI + API: přihlášení, povinné TOTP MFA, zamykání účtu, CSRF, role per tenant
+- [x] Adopce jedním řádkem v terminálu MikroTiku, schválení v UI
+- [x] Check-in přes HTTPS, fronta příkazů s potvrzením (provisioning, restart, odebrání)
+- [x] SSTP tunel na každé zařízení, účty na koncentrátoru přes REST s pinningem certifikátu
+- [x] Ověření adopce přes REST v tunelu, offline detekce, failover mezi koncentrátory
+- [x] Generátor konfigurace koncentrátoru (`mtc-admin concentrator-script`)
+- [ ] Vlastní CA a klientské certifikáty pro SSTP
+- [ ] Polling metrik, topologie, VLAN, CAPsMAN, PtP (F1+)
 
 ## Struktura
 
 ```
 src/mtcontroller/
   config.py        konfigurace (config.toml + MTC_* proměnné)
-  db.py            připojení, tenant_scope / operator_scope pro RLS
-  models.py        ORM modely
-  security.py      hesla, tokeny, HMAC, šifrování tajemství
+  db.py            psycopg, tenant_scope / operator_scope pro RLS
+  migrate.py       migrátor; SQL schéma v sql/NNNN_*.up.sql
+  services.py      tenanti, adopce, schválení, check-in, fronta příkazů
+  auth.py, totp.py přihlášení, MFA, relace, role
+  routeros.py      generování RouterOS skriptů (adopce, provisioning, příkazy)
+  rosapi.py        REST klient RouterOS s pinningem certifikátu
+  concentrator.py  konfigurace koncentrátoru
+  security.py      hesla, tokeny, šifrování tajemství
   ipam.py          tunelové adresy
   tunnel/          abstrakce koncentrátoru (MikroTik, později RADIUS)
-  web/             FastAPI (admin UI + check-in, oddělené podle hostname)
-  worker/          polling, fronta změn, zálohy
+  web/             Starlette: admin UI + API, check-in (oddělené podle hostname)
+  worker/          offline detekce, ověření adopce, dorovnání koncentrátorů
   cli.py           mtc-admin
-migrations/        Alembic; SQL schéma v migrations/sql/
-deploy/            systemd unity, nginx
-tests/             pytest + tests/db (kontroly schématu proti Postgresu)
+deploy/            install.sh, systemd unity, nginx
+tests/             pytest (i end-to-end proti Postgresu) + tests/db (kontroly schématu)
 ```
 
 ## Vývoj
 
 ```sh
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e '.[dev]'
-pytest
-
-# kontroly schématu (RLS, audit, tokeny) proti lokálnímu Postgresu 16+
-sudo -u postgres tests/db/run.sh
+apt install python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
+            python3-cryptography python3-pytest postgresql
+# testy s DB potřebují trust autentizaci na unix socketu (jen vývojový stroj!)
+sudo -u postgres tests/db/run.sh   # kontroly schématu (RLS, audit, tokeny)
+python3 -m pytest                  # unit + end-to-end testy (bez DB se přeskočí)
 ```

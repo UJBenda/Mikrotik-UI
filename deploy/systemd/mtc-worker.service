@@ -1,17 +1,20 @@
 [Unit]
 Description=MikroTik Controller – worker (polling, změny, zálohy)
 After=network-online.target postgresql.service
-Wants=network-online.target
+Wants=network-online.target postgresql.service
 
 [Service]
 Type=simple
 User=mtcontroller
 Group=mtcontroller
 Environment=MTC_CONFIG=/etc/mtcontroller/config.toml
-ExecStart=/opt/mtcontroller/venv/bin/mtc-worker
+Environment=PYTHONPATH=/opt/mtcontroller/app
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m mtcontroller.worker
 Restart=on-failure
 RestartSec=5
 
+# sandbox (kontrola: systemd-analyze security mtc-worker)
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -19,19 +22,21 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
+ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
+ProtectProc=invisible
 RestrictSUIDSGID=yes
 RestrictNamespaces=yes
+RestrictRealtime=yes
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
+SystemCallFilter=~@privileged
 ReadWritePaths=/var/lib/mtcontroller
 ReadOnlyPaths=/etc/mtcontroller
 UMask=0077

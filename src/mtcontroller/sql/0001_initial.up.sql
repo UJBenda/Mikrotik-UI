@@ -182,8 +182,10 @@ ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_read ON audit_log FOR SELECT
   USING (mtc_is_operator() OR tenant_id = mtc_current_tenant());
+-- globální záznamy (tenant_id NULL – přihlášení apod.) smí zapsat kdokoli,
+-- číst je smí jen provozovatel
 CREATE POLICY audit_write ON audit_log FOR INSERT
-  WITH CHECK (mtc_is_operator() OR tenant_id = mtc_current_tenant());
+  WITH CHECK (mtc_is_operator() OR tenant_id IS NULL OR tenant_id = mtc_current_tenant());
 
 -- práva aplikační role -----------------------------------------------------
 
