@@ -284,6 +284,17 @@ Všechny tabulky kromě globálních číselníků nesou `tenant_id` a jsou pod 
 
 Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko výpadku nese až F3.
 
+### Stav k 18. 10. 2026
+
+| Fáze | Hotovo | Zbývá |
+| --- | --- | --- |
+| F0 | vše kromě vlastní CA/klientských certifikátů; `mtc-admin doctor`, `device-check` | klientské certifikáty SSTP |
+| F1 | inventura, metriky + grafy, alerty (offline, tunel, REST, CPU/RAM, porty, half-duplex, DHCP pool, NTP, zálohy, verze, bezpečnost), notifikace (webhook, Talk, e-mail), stav workeru | TimescaleDB není potřeba (hodinové agregace v PostgreSQL) |
+| F2 | topologie, klienti s polohou a historií 90 dní, hledání, VLAN analýza, porty (rychlost/PoE/VLAN/STP), STP přehled, Wi-Fi přehled | IPFIX / provoz per klient |
+| Brána | – | ověřit rollback (test-plan 9b, body 5–6) |
+| F3 | NTP plány se schválením; aktualizace RouterOS/RouterBOOT jednotlivě i postupně po lokalitě; release notes; úprava zařízení; správa uživatelů | rollback, VLAN aplikace, firewall, desired state |
+| F4 | bezpečnostní audit konfigurace (baseline) | správa CAPsMAN/SSID, PtP, CVE, rogue DHCP/AP |
+
 ## Implementace F0 – rozhodnutí a odchylky od návrhu
 
 | Téma | Návrh | Implementace | Důvod |
