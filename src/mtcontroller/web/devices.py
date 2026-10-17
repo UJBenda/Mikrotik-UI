@@ -245,37 +245,56 @@ async def metrics(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+# fyzické porty pro součet „celé zařízení“ (bez bridge/vlan – ty by provoz započítaly dvakrát)
+PHYS_PORT_RE = "^(ether|sfp|combo|qsfp)"
+
+TRAFFIC_5M = """
+WITH s AS (
+  SELECT at, name,
+         rx_bytes - lag(rx_bytes) OVER w AS drx, tx_bytes - lag(tx_bytes) OVER w AS dtx,
+         rx_errors - lag(rx_errors) OVER w AS dre, tx_errors - lag(tx_errors) OVER w AS dte,
+         rx_drops - lag(rx_drops) OVER w AS ddr, tx_drops - lag(tx_drops) OVER w AS ddt,
+         extract(epoch FROM at - lag(at) OVER w)::float AS secs
+  FROM interface_sample
+  WHERE device_id = %(d)s AND (name = %(i)s OR (%(i)s = '*' AND name ~ %(re)s))
+    AND at > now() - make_interval(hours => %(h)s) - interval '10 minutes'
+  WINDOW w AS (PARTITION BY name ORDER BY at)
+)
+SELECT at AS t,
+       round(sum(drx * 8 / secs))::bigint AS rx, round(sum(dtx * 8 / secs))::bigint AS tx,
+       sum(greatest(coalesce(dre, 0), 0))::bigint AS rx_err, sum(greatest(coalesce(dte, 0), 0))::bigint AS tx_err,
+       sum(greatest(coalesce(ddr, 0), 0))::bigint AS rx_drop, sum(greatest(coalesce(ddt, 0), 0))::bigint AS tx_drop
+FROM s
+WHERE secs > 0 AND secs < 3600 AND drx >= 0 AND dtx >= 0
+GROUP BY at ORDER BY at
+"""
+
+TRAFFIC_1H = """
+SELECT hour AS t, sum(rx_bps_avg)::bigint AS rx, sum(tx_bps_avg)::bigint AS tx,
+       sum(rx_bps_max)::bigint AS rx_max, sum(tx_bps_max)::bigint AS tx_max,
+       sum(rx_errors)::bigint AS rx_err, sum(tx_errors)::bigint AS tx_err,
+       sum(rx_drops)::bigint AS rx_drop, sum(tx_drops)::bigint AS tx_drop
+FROM interface_hourly
+WHERE device_id = %(d)s AND (name = %(i)s OR (%(i)s = '*' AND name ~ %(re)s))
+  AND hour > now() - make_interval(hours => %(h)s)
+GROUP BY hour ORDER BY hour
+"""
+
+
 @endpoint(READ)
 async def traffic(request: Request, p: Principal, tid: str) -> Response:
-    """Provoz jednoho rozhraní pro graf: do 48 h z 5min vzorků, déle z hodinových agregací."""
+    """Provoz, chyby a zahozené pakety pro graf. interface=jméno portu, nebo * = součet
+    fyzických portů. Do 48 h z 5min vzorků, déle z hodinových agregací (+ špičky)."""
     st = get_state(request)
     did = _uuid(request.path_params["device_id"])
     hours = _int(request.query_params.get("hours"), 24, 1, 24 * 400)
-    iface = str(request.query_params.get("interface") or "")[:100]
-    if not iface:
-        return _err(400, "chybí parametr interface")
+    iface = str(request.query_params.get("interface") or "*")[:100]
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            if hours <= 48:
-                rows = tx.fetchall(
-                    """SELECT at, rx_bytes - lag(rx_bytes) OVER w AS drx, tx_bytes - lag(tx_bytes) OVER w AS dtx,
-                              extract(epoch FROM at - lag(at) OVER w)::float AS secs
-                       FROM interface_sample
-                       WHERE device_id = %(d)s AND name = %(i)s
-                         AND at > now() - make_interval(hours => %(h)s) - interval '10 minutes'
-                       WINDOW w AS (ORDER BY at) ORDER BY at""", {"d": did, "i": iface, "h": hours})
-                pts = [{"t": r["at"], "rx": round(r["drx"] * 8 / r["secs"]), "tx": round(r["dtx"] * 8 / r["secs"])}
-                       for r in rows
-                       if r["secs"] and 0 < r["secs"] < 3600 and r["drx"] is not None and r["drx"] >= 0
-                       and r["dtx"] is not None and r["dtx"] >= 0]
-                return {"interface": iface, "resolution": "5m", "points": pts}
-            rows = tx.fetchall(
-                """SELECT hour AS t, rx_bps_avg AS rx, tx_bps_avg AS tx, rx_bps_max AS rx_max, tx_bps_max AS tx_max
-                   FROM interface_hourly WHERE device_id = %(d)s AND name = %(i)s
-                     AND hour > now() - make_interval(hours => %(h)s) ORDER BY hour""",
-                {"d": did, "i": iface, "h": hours})
-            return {"interface": iface, "resolution": "1h", "points": rows}
+            sql, res = (TRAFFIC_5M, "5m") if hours <= 48 else (TRAFFIC_1H, "1h")
+            rows = tx.fetchall(sql, {"d": did, "i": iface, "h": hours, "re": PHYS_PORT_RE})
+            return {"interface": iface, "resolution": res, "points": rows}
 
     return json_response(await run_in_threadpool(q))
 

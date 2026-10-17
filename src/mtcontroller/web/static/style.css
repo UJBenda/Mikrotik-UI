@@ -2,11 +2,13 @@
         --accent: #1f6feb; --accent-weak: #e8f0fe; --ok: #1f8a4c; --ok-weak: #e6f4ec; --warn: #b7791f;
         --warn-weak: #fdf4e3; --bad: #c53030; --bad-weak: #fdecec;
         --port-gbe: #33c05a; --port-fe: #a6c93a; --port-down: #d8dde3; --port-ico: #fff;
+        --rx: #2f9bf0; --tx: #9b5cf0; --vlan-native: #5b9df5;
         --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06); }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #111418; --card: #1b1f24; --text: #e6e8eb; --muted: #9aa3ad; --line: #2c3239; --hover: #232930;
           --accent: #4c8dff; --accent-weak: #1d2a40; --ok-weak: #15291f; --warn-weak: #2e2512; --bad-weak: #33191a;
-          --port-gbe: #2ea44f; --port-fe: #8aa82e; --port-down: #353c44; --shadow: none; }
+          --port-gbe: #2ea44f; --port-fe: #8aa82e; --port-down: #353c44; --shadow: none;
+          --rx: #4aa9f5; --tx: #ae7bf5; --vlan-native: #4f8de8; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -75,11 +77,6 @@ tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--hove
 #topo circle.offline { fill: var(--bad); }
 #topo text { fill: var(--text); font-size: 12px; } #topo text.port { fill: var(--muted); font-size: 10px; }
 
-#d-traffic-svg { width: 100%; height: auto; background: var(--bg); border-radius: 6px; }
-#d-traffic-svg polyline { fill: none; stroke-width: 1.5; }
-#d-traffic-svg polyline.rx { stroke: var(--accent); } #d-traffic-svg polyline.tx { stroke: var(--warn); }
-#d-traffic-svg polyline.max { stroke-dasharray: 3 3; stroke-width: 1; opacity: .6; }
-#d-traffic-svg line { stroke: var(--muted); stroke-width: .5; } #d-traffic-svg text { fill: var(--muted); font-size: 11px; }
 
 .overview { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
 .overview .tile { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--ok);
@@ -123,3 +120,68 @@ details.fold { margin: 14px 0 4px; }
 details.fold > summary { cursor: pointer; font-size: 13px; color: var(--muted); text-transform: uppercase;
                          letter-spacing: .03em; font-weight: 600; padding: 4px 0; }
 details.fold[open] > summary { margin-bottom: 6px; }
+
+/* --- segmented control (přepínače zobrazení) --- */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); }
+.seg button { background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 4px 11px;
+              font-size: 12.5px; font-weight: 500; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: 0; }
+.seg button:hover:not(:disabled) { background: var(--hover); color: var(--text); filter: none; }
+.seg button.active, .seg button.active:hover:not(:disabled) { color: var(--accent); background: var(--accent-weak); font-weight: 600; }
+.seg button:disabled { opacity: .45; }
+
+/* --- pohledy panelu portů --- */
+.ports-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.ports-head h3 { margin: 0; }
+.ports { flex-direction: column; gap: 6px; }
+.port-row { display: flex; gap: 28px; align-items: flex-end; flex-wrap: wrap; }
+.port-group.compact { row-gap: 4px; }
+.port.selected { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--accent); }
+.port.plain { background: var(--card); border-color: var(--line); color: var(--text); }
+.port.dim { opacity: .55; }
+.port .big { position: absolute; left: 0; right: 0; top: 4px; bottom: 15px; display: flex; align-items: center;
+             justify-content: center; font-size: 14px; font-weight: 700; }
+.port .big.small { font-size: 12px; }
+.port.plain .num, .port.down .num { color: var(--muted); }
+.port.poe1 { background: #f6d860; color: #4a3b00; } .port.poe2 { background: #f2a93b; color: #3f2500; }
+.port.poe3 { background: #e46a2e; } .port.err1 { background: #f0a43a; color: #3f2500; } .port.err2 { background: var(--bad); }
+.port.vt { background: var(--port-gbe); } .port.vn { background: var(--vlan-native); }
+.port.vt .num, .port.vn .num { color: #fff; }
+.vlan-row { border-top: 1px solid var(--line); padding: 8px 0 6px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.vlan-row:first-child { border-top: 0; }
+.vlan-name { flex: 0 0 150px; font-weight: 600; font-size: 13px; }
+.ports-legend .sw.plain { background: var(--card); border: 1px solid var(--line); }
+.ports-legend .sw.dim { background: var(--card); border: 1px solid var(--line); opacity: .5; }
+.ports-legend .sw.vt { background: var(--port-gbe); } .ports-legend .sw.vn { background: var(--vlan-native); }
+.ports-legend .sw.poe1 { background: #f6d860; } .ports-legend .sw.poe2 { background: #f2a93b; }
+.ports-legend .sw.poe3 { background: #e46a2e; } .ports-legend .sw.err1 { background: #f0a43a; }
+.ports-legend .sw.err2 { background: var(--bad); }
+
+/* --- graf provozu --- */
+.traffic { margin-top: 18px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 6px; }
+.traffic-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.traffic-head h3 { margin: 0; }
+.traffic-now { display: flex; gap: 14px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.now-rx { color: var(--rx); } .now-tx { color: var(--tx); }
+.traffic-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
+.traffic-plot { position: relative; }
+#d-traffic-svg { width: 100%; height: 240px; display: block; cursor: crosshair; }
+#d-traffic-svg .grid { stroke: var(--line); stroke-width: 1; }
+#d-traffic-svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+#d-traffic-svg .ylab { text-anchor: end; } #d-traffic-svg .xlab { text-anchor: middle; }
+#d-traffic-svg .xlab.first { text-anchor: start; } #d-traffic-svg .xlab.last { text-anchor: end; }
+#d-traffic-svg polyline { fill: none; stroke-width: 1.6; stroke-linejoin: round; }
+#d-traffic-svg polyline.rx { stroke: var(--rx); } #d-traffic-svg polyline.tx { stroke: var(--tx); }
+#d-traffic-svg polyline.max { stroke-dasharray: 3 3; stroke-width: 1; opacity: .55; }
+#d-traffic-svg polygon.area { stroke: none; opacity: .12; }
+#d-traffic-svg polygon.rx { fill: var(--rx); } #d-traffic-svg polygon.tx { fill: var(--tx); }
+#d-traffic-svg .guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
+#d-traffic-svg .dot { stroke: var(--card); stroke-width: 1.5; }
+#d-traffic-svg .dot.rx { fill: var(--rx); } #d-traffic-svg .dot.tx { fill: var(--tx); }
+.tip { position: absolute; top: 8px; min-width: 180px; background: #1d2433; color: #fff; border-radius: 8px;
+       padding: 8px 10px; font-size: 12px; pointer-events: none; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+.tip b { display: block; margin-bottom: 4px; font-weight: 600; }
+.tip div { display: flex; justify-content: space-between; gap: 14px; font-variant-numeric: tabular-nums; }
+.tip .tip-rx span:last-child { color: #7cc4ff; } .tip .tip-tx span:last-child { color: #c9a6ff; }
+.port.sfp .big { top: 12px; }
+.port .ico.br { top: auto; bottom: 2px; font-size: 10px; }

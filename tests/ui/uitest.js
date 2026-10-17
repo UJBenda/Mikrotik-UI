@@ -102,17 +102,44 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
     if (byId["d-security"].children.length < 5) errors.push("bezpečnostní nálezy se nezobrazily");
-    const pg = byId["d-ports"].children[0];
-    if (!pg || pg.className !== "port-group" || !pg.children.some((c) => /^port( |$)/.test(c.className)))
+    const prow = byId["d-ports"].children[0];
+    const pg = prow && prow.children[0];
+    if (!pg || !/^port-group/.test(pg.className) || !pg.children.some((c) => /^port( |$)/.test(c.className)))
       errors.push("panel portů se nevykreslil");
+    if (byId["d-traffic"].hidden) errors.push("graf celého zařízení se po otevření detailu nezobrazil");
+    // přepínání pohledů portů
+    const views = byId["d-ports-views"].children;
+    if (views.length !== 5) errors.push("přepínač pohledů portů: " + views.length);
+    await views[2].fire("click");
+    if (!byId["d-ports"].children.some((c) => c.className === "vlan-row")) errors.push("pohled VLAN: chybí matice");
+    if (byId["d-vlan-filter"].hidden) errors.push("pohled VLAN: chybí filtr");
+    await byId["d-ports-views"].children[3].fire("click");
+    if (byId["d-ports"].children[0].className !== "port-row") errors.push("pohled PoE");
+    await byId["d-ports-views"].children[0].fire("click");
+    // přepínače grafu: metrika Chyby, jen přijato
+    await byId["tr-metric"].children[1].fire("click");
+    await byId["tr-dir"].children[1].fire("click");
+    const pl = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;
+    if (pl !== 1) errors.push("graf: po volbě RX čekána 1 křivka, je " + pl);
+    await byId["tr-dir"].children[0].fire("click");
+    await byId["tr-metric"].children[0].fire("click");
     await byId["d-ifaces"].children[0].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const lines = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;
     if (byId["d-traffic"].hidden || lines !== 2) errors.push("graf provozu: čekány 2 křivky, je " + lines);
+    if (byId["tr-scope"].children[1].disabled) errors.push("graf: po kliknutí na port má jít přepnout na port");
+    await byId["tr-range"].children[2].fire("click");
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    const l7 = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;
+    if (l7 !== 4) errors.push("graf 7 dní: čekány 2 křivky + 2 špičky, je " + l7);
+    await byId["tr-range"].children[1].fire("click");
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const diffBtn = byId["d-backups"].children[0].children[4].children[0];
     if (diffBtn && diffBtn.onclick) await diffBtn.onclick();
     const diffShown = !byId["d-diff"].hidden;
     await ctx.__t.openDetail(api.sw);
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    if (!byId["d-traffic-info"].textContent.includes("málo dat")) errors.push("prázdný graf: chybí hláška");
     await byId["d-vlan-plan"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const steps = byId["d-vlan-steps"].children.length;

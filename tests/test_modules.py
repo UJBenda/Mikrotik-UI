@@ -340,6 +340,11 @@ def test_traffic_endpoint():
                     """INSERT INTO interface_sample (tenant_id, device_id, at, name, rx_bytes, tx_bytes)
                        VALUES (%(t)s, %(d)s, now() - make_interval(mins => %(m)s), 'ether1', %(rx)s, %(tx)s)""",
                     {"t": tid, "d": gw, "m": 140 - 5 * k, "rx": 1_000_000 * k, "tx": 2_000_000 * k})
+                # bridge nese stejný provoz znovu – do součtu zařízení nesmí
+                tx.execute(
+                    """INSERT INTO interface_sample (tenant_id, device_id, at, name, rx_bytes, tx_bytes)
+                       VALUES (%(t)s, %(d)s, now() - make_interval(mins => %(m)s), 'bridge', %(rx)s, %(tx)s)""",
+                    {"t": tid, "d": gw, "m": 140 - 5 * k, "rx": 9_000_000 * k, "tx": 9_000_000 * k})
             # restart čítačů (záporný rozdíl) se nesmí ukázat jako špička
             # (vzorky před 2 h – agregace zpracovává jen dokončené hodiny)
             tx.execute("""INSERT INTO interface_sample (tenant_id, device_id, at, name, rx_bytes, tx_bytes)
@@ -348,6 +353,7 @@ def test_traffic_endpoint():
         c = _login(app)
         base = f"/api/admin/tenants/{tid}/devices/{gw}/traffic"
         r = c.get(base + "?interface=ether1&hours=6").json()
+        r_port = r
         assert r["resolution"] == "5m" and len(r["points"]) == 3
         assert all(abs(p["rx"] - 1_000_000 * 8 / 300) < 100 and abs(p["tx"] - 2 * 1_000_000 * 8 / 300) < 100
                    for p in r["points"])
@@ -357,7 +363,11 @@ def test_traffic_endpoint():
         # hodina jen s restartem čítačů nesmí mít nesmyslnou hodnotu
         assert r["resolution"] == "1h" and any((p["rx_max"] or 0) > 0 for p in r["points"])
         assert all(p["rx_max"] is None or p["rx_max"] < 10**9 for p in r["points"])
-        assert c.get(base).status_code == 400
+        # bez interface = součet fyzických portů (ether1 je fyzický)
+        tot = c.get(base + "?hours=6").json()
+        assert tot["interface"] == "*" and len(tot["points"]) == 3
+        assert [p["rx"] for p in tot["points"]] == [p["rx"] for p in r_port["points"]]
+        assert all("rx_err" in p and "tx_drop" in p for p in tot["points"])
     finally:
         drop_db(name)
 

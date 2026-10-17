@@ -220,19 +220,26 @@
       <ul id="d-vlan"></ul>
       <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
       <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
-      <h3>Porty</h3>
-      <div id="d-ports" class="ports"></div>
-      <div class="ports-legend">
-        <span><i class="sw gbe"></i>GbE+</span><span><i class="sw fe"></i>FE</span>
-        <span><i class="sw down"></i>bez linky</span><span><i class="sw off"></i>vypnutý</span>
-        <span>⚡ PoE</span><span>↑ uplink</span><span><i class="sw blk"></i>blokuje STP / half-duplex</span>
-        <span class="muted">klik na port = graf provozu</span>
+      <div class="ports-head">
+        <h3>Porty</h3>
+        <div id="d-ports-views"></div>
+        <input id="d-vlan-filter" placeholder="Hledat VLAN…" size="14" hidden>
       </div>
-      <div id="d-traffic" hidden>
-        <h3><span id="d-traffic-h"></span>
-          <select id="d-traffic-range"><option value="6">6 h</option><option value="24">24 h</option>
-            <option value="168">7 dní</option><option value="720">30 dní</option><option value="8760">rok</option></select></h3>
-        <svg id="d-traffic-svg" viewBox="0 0 800 220" role="img" aria-label="Provoz rozhraní"></svg>
+      <div id="d-ports" class="ports"></div>
+      <div id="d-ports-legend" class="ports-legend"></div>
+
+      <div id="d-traffic" class="traffic" hidden>
+        <div class="traffic-head">
+          <h3 id="d-traffic-h"></h3>
+          <div id="tr-now" class="traffic-now"></div>
+        </div>
+        <div class="traffic-bar">
+          <div id="tr-scope"></div><div id="tr-metric"></div><div id="tr-dir"></div><div id="tr-range"></div>
+        </div>
+        <div class="traffic-plot">
+          <svg id="d-traffic-svg" viewBox="0 0 800 240" role="img" aria-label="Graf provozu"></svg>
+          <div id="tr-tip" class="tip" hidden></div>
+        </div>
         <p id="d-traffic-info" class="muted"></p>
       </div>
       <details class="fold"><summary>Všechna rozhraní <span id="d-ifaces-n" class="muted"></span></summary>

@@ -705,9 +705,29 @@ $("pw-form").addEventListener("submit", async (ev) => {
   } catch (e) { msg(e.message, true); }
 });
 
-// --- panel portů (jako přední panel switche) ----------------------------------------------
+// --- předvolby zobrazení (jen v tomto prohlížeči) --------------------------------------------
+
+const prefs = (() => { try { return JSON.parse(localStorage.getItem("mtc-view") || "{}"); } catch (e) { return {}; } })();
+function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(prefs)); } catch (e) { /* bez úložiště */ } }
+
+// přepínač ve stylu segmented control: options = [[hodnota, popisek], …]
+function segmented(box, options, value, onChange) {
+  box.textContent = "";
+  box.className = "seg";
+  for (const [v, label, disabled] of options) {
+    const b = el("button", label, v === value ? "active" : "");
+    b.type = "button";
+    b.disabled = !!disabled;
+    b.addEventListener("click", () => { if (v !== value) onChange(v); });
+    box.appendChild(b);
+  }
+}
+
+// --- panel portů s pohledy (linka, native VLAN, VLAN, PoE, chyby) ----------------------------
 
 const PORT_RE = /^(ether|sfp|combo|qsfp)/;
+const PORT_VIEWS = [["link", "Linka"], ["pvid", "Native VLAN"], ["vlan", "VLAN tagování"], ["poe", "PoE"], ["err", "Chyby"]];
+let portCtx = null;
 
 function portNum(name) {
   const m = String(name).match(/(\d+)(?!.*\d)/);
@@ -719,64 +739,152 @@ function shortName(s, n = 9) {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 
-function renderPorts(devId, d) {
-  const box = $("d-ports"); box.textContent = "";
-  const phys = (d.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
-  if (!phys.length) { box.appendChild(el("p", "Žádné fyzické porty v inventuře", "muted")); return; }
-  const managed = new Set((devicesCache || []).map((x) => x.identity).filter(Boolean));
-  const neigh = {};
-  for (const n of d.neighbors || []) {
-    for (const part of String(n.interface || "").split(/[,/]/)) {
-      if (part && !neigh[part]) neigh[part] = n;
-    }
-  }
-  const sfp = phys.filter((i) => /^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
-  const cu = phys.filter((i) => !/^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
-  for (const group of [cu, sfp]) if (group.length) box.appendChild(portGroup(devId, group, neigh, managed));
+function vlanSet(list) {
+  const out = new Set();
+  for (const x of list || []) for (const part of String(x).split(",")) if (part) out.add(part.trim());
+  return out;
 }
 
-function portGroup(devId, ports, neigh, managed) {
+function renderPorts(devId, d) {
+  const phys = (d.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
+  const neigh = {};
+  for (const n of d.neighbors || []) {
+    for (const part of String(n.interface || "").split(/[,/]/)) if (part && !neigh[part]) neigh[part] = n;
+  }
+  const managed = new Set((devicesCache || []).map((x) => x.identity).filter(Boolean));
+  const bySfp = (sfp) => phys.filter((i) => /^(sfp|qsfp)/.test(i.name) === sfp).sort((a, b) => portNum(a.name) - portNum(b.name));
+  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), neigh, managed };
+  drawPorts();
+}
+
+function drawPorts() {
+  const c = portCtx;
+  const view = PORT_VIEWS.some(([v]) => v === prefs.portView) ? prefs.portView : "link";
+  segmented($("d-ports-views"), PORT_VIEWS, view, (v) => { prefs.portView = v; savePrefs(); drawPorts(); });
+  const box = $("d-ports"); box.textContent = "";
+  $("d-vlan-filter").hidden = view !== "vlan";
+  portLegend(view);
+  if (!c.phys.length) { box.appendChild(el("p", "Žádné fyzické porty v inventuře", "muted")); return; }
+  if (view === "vlan") return drawVlanMatrix(box);
+  const row = el("div", null, "port-row");
+  for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => portTile(i, view), true));
+  box.appendChild(row);
+}
+
+function drawVlanMatrix(box) {
+  const c = portCtx;
+  const vids = new Set();
+  for (const i of c.phys) {
+    const p = i.port || {};
+    for (const v of [...vlanSet(p.tagged), ...vlanSet(p.untagged)]) vids.add(v);
+    if (p.pvid) vids.add(String(p.pvid));
+  }
+  const q = $("d-vlan-filter").value.trim();
+  const list = [...vids].filter((v) => !q || v.includes(q))
+    .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+  if (!list.length) { box.appendChild(el("p", vids.size ? "Žádná VLAN neodpovídá filtru" : "Porty nejsou v bridgi s VLAN", "muted")); return; }
+  for (const vid of list) {
+    const members = c.phys.filter((i) => vlanMember(i, vid)).length;
+    const r = el("div", null, "vlan-row");
+    const name = el("div", `VLAN ${vid}`, "vlan-name");
+    name.appendChild(el("span", ` · ${members} port${members === 1 ? "" : members < 5 && members ? "y" : "ů"}`, "muted"));
+    r.appendChild(name);
+    const row = el("div", null, "port-row");
+    for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => vlanTile(i, vid), false));
+    r.appendChild(row);
+    box.appendChild(r);
+  }
+}
+
+function vlanMember(i, vid) {
+  const p = i.port || {};
+  if (vlanSet(p.tagged).has(vid)) return "tagged";
+  if (vlanSet(p.untagged).has(vid) || String(p.pvid) === vid) return "native";
+  return null;
+}
+
+function portGroup(ports, tileFn, withLabels) {
   // víc než 8 portů: liché nahoře, sudé dole (jako na switchi); jinak jedna řada
   const twoRows = ports.length > 8;
-  const top = twoRows ? ports.filter((_, i) => i % 2 === 0) : ports;
-  const bottom = twoRows ? ports.filter((_, i) => i % 2 === 1) : [];
-  const g = el("div", null, "port-group");
+  const top = twoRows ? ports.filter((_, k) => k % 2 === 0) : ports;
+  const bottom = twoRows ? ports.filter((_, k) => k % 2 === 1) : [];
+  const g = el("div", null, "port-group" + (withLabels ? "" : " compact"));
   g.style.gridTemplateColumns = `repeat(${top.length}, 52px)`;
   const place = (node, row, col) => { node.style.gridRow = String(row); node.style.gridColumn = String(col); g.appendChild(node); };
-  const label = (i, pos) => {
-    const n = neigh[i.name], p = i.port || {};
-    const c = el("div", null, "port-label " + pos);
-    const who = n ? (n.identity || n["mac-address"] || "") : "";
-    const w = p.poe_power && Number(p.poe_power) > 0 ? `${Number(p.poe_power).toFixed(1)} W` : "";
-    const name = el("span", shortName(who), managed.has(who) ? "managed" : "");
-    if (pos === "above") c.append(el("span", w, "poe-w"), name); else c.append(name, el("span", w, "poe-w"));
-    if (n) c.title = `${n.identity || ""} ${n["mac-address"] || ""} ${n.board || n.platform || ""}`.trim();
-    return c;
-  };
-  top.forEach((i, k) => { place(label(i, "above"), 1, k + 1); place(portTile(devId, i, neigh, managed), 2, k + 1); });
-  bottom.forEach((i, k) => { place(portTile(devId, i, neigh, managed), 3, k + 1); place(label(i, "below"), 4, k + 1); });
+  const off = withLabels ? 1 : 0;
+  top.forEach((i, k) => { if (withLabels) place(portLabel(i, "above"), 1, k + 1); place(tileWrap(i, tileFn), 1 + off, k + 1); });
+  bottom.forEach((i, k) => { place(tileWrap(i, tileFn), 2 + off, k + 1); if (withLabels) place(portLabel(i, "below"), 4, k + 1); });
   return g;
 }
 
-function portTile(devId, i, neigh, managed) {
-  const p = i.port || {};
-  const n = neigh[i.name];
-  let cls = "port";
-  if (i.disabled) cls += " off";
-  else if (!i.running || (p.link && p.link !== "link-ok")) cls += " down";
-  else if (/G/.test(p.rate || "")) cls += " gbe";
-  else if (p.rate) cls += " fe";
-  else cls += " gbe";
-  if (p.full_duplex === false || p.stp_forwarding === false) cls += " blk";
-  // uplink: root port STP, bez STP port ke spravované gateway
-  const gw = n && (devicesCache || []).some((x) => x.identity === n.identity && x.role === "gateway");
-  const uplink = p.stp_role === "root-port" || (!p.stp_role && gw);
-  const t = el("button", null, cls);
+function tileWrap(i, tileFn) {
+  const t = tileFn(i);
   t.type = "button";
-  const poeOn = p.poe && /powered-on|on/.test(p.poe);
   if (/^(sfp|qsfp)/.test(i.name)) { t.className += " sfp"; t.appendChild(el("span", /plus/.test(i.name) ? "SFP+" : "SFP", "tag")); }
-  t.append(el("span", String(portNum(i.name)), "num"), el("span", (poeOn ? "⚡" : "") + (uplink ? "↑" : ""), "ico"));
-  t.title = [
+  t.appendChild(el("span", String(portNum(i.name)), "num"));
+  t.title = portTooltip(i);
+  t.addEventListener("click", () => selectPortTraffic(i.name));
+  if (trafficState.iface === i.name) t.className += " selected";
+  return t;
+}
+
+function portLabel(i, pos) {
+  const n = portCtx.neigh[i.name], p = i.port || {};
+  const c = el("div", null, "port-label " + pos);
+  const who = n ? (n.identity || n["mac-address"] || "") : "";
+  const w = p.poe_power && Number(p.poe_power) > 0 ? `${Number(p.poe_power).toFixed(1)} W` : "";
+  const name = el("span", shortName(who), portCtx.managed.has(who) ? "managed" : "");
+  if (pos === "above") c.append(el("span", w, "poe-w"), name); else c.append(name, el("span", w, "poe-w"));
+  if (n) c.title = `${n.identity || ""} ${n["mac-address"] || ""} ${n.board || n.platform || ""}`.trim();
+  return c;
+}
+
+function linkClass(i) {
+  const p = i.port || {};
+  if (i.disabled) return "off";
+  if (!i.running || (p.link && p.link !== "link-ok")) return "down";
+  return p.rate && !/G/.test(p.rate) ? "fe" : "gbe";
+}
+
+function portTile(i, view) {
+  const p = i.port || {};
+  const lc = linkClass(i);
+  const t = el("button", null, "port");
+  if (view === "link") {
+    t.className += " " + lc;
+    if (p.full_duplex === false || p.stp_forwarding === false) t.className += " blk";
+    const n = portCtx.neigh[i.name];
+    const gw = n && (devicesCache || []).some((x) => x.identity === n.identity && x.role === "gateway");
+    const uplink = p.stp_role === "root-port" || (!p.stp_role && gw);
+    const poeOn = p.poe && /powered-on|on/.test(p.poe);
+    t.appendChild(el("span", (poeOn ? "⚡" : "") + (uplink ? "↑" : ""), "ico"));
+  } else if (view === "pvid") {
+    t.className += " plain" + (lc === "down" || lc === "off" ? " dim" : "");
+    t.appendChild(el("span", p.pvid ? String(p.pvid) : "–", "big"));
+  } else if (view === "poe") {
+    const w = Number(p.poe_power) || 0;
+    if (w > 0) t.className += w >= 15 ? " poe3" : w >= 5 ? " poe2" : " poe1";
+    else t.className += p.poe ? " plain" : " down";
+    t.appendChild(el("span", w > 0 ? w.toFixed(1) : (p.poe ? "0" : ""), "big small"));
+  } else if (view === "err") {
+    const e = (Number(i.rx_error) || 0) + (Number(i.tx_error) || 0);
+    const ld = Number(i.link_downs) || 0;
+    t.className += e > 100 ? " err2" : e > 0 ? " err1" : lc === "down" || lc === "off" ? " down" : " plain";
+    if (e) t.appendChild(el("span", e > 999 ? Math.round(e / 1000) + "k" : String(e), "big small"));
+    // 1–2 výpadky od startu jsou běžné (zapojení), víc už stojí za pozornost
+    if (ld >= 3) t.appendChild(el("span", `↯${ld}`, "ico br"));
+  }
+  return t;
+}
+
+function vlanTile(i, vid) {
+  const m = vlanMember(i, vid);
+  return el("button", null, "port " + (m === "tagged" ? "vt" : m === "native" ? "vn" : "down"));
+}
+
+function portTooltip(i) {
+  const p = i.port || {}, n = portCtx.neigh[i.name];
+  return [
     i.name + (i.comment ? ` – ${i.comment}` : ""),
     i.disabled ? "vypnutý" : (i.running ? `linka ${p.rate || "ok"}${p.full_duplex === false ? " half-duplex" : ""}` : "bez linky"),
     p.pvid ? `PVID ${p.pvid}` + (p.tagged && p.tagged.length ? `, tagované ${p.tagged.join(",")}` : "") : "",
@@ -784,82 +892,187 @@ function portTile(devId, i, neigh, managed) {
     p.poe ? `PoE ${p.poe}${p.poe_power ? " " + p.poe_power + " W" : ""}` : "",
     p.sfp_rx_power ? `SFP RX ${p.sfp_rx_power} dBm` : "",
     n ? `soused: ${n.identity || n["mac-address"]}` : "",
-    `chyby RX/TX ${i.rx_error || 0}/${i.tx_error || 0}, výpadky ${i.link_downs || 0}`,
+    `chyby RX/TX ${i.rx_error || 0}/${i.tx_error || 0}, výpadky linky ${i.link_downs || 0}`,
   ].filter(Boolean).join("\n");
-  t.addEventListener("click", () => showTraffic(devId, i.name));
-  return t;
 }
 
-// --- graf provozu rozhraní -------------------------------------------------------------------
+const LEGENDS = {
+  link: [["gbe", "GbE+"], ["fe", "FE"], ["down", "bez linky"], ["off", "vypnutý"], [null, "⚡ PoE"], [null, "↑ uplink"], ["blk", "blokuje STP / half-duplex"]],
+  pvid: [["plain", "číslo = native VLAN (PVID)"], ["dim", "port bez linky"]],
+  vlan: [["vt", "tagovaná"], ["vn", "native (netagovaná)"], ["down", "není členem"]],
+  poe: [["poe1", "< 5 W"], ["poe2", "5–15 W"], ["poe3", "≥ 15 W"], ["plain", "PoE bez odběru"], ["down", "bez PoE"]],
+  err: [["plain", "bez chyb"], ["err1", "chyby"], ["err2", "> 100 chyb"], [null, "↯ výpadky linky (od 3)"]],
+};
 
-let trafficIface = null;
+function portLegend(view) {
+  const lg = $("d-ports-legend"); lg.textContent = "";
+  for (const [cls, label] of LEGENDS[view]) {
+    const s = el("span");
+    if (cls) s.appendChild(el("i", null, "sw " + cls));
+    s.appendChild(document.createTextNode(label));
+    lg.appendChild(s);
+  }
+  if (view === "poe") {
+    const total = portCtx.phys.reduce((a, i) => a + (Number((i.port || {}).poe_power) || 0), 0);
+    lg.appendChild(el("b", `celkem ${total.toFixed(1)} W`));
+  }
+  lg.appendChild(el("span", "klik na port = jeho graf", "muted"));
+}
+
+$("d-vlan-filter").addEventListener("input", () => { if (portCtx) drawPorts(); });
+
+// --- graf provozu (celé zařízení / port; provoz, chyby, zahozené) ------------------------------
+
+const TR_METRICS = [["bps", "Provoz"], ["err", "Chyby"], ["drop", "Zahozené"]];
+const TR_DIRS = [["all", "Vše"], ["rx", "↓ Přijato"], ["tx", "↑ Odesláno"]];
+const TR_RANGES = [[6, "6H"], [24, "1D"], [168, "1T"], [720, "1M"], [8760, "1R"]];
+const trafficState = {
+  iface: "*", lastPort: null,
+  metric: prefs.trMetric || "bps", dir: prefs.trDir || "all", hours: Number(prefs.trHours) || 24,
+};
+let trafficData = null;
 
 function fmtBps(v) {
   if (v == null) return "–";
   const u = [["G", 1e9], ["M", 1e6], ["k", 1e3]];
-  for (const [n, f] of u) if (v >= f) return (v / f).toFixed(v / f >= 100 ? 0 : 1) + ` ${n}b/s`;
+  for (const [n, f] of u) if (v >= f) return (v / f).toFixed(v / f >= 10 ? 0 : 1) + ` ${n}b/s`;
   return `${Math.round(v)} b/s`;
 }
 
-async function showTraffic(devId, name) {
-  trafficIface = name;
-  const hours = $("d-traffic-range").value || "24";
-  let r;
-  try {
-    r = await api("GET", `/tenants/${tenantId}/devices/${devId}/traffic?interface=${encodeURIComponent(name)}&hours=${hours}`);
-  } catch (e) { return msg(e.message, true); }
-  if (detailId !== devId || trafficIface !== name) return;
-  $("d-traffic").hidden = false;
-  $("d-traffic-h").textContent = `Provoz ${name} `;
-  drawTraffic(r);
+function fmtVal(v) {
+  if (trafficState.metric === "bps") return fmtBps(v);
+  return v == null ? "–" : `${Math.round(v)}`;
 }
 
-$("d-traffic-range").addEventListener("change", () => { if (detailId && trafficIface) showTraffic(detailId, trafficIface); });
+function selectPortTraffic(name) {
+  trafficState.lastPort = name;
+  showTraffic(detailId, name);
+}
 
-function drawTraffic(r) {
+async function showTraffic(devId, name) {
+  if (name !== undefined) trafficState.iface = name;
+  if (trafficState.iface !== "*") trafficState.lastPort = trafficState.iface;
+  drawTrafficBar();
+  if (portCtx) drawPorts();
+  let r;
+  try {
+    r = await api("GET", `/tenants/${tenantId}/devices/${devId}/traffic?interface=${encodeURIComponent(trafficState.iface)}&hours=${trafficState.hours}`);
+  } catch (e) { return msg(e.message, true); }
+  if (detailId !== devId || r.interface !== trafficState.iface) return;
+  trafficData = r;
+  $("d-traffic").hidden = false;
+  drawTraffic();
+}
+
+function drawTrafficBar() {
+  const s = trafficState;
+  const reload = () => { savePrefs(); showTraffic(detailId); };
+  segmented($("tr-scope"), [["*", "Celé zařízení"], [s.lastPort || "", s.lastPort ? `Port ${s.lastPort}` : "Port (klikni na port)", !s.lastPort]],
+            s.iface, (v) => { s.iface = v; showTraffic(detailId); });
+  segmented($("tr-metric"), TR_METRICS, s.metric, (v) => { s.metric = prefs.trMetric = v; savePrefs(); drawTrafficBar(); drawTraffic(); });
+  segmented($("tr-dir"), TR_DIRS, s.dir, (v) => { s.dir = prefs.trDir = v; savePrefs(); drawTrafficBar(); drawTraffic(); });
+  segmented($("tr-range"), TR_RANGES, s.hours, (v) => { s.hours = prefs.trHours = v; reload(); });
+}
+
+function trafficSeries() {
+  const s = trafficState, hourly = trafficData && trafficData.resolution === "1h";
+  const keys = s.metric === "bps" ? ["rx", "tx"] : s.metric === "err" ? ["rx_err", "tx_err"] : ["rx_drop", "tx_drop"];
+  const out = [];
+  if (s.dir !== "tx") out.push({ key: keys[0], cls: "rx", label: "↓ Přijato", max: s.metric === "bps" && hourly ? "rx_max" : null });
+  if (s.dir !== "rx") out.push({ key: keys[1], cls: "tx", label: "↑ Odesláno", max: s.metric === "bps" && hourly ? "tx_max" : null });
+  return out;
+}
+
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
+  return 10 * p;
+}
+
+function drawTraffic() {
   const svg = $("d-traffic-svg"); svg.textContent = "";
+  // viewBox = skutečná šířka v pixelech, ať se text os neroztahuje
+  const W = Math.max(400, Math.round(svg.clientWidth || (svg.parentNode && svg.parentNode.clientWidth) || 800)), H = 240;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const r = trafficData, s = trafficState;
+  $("d-traffic-h").textContent = s.iface === "*" ? "Provoz – celé zařízení (součet fyzických portů)" : `Provoz – port ${s.iface}`;
+  const now = $("tr-now"); now.textContent = "";
+  $("tr-tip").hidden = true;
+  if (!r) return;
   const pts = r.points || [];
-  const W = 800, H = 220, L = 60, R = 10, T = 10, B = 25;
+  const series = trafficSeries();
   if (pts.length < 2) {
     svg.style.display = "none";
     $("d-traffic-info").textContent = "Zatím málo dat – vzorek se ukládá každých 5 minut, první body do ~10 min po adopci.";
     return;
   }
   svg.style.display = "";
-  const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime();
-  const peak = (p) => Math.max(p.rx || 0, p.tx || 0, p.rx_max || 0, p.tx_max || 0);
-  const max = Math.max(1, ...pts.map(peak));
-  const x = (t) => L + (W - L - R) * (t1 > t0 ? (new Date(t).getTime() - t0) / (t1 - t0) : 0);
-  const y = (v) => T + (H - T - B) * (1 - (v || 0) / max);
-  for (const f of [0, 0.5, 1]) {
-    svg.appendChild(svgEl("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f) }));
-    svg.appendChild(svgEl("text", { x: 2, y: y(max * f) + 4 }, fmtBps(max * f)));
-  }
-  const line = (key, cls) => {
-    const p = pts.filter((q) => q[key] != null).map((q) => `${x(q.t).toFixed(1)},${y(q[key]).toFixed(1)}`).join(" ");
-    if (p) svg.appendChild(svgEl("polyline", { points: p, class: cls }));
-  };
-  if (r.resolution === "1h") { line("rx_max", "rx max"); line("tx_max", "tx max"); }
-  line("rx", "rx"); line("tx", "tx");
-  const fmtT = (t) => new Date(t).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
-  svg.appendChild(svgEl("text", { x: L, y: H - 6 }, fmtT(pts[0].t)));
-  svg.appendChild(svgEl("text", { x: W - R - 90, y: H - 6 }, fmtT(pts[pts.length - 1].t)));
   const last = pts[pts.length - 1];
-  $("d-traffic-info").textContent = `RX (modře) ${fmtBps(last.rx)}, TX (oranžově) ${fmtBps(last.tx)} · špička ${fmtBps(max)}` +
-    (r.resolution === "1h" ? " · hodinové průměry, čárkovaně špičky" : " · 5min vzorky");
+  for (const se of series) now.appendChild(el("span", `${se.label} ${fmtVal(last[se.key])}`, "now-" + se.cls));
+  const L = 68, R = 12, T = 12, B = 26;
+  const t0 = new Date(pts[0].t).getTime(), t1 = new Date(last.t).getTime();
+  let peak = 0;
+  for (const q of pts) for (const se of series) peak = Math.max(peak, Number(q[se.key]) || 0, se.max ? Number(q[se.max]) || 0 : 0);
+  // počty (chyby, zahozené) jen v celých číslech
+  const max = s.metric === "bps" ? niceMax(peak) : Math.max(4, Math.ceil(peak / 4) * 4);
+  const x = (t) => L + (W - L - R) * (t1 > t0 ? (new Date(t).getTime() - t0) / (t1 - t0) : 0);
+  const y = (v) => T + (H - T - B) * (1 - (Number(v) || 0) / max);
+  for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+    svg.appendChild(svgEl("line", { x1: L, x2: W - R, y1: y(max * f), y2: y(max * f), class: "grid" }));
+    svg.appendChild(svgEl("text", { x: L - 6, y: y(max * f) + 4, class: "ylab" }, fmtVal(max * f)));
+  }
+  const fmtT = (t) => new Date(t).toLocaleString("cs-CZ", s.hours > 48 ? { day: "numeric", month: "numeric", hour: "2-digit" }
+                                                                         : { hour: "2-digit", minute: "2-digit" });
+  for (let k = 0; k <= 4; k++) {
+    const tt = t0 + (t1 - t0) * k / 4;
+    svg.appendChild(svgEl("text", { x: L + (W - L - R) * k / 4, y: H - 6, class: "xlab" + (k === 0 ? " first" : k === 4 ? " last" : "") }, fmtT(tt)));
+  }
+  for (const se of series) {
+    const line = pts.map((q) => `${x(q.t).toFixed(1)},${y(q[se.key]).toFixed(1)}`);
+    svg.appendChild(svgEl("polygon", { points: `${x(pts[0].t).toFixed(1)},${y(0)} ${line.join(" ")} ${x(last.t).toFixed(1)},${y(0)}`, class: "area " + se.cls }));
+    if (se.max) svg.appendChild(svgEl("polyline", { points: pts.map((q) => `${x(q.t).toFixed(1)},${y(q[se.max]).toFixed(1)}`).join(" "), class: se.cls + " max" }));
+    svg.appendChild(svgEl("polyline", { points: line.join(" "), class: se.cls }));
+  }
+  const guide = svgEl("line", { x1: 0, x2: 0, y1: T, y2: H - B, class: "guide", visibility: "hidden" });
+  svg.appendChild(guide);
+  const dots = series.map((se) => { const c = svgEl("circle", { r: 3.5, class: "dot " + se.cls, visibility: "hidden" }); svg.appendChild(c); return c; });
+  $("d-traffic-info").textContent = (r.resolution === "1h" ? "Hodinové průměry" + (s.metric === "bps" ? ", čárkovaně špičky" : " (součet za hodinu)")
+                                                         : "5min vzorky" + (s.metric === "bps" ? "" : " (počet za 5 min)")) + ` · maximum ${fmtVal(peak)}`;
+  const tip = $("tr-tip");
+  svg.onmousemove = (ev) => {
+    const rect = svg.getBoundingClientRect();
+    const vx = (ev.clientX - rect.left) / rect.width * W;
+    let best = 0, bd = Infinity;
+    pts.forEach((q, k) => { const d = Math.abs(x(q.t) - vx); if (d < bd) { bd = d; best = k; } });
+    const q = pts[best], gx = x(q.t);
+    guide.setAttribute("x1", gx); guide.setAttribute("x2", gx); guide.setAttribute("visibility", "visible");
+    series.forEach((se, k) => { dots[k].setAttribute("cx", gx); dots[k].setAttribute("cy", y(q[se.key])); dots[k].setAttribute("visibility", "visible"); });
+    tip.textContent = "";
+    tip.appendChild(el("b", new Date(q.t).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })));
+    for (const se of series) {
+      const row = el("div", null, "tip-" + se.cls);
+      row.append(el("span", se.label), el("span", fmtVal(q[se.key]) + (se.max && q[se.max] != null ? ` (špička ${fmtVal(q[se.max])})` : "")));
+      tip.appendChild(row);
+    }
+    tip.hidden = false;
+    const px = (gx / W) * rect.width;
+    tip.style.left = `${Math.min(px + 14, rect.width - 200)}px`;
+  };
+  svg.onmouseleave = () => {
+    tip.hidden = true;
+    guide.setAttribute("visibility", "hidden");
+    for (const d of dots) d.setAttribute("visibility", "hidden");
+  };
 }
 
-$("d-edit").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  if (!detailId) return;
-  try {
-    await api("PATCH", `/tenants/${tenantId}/devices/${detailId}`,
-              { site_id: $("d-edit-site").value, role: $("d-edit-role").value, note: $("d-edit-note").value });
-    msg("Uloženo");
-    loadDevices();
-    openDetail(detailId);
-  } catch (e) { msg(e.message, true); }
-});
+let resizeTimer = null;
+if (typeof window.addEventListener === "function") {
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (trafficData && !$("detail").hidden) drawTraffic(); }, 150);
+  });
+}
 
 // --- release notes ------------------------------------------------------------------------
 
@@ -1046,14 +1259,15 @@ async function openDetail(id) {
     $("d-vlan-plan").hidden = d.vlan.status !== "legacy";
   }
   // rozhraní a sousedé
+  trafficState.iface = "*"; trafficState.lastPort = null; trafficData = null;
   renderPorts(id, d);
+  showTraffic(id, "*");
   const it = $("d-ifaces"); it.textContent = "";
-  $("d-traffic").hidden = true;
   for (const i of d.interfaces) {
     const tr = el("tr");
     tr.className = "clickable";
     tr.title = "Graf provozu";
-    tr.addEventListener("click", () => showTraffic(id, i.name));
+    tr.addEventListener("click", () => selectPortTraffic(i.name));
     const p = i.port || {};
     let link = "";
     if (p.rate) link = p.rate + (p.full_duplex === false ? " half-duplex" : "");
