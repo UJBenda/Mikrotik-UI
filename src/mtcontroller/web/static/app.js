@@ -610,7 +610,17 @@ async function openDetail(id) {
   const it = $("d-ifaces"); it.textContent = "";
   for (const i of d.interfaces) {
     const tr = el("tr");
+    const p = i.port || {};
+    let link = "";
+    if (p.rate) link = p.rate + (p.full_duplex === false ? " half-duplex" : "");
+    else if (p.link && p.link !== "link-ok") link = p.link;
+    if (p.sfp_rx_power) link += ` (SFP RX ${p.sfp_rx_power} dBm)`;
+    const vlan = [p.pvid && p.pvid !== "1" ? `PVID ${p.pvid}` : (p.pvid ? "PVID 1" : ""),
+                  p.untagged && p.untagged.length ? `U ${p.untagged.join(",")}` : "",
+                  p.tagged && p.tagged.length ? `T ${p.tagged.join(",")}` : ""].filter(Boolean).join(" · ");
+    const poe = p.poe ? p.poe + (p.poe_power ? ` ${p.poe_power} W` : "") : "";
     tr.append(el("td", i.name), el("td", i.type), el("td", i.disabled ? "vypnuté" : i.running ? "běží" : "neběží", i.running ? "" : "sev-warning"),
+              el("td", link, p.full_duplex === false ? "sev-warning" : ""), el("td", vlan), el("td", poe),
               el("td", i.mac || ""), el("td", i.link_downs || "0"), el("td", `${i.rx_error || 0} / ${i.tx_error || 0}`), el("td", i.comment || ""));
     it.appendChild(tr);
   }

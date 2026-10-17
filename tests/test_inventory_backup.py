@@ -94,3 +94,48 @@ def test_normalize_and_diff_redacts():
     assert "tajne123" not in d and "jine456" not in d and "password=***" in d
     assert "-/user add" in d and "+/user add" in d  # změna hesla je vidět
     assert backup.diff(a, a.replace("2026-10-17", "2026-10-19")) == ""
+
+
+def test_collect_link_and_poe_monitor():
+    responses = {s.path: [] for s in inventory.SECTIONS}
+    responses["/interface/ethernet"] = [{"name": "ether1", "poe-out": "auto-on"}, {"name": "sfp1"},
+                                        {"name": "ether2", "poe-out": "off"}]
+    responses[("POST", "/interface/ethernet/monitor")] = lambda b: [
+        {"name": n, "status": "link-ok", "rate": "1Gbps", "full-duplex": "true"} for n in b["numbers"].split(",")]
+    responses[("POST", "/interface/ethernet/poe/monitor")] = lambda b: [
+        {"name": n, "poe-out-status": "powered-on", "poe-out-power": "4.5"} for n in b["numbers"].split(",")]
+    api = FakeApi(responses)
+    data, errors = inventory.collect(api)
+    assert errors == []
+    posts = {c[1]: c[2] for c in api.calls if c[0] == "POST"}
+    assert posts["/interface/ethernet/monitor"]["numbers"] == "ether1,sfp1,ether2"
+    assert posts["/interface/ethernet/monitor"]["once"] == "true"
+    assert posts["/interface/ethernet/poe/monitor"]["numbers"] == "ether1"  # jen porty s PoE
+    assert [m["name"] for m in data["ethernet_monitor"]] == ["ether1", "sfp1", "ether2"]
+    # zařízení bez PoE / starší RouterOS: 400 se tiše přeskočí
+    api = FakeApi(responses, {"/interface/ethernet/poe/monitor": RosApiError(400, "no such command")})
+    data, errors = inventory.collect(api)
+    assert errors == [] and "poe_monitor" not in data
+
+
+def test_port_info_merges_link_poe_vlan():
+    from mtcontroller import ports
+
+    inv = {
+        "ethernet_monitor": [{"name": "ether2", "status": "link-ok", "rate": "100Mbps", "full-duplex": "false"},
+                             {"name": "ether3", "status": "no-link"}],
+        "poe_monitor": [{"name": "ether2", "poe-out-status": "powered-on", "poe-out-power": "6.1"}],
+        "bridge_ports": [{"bridge": "bridge", "interface": "ether2", "pvid": "10"},
+                         {"bridge": "bridge", "interface": "ether3", "pvid": "1", "disabled": "true"}],
+        "bridge_vlans": [{"bridge": "bridge", "vlan-ids": "10", "tagged": "bridge,ether1", "untagged": "ether2",
+                          "current-tagged": "bridge,ether1", "current-untagged": "ether2"},
+                         {"bridge": "bridge", "vlan-ids": "20,30", "tagged": "ether1,ether2"},
+                         {"bridge": "bridge", "vlan-ids": "99", "tagged": "ether2", "disabled": "true"}],
+    }
+    p = ports.port_info(inv)
+    assert p["ether2"]["rate"] == "100Mbps" and p["ether2"]["full_duplex"] is False
+    assert p["ether2"]["poe"] == "powered-on" and p["ether2"]["poe_power"] == "6.1"
+    assert p["ether2"]["pvid"] == "10" and p["ether2"]["untagged"] == ["10"] and p["ether2"]["tagged"] == ["20,30"]
+    assert p["ether1"]["tagged"] == ["10", "20,30"]
+    assert p["bridge"]["tagged"] == ["10"]  # VLAN do CPU
+    assert p["ether3"]["link"] == "no-link" and p["ether3"]["pvid"] is None  # vypnutý bridge port

@@ -102,19 +102,40 @@ def collect(api: RosApi) -> tuple[dict[str, Any], list[str]]:
     return data, errors
 
 
+def _fetch(api: RosApi, data: dict[str, Any], errors: list[str], name: str, method: str, path: str,
+           params: dict | None = None, body: dict | None = None) -> None:
+    try:
+        if method == "GET":
+            data[name] = _scrub(api.request("GET", path, params=params))
+        else:
+            data[name] = _scrub(api.request(method, path, body))
+    except PinMismatch:
+        raise
+    except RosApiError as e:
+        if e.status in (401, 403):
+            raise
+        if e.status in (400, 404, 406) or e.status is None and "no such" in str(e):
+            return  # menu na tomto zařízení neexistuje
+        errors.append(f"{name}: {e}")
+
+
+# stav linek: monitor je příkaz (POST), "once" = jedno měření, nic nemění
+MONITOR_PROPS = "name,status,rate,full-duplex,auto-negotiation,sfp-module-present,sfp-rx-power,sfp-tx-power"
+POE_PROPS = "name,poe-out-status,poe-out-voltage,poe-out-current,poe-out-power"
+
+
 def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     for s in SECTIONS:
-        params = {".proplist": s.proplist} if s.proplist else None
-        try:
-            data[s.name] = _scrub(api.request("GET", s.path, params=params))
-        except PinMismatch:
-            raise
-        except RosApiError as e:
-            if e.status in (401, 403):
-                raise
-            if e.status in (400, 404, 406) or e.status is None and "no such" in str(e):
-                continue  # menu na tomto zařízení neexistuje
-            errors.append(f"{s.name}: {e}")
+        _fetch(api, data, errors, s.name, "GET", s.path, params={".proplist": s.proplist} if s.proplist else None)
+    eth = [e for e in data.get("ethernet") or [] if isinstance(e, dict) and e.get("name")]
+    names = [str(e["name"]) for e in eth]
+    if names:
+        _fetch(api, data, errors, "ethernet_monitor", "POST", "/interface/ethernet/monitor",
+               body={"numbers": ",".join(names), "once": "true", ".proplist": MONITOR_PROPS})
+    poe = [str(e["name"]) for e in eth if e.get("poe-out") not in (None, "", "off")]
+    if poe:
+        _fetch(api, data, errors, "poe_monitor", "POST", "/interface/ethernet/poe/monitor",
+               body={"numbers": ",".join(poe), "once": "true", ".proplist": POE_PROPS})
 
 
 def basis_sha(data: dict[str, Any], sections: list[str]) -> str:

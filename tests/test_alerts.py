@@ -129,3 +129,18 @@ def test_deliver_retries_and_filters():
         assert ok[0].startswith("🔴") and ok[-1].startswith("✅")
     finally:
         drop_db(name)
+
+
+def test_half_duplex_alert():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        sw = _adopted(db, box, tid, sid, "SW1", "10.200.1.2", "sw")
+        inv = {"ethernet_monitor": [{"name": "ether5", "status": "link-ok", "rate": "100Mbps", "full-duplex": "false"},
+                                    {"name": "ether6", "status": "no-link", "full-duplex": "false"},
+                                    {"name": "ether7", "status": "link-ok", "rate": "1Gbps", "full-duplex": "true"}]}
+        inventory.store(db, tid, sw, inv, [])
+        with operator_scope(db) as tx:
+            found = [a for a in alerts.conditions(tx) if a.kind == "port_half_duplex"]
+        assert [a.subject for a in found] == ["ether5"] and "100Mbps" in found[0].message
+    finally:
+        drop_db(name)

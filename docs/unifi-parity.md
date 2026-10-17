@@ -32,7 +32,7 @@ viditelná odchylka zařízení, vědomé srovnání.
 | Update Manager | `/system/package/update`, `/system/routerboard` | verze a aktualizace | aktualizace RouterOS a RouterBOOT jedním tlačítkem (blokuje verze s kritickým známým problémem, alert když se nepovede); hromadný rollout F3 |
 | Topology | `/ip/neighbor` (MNDP/LLDP), bridge host | topologie | F2 (sousedé už v inventuře) |
 | Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | hotovo (seznam + poloha) |
-| Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan` | VLAN | analýza (observe) tato noc, správa F3 |
+| Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan`, `/interface/ethernet/monitor`, `poe/monitor` | VLAN | tabulka portů (rychlost, duplex, SFP, PoE, PVID/tagované VLAN) + analýza hotové (jen čtení), správa F3 |
 | Networks (VLAN per lokalita) | bridge vlan-filtering, VLAN rozhraní | VLAN | F3 |
 | Blueprints + Drift Inspector | – | politiky lokality + plány | základ tato noc (NTP) |
 | NTP / čas (UniFi řeší implicitně) | `/system/ntp/client`, `/system/ntp/server` | NTP | tato noc (první zápisový modul) |

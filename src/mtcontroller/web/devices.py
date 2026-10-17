@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import analysis, backup, inventory, plans, ros_versions
+from .. import analysis, backup, inventory, plans, ports, ros_versions
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
 from ..services import NotFound, ServiceError, audit
@@ -81,6 +81,9 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             "disabled": i.get("disabled") == "true", "mac": i.get("mac-address"), "comment": i.get("comment"),
             "link_downs": i.get("link-downs"), "rx_error": i.get("rx-error"), "tx_error": i.get("tx-error"),
         } for i in (inv.get("interfaces") or []) if isinstance(i, dict) and i.get("dynamic") != "true"]
+        pinfo = ports.port_info(inv)
+        for i in ifaces:
+            i["port"] = pinfo.get(str(i["name"]))
         return {
             "device": d, "summary": _summary(inv), "modules": modes,
             "warnings": [{"severity": i.severity, "text": i.text, "source": i.source}

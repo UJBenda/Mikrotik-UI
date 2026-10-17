@@ -354,7 +354,23 @@
      "comment": null,
      "link_downs": "0",
      "rx_error": "0",
-     "tx_error": "0"
+     "tx_error": "0",
+     "port": {
+      "link": "link-ok",
+      "rate": "1Gbps",
+      "full_duplex": true,
+      "sfp_rx_power": null,
+      "poe": "powered-on",
+      "poe_power": "4.5",
+      "bridge": "bridge",
+      "pvid": "10",
+      "tagged": [
+       "20,30"
+      ],
+      "untagged": [
+       "10"
+      ]
+     }
     },
     {
      "name": "ether2",
@@ -365,7 +381,19 @@
      "comment": null,
      "link_downs": "0",
      "rx_error": "0",
-     "tx_error": "0"
+     "tx_error": "0",
+     "port": {
+      "link": "link-ok",
+      "rate": "100Mbps",
+      "full_duplex": false,
+      "sfp_rx_power": "-7.1",
+      "poe": null,
+      "poe_power": null,
+      "bridge": null,
+      "pvid": null,
+      "tagged": [],
+      "untagged": []
+     }
     },
     {
      "name": "bridge",
