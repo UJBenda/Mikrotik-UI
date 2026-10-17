@@ -128,3 +128,19 @@ def test_scheduler_has_explicit_start_and_quiet_fetch():
     assert "start-date=[/system clock get date] start-time=00:00:00" in s
     src = routeros.checkin_source("https://c.example/api/checkin", "K", OPTS)
     assert "as-value]" in src  # výstup fetch se nehromadí ve skriptu
+
+
+def test_firewall_move_skips_dynamic_rules(tmp_path):
+    # výchozí konfigurace s fasttrackem má na začátku dynamické pravidlo,
+    # před které RouterOS přesun odmítne → provisioning by selhal
+    from helpers import make_settings
+    from mtcontroller.concentrator import concentrator_script
+
+    st = make_settings(tmp_path)
+    for s in (routeros.provision_body(P, OPTS),
+              concentrator_script(st, st.tunnel.concentrators[0], "heslo_123")):
+        moves = [ln for ln in s.splitlines() if " move " in ln]
+        assert moves
+        for ln in moves:
+            assert "find dynamic=no]->0" in ln, ln
+        assert re.search(r"find\]\s*->", s) is None

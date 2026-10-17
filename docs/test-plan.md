@@ -152,7 +152,7 @@ Stejně adoptuj druhý testovací MikroTik.
 | --- | --- | --- |
 | Tunely se nevidí | z MikroTiku 1: `/ping 10.200.1.2` (adresa MikroTiku 2) | neodpovídá |
 | Z tunelu na koncentrátor nic | z MikroTiku 1: `/ping 10.200.0.1` | neodpovídá |
-| Z tunelu na controller nic | z MikroTiku 1: `/tool fetch url=https://10.10.0.10/ check-certificate=no` | timeout |
+| Z tunelu na controller nic | z MikroTiku 1: `/ping 10.10.0.10 interface=mtc-sstp count=3` | neodpovídá (normální cestou mimo tunel controller dosažitelný je – tudy jde check-in) |
 | Controller → zařízení jen REST/ping | z controlleru: `ping 10.200.1.1`, `curl -k https://10.200.1.1/rest/system/identity` | ping OK, REST vrací 401 bez hesla |
 | SSH na zařízení přes tunel | z controlleru `ssh admin@10.200.1.1` | odmítnuto (firewall) |
 | Servisní účet nesmí SSH/Winbox | skupina `mtc` | jen api/rest-api politiky |
@@ -254,6 +254,8 @@ Neodeslané notifikace worker zkouší znovu (max. 5×); stejně funguje JSON we
 | `mtc-sstp` neběží | `/ppp active print` a `/log print where topics~"sstp"` na koncentrátoru; jméno `connect-to` musí sedět s certifikátem (mimo lab režim) |
 | Worker hlásí „otisk certifikátu nesouhlasí" u zařízení | porovnej `/certificate print detail where name=mtc-rest` se sloupcem `api_cert_fingerprint` v DB |
 | REST přes tunel nejde | `ping 10.200.1.x` z controlleru; routa na pool; `/ip service print` (www-ssl zapnuté, adresa controlleru povolená) |
+| Zařízení se hlásí (UI „naposledy“ se mění), ale příkazy se neprovedou | `/log print where message~"mtc"` – „check-in selhal“; `/file print where name~"mtc"`; pošli mi výpis (možná jiné chování `fetch … as-value` na tvé verzi) |
+| Provisioning `failed` | `/log print where topics~"script"`, ruční zkouška: `/system script run mtc-checkin` v terminálu ukáže chybu s řádkem |
 | Skript selže na `rest-api` politice | starší RouterOS – skript automaticky použije `web`; aktualizuj RouterOS |
 
 Logy: `journalctl -u mtc-web -u mtc-worker -f`, audit v UI nebo

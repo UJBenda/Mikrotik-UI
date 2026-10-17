@@ -79,12 +79,13 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 # zarizeni nepotrebuje zadnou routu a skutecnou IP controlleru nevidi
 /ip firewall nat remove [find comment~"^mtc:"]
 /ip firewall nat add chain=srcnat src-address-list="mtc-controller" out-interface-list="TUNNELS" action=src-nat to-addresses={q(local)} comment="mtc: controller do tunelu"
-:if ([:len [/ip firewall nat find]] > 1) do={{
-  /ip firewall nat move [find comment="mtc: controller do tunelu"] destination=([/ip firewall nat find]->0)
+:if ([:len [/ip firewall nat find dynamic=no]] > 1) do={{
+  /ip firewall nat move [find comment="mtc: controller do tunelu"] destination=([/ip firewall nat find dynamic=no]->0)
 }}
-:if ([:len [/ip firewall filter find]] > 8) do={{
+# dynamicka pravidla (fasttrack dummy) preskocit - pred ne nejde presouvat
+:if ([:len [/ip firewall filter find dynamic=no]] > 8) do={{
   :foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
-    /ip firewall filter move [find comment=$c] destination=([/ip firewall filter find]->0)
+    /ip firewall filter move [find comment=$c] destination=([/ip firewall filter find dynamic=no]->0)
   }}
 }}
 :log info "mtc: koncentrator nastaven"

@@ -211,11 +211,12 @@ def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
 /ip firewall filter add chain=input in-interface="{SSTP_IFACE}" src-address={q(ctrl)} protocol=icmp action=accept comment="mtc: sprava ping"
 /ip firewall filter add chain=input in-interface="{SSTP_IFACE}" action=drop comment="mtc: drop tunnel"
 /ip firewall filter add chain=forward in-interface="{SSTP_IFACE}" action=drop comment="mtc: drop tunnel forward"
-:if ([:len [/ip firewall filter find]] > 4) do={{
-  /ip firewall filter move [find comment="mtc: drop tunnel forward"] destination=([/ip firewall filter find]->0)
-  /ip firewall filter move [find comment="mtc: drop tunnel"] destination=([/ip firewall filter find]->0)
-  /ip firewall filter move [find comment="mtc: sprava ping"] destination=([/ip firewall filter find]->0)
-  /ip firewall filter move [find comment="mtc: sprava REST"] destination=([/ip firewall filter find]->0)
+# pravidla na zacatek; dynamicka (napr. fasttrack dummy) preskocit - pred ne nejde presouvat
+:if ([:len [/ip firewall filter find dynamic=no]] > 4) do={{
+  /ip firewall filter move [find comment="mtc: drop tunnel forward"] destination=([/ip firewall filter find dynamic=no]->0)
+  /ip firewall filter move [find comment="mtc: drop tunnel"] destination=([/ip firewall filter find dynamic=no]->0)
+  /ip firewall filter move [find comment="mtc: sprava ping"] destination=([/ip firewall filter find dynamic=no]->0)
+  /ip firewall filter move [find comment="mtc: sprava REST"] destination=([/ip firewall filter find dynamic=no]->0)
 }}
 :log info "mtc: provisioning hotov"
 """
