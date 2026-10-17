@@ -145,7 +145,34 @@ $("tenant-form").addEventListener("submit", async (ev) => {
 
 async function loadTenant() {
   await Promise.all([loadSites(), loadDevices(), loadAudit(), loadPlans(), loadAlerts()]);
+  renderOverview();
   await loadSitePanel();
+}
+
+let alertsCache = [];
+
+function renderOverview() {
+  const box = $("overview"); box.textContent = "";
+  const n = (st) => devicesCache.filter((d) => d.state === st).length;
+  const tiles = [
+    ["Online", n("adopted"), ""],
+    ["Offline", n("offline"), n("offline") ? "bad" : ""],
+    ["Čeká na schválení", n("pending"), n("pending") ? "warn" : ""],
+    ["Provisioning", n("provisioning"), ""],
+    ["Kritické alerty", alertsCache.filter((a) => a.severity === "critical").length, ""],
+    ["Varování", alertsCache.filter((a) => a.severity === "warning").length, ""],
+    ["Dostupná aktualizace", devicesCache.filter((d) => d.update_available).length, ""],
+    ["Známé problémy verzí", devicesCache.filter((d) => (d.warnings || []).some((w) => w.severity === "critical")).length, ""],
+  ];
+  tiles[4][2] = tiles[4][1] ? "bad" : "";
+  tiles[5][2] = tiles[5][1] ? "warn" : "";
+  tiles[7][2] = tiles[7][1] ? "bad" : "";
+  for (const [label, value, cls] of tiles) {
+    if (label === "Provisioning" && !value) continue;
+    const t = el("div", null, "tile" + (cls ? " " + cls : ""));
+    t.append(el("b", String(value)), el("span", label));
+    box.appendChild(t);
+  }
 }
 
 async function loadSites() {
@@ -443,6 +470,7 @@ const SEV_LABEL = { critical: "kritické", warning: "varování", info: "info" }
 
 async function loadAlerts() {
   const list = await api("GET", `/tenants/${tenantId}/alerts`);
+  alertsCache = list;
   const tb = $("alerts");
   tb.textContent = "";
   const crit = list.filter((a) => a.severity === "critical").length;
@@ -787,6 +815,8 @@ $("d-vlan-plan").addEventListener("click", async () => {
     $("d-vlan-preview").hidden = false;
   } catch (e) { msg(e.message, true); }
 });
-setInterval(() => { if (!$("app").hidden && tenantId) { loadDevices(); loadAlerts(); } }, 15000);
+setInterval(() => {
+  if (!$("app").hidden && tenantId) Promise.all([loadDevices(), loadAlerts()]).then(renderOverview).catch(() => {});
+}, 15000);
 
 boot();

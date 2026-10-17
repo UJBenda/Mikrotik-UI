@@ -72,6 +72,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
     if (visible.join() !== "app") errors.push("po bootu je vidět " + visible.join());
     const devRows = byId["devices"].children.length;
+    const tiles = byId["overview"].children.length;
+    if (tiles < 7) errors.push("přehled: čekáno aspoň 7 dlaždic, je " + tiles);
+    if (byId["overview"].children[0].textContent !== "2Online") errors.push("přehled: " + byId["overview"].children[0].textContent);
     const alertRows = byId["alerts"].children.length;
     const plansN = byId["plans"].children.length;
     // lokalita: topologie a klienti

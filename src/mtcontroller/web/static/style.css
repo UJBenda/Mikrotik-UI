@@ -56,3 +56,8 @@ tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--bg);
 #d-traffic-svg polyline.rx { stroke: var(--accent); } #d-traffic-svg polyline.tx { stroke: var(--warn); }
 #d-traffic-svg polyline.max { stroke-dasharray: 3 3; stroke-width: 1; opacity: .6; }
 #d-traffic-svg line { stroke: var(--muted); stroke-width: .5; } #d-traffic-svg text { fill: var(--muted); font-size: 11px; }
+
+.overview { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.overview .tile { background: var(--card); border-radius: 6px; padding: 8px 14px; min-width: 110px; }
+.overview .tile b { display: block; font-size: 22px; } .overview .tile span { color: var(--muted); font-size: 12px; }
+.overview .tile.bad b { color: var(--bad); } .overview .tile.warn b { color: var(--warn); }
