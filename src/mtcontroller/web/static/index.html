@@ -87,21 +87,24 @@
         <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button>
         <button id="stp-btn" type="button" class="small secondary">STP</button>
         <button id="upg-btn" type="button" class="small secondary">Aktualizace lokality</button></h2>
-      <div id="upg-wrap" hidden>
+      <div id="upg-wrap" hidden class="panel">
+        <h3>Postupná aktualizace lokality</h3>
         <p class="muted">Postupně po jednom zařízení: AP a PtP → switche → gateway. Další až po návratu
           předchozího s novou verzí; při chybě se zastaví.</p>
         <ol id="upg-cands"></ol>
         <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
-        <h3>Úlohy</h3>
+        <h4>Úlohy</h4>
         <ul id="upg-jobs"></ul>
       </div>
-      <div id="stp-wrap" hidden>
+      <div id="stp-wrap" hidden class="panel">
+        <h3>STP</h3>
         <p id="stp-roots" class="muted"></p>
         <ul id="stp-warn"></ul>
         <table><thead><tr><th>Zařízení</th><th>Bridge</th><th>Protokol</th><th>Root</th><th>Root port</th><th>Cena k rootu</th><th>Linky ke spravovaným</th></tr></thead>
         <tbody id="stp-bridges"></tbody></table>
       </div>
-      <div id="wifi-wrap" hidden>
+      <div id="wifi-wrap" hidden class="panel">
+        <h3>Wi-Fi</h3>
         <p id="wifi-summary" class="muted"></p>
         <ul id="wifi-warn"></ul>
         <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>SSID</th><th>Režim</th><th>Pásmo</th><th>Kanál</th><th>Šířka</th><th>Klienti</th><th>Signál prům./min</th></tr></thead>
@@ -110,7 +113,8 @@
         <table id="wifi-caps-t" hidden><thead><tr><th>Controller</th><th>AP</th><th>Adresa</th><th>Model</th><th>Verze</th><th>Stav</th></tr></thead>
         <tbody id="wifi-caps"></tbody></table>
       </div>
-      <div id="clients-wrap" hidden>
+      <div id="clients-wrap" hidden class="panel">
+        <h3>Klienti</h3>
         <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
         <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
         <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th></tr></thead>

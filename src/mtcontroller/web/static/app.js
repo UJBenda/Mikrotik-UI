@@ -189,6 +189,8 @@ async function loadSites() {
     ul.appendChild(el("li", `${s.name} – ${s.devices} zař.`));
     const o = el("option", s.name); o.value = s.id; ts.appendChild(o);
   }
+  const busiestSite = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
+  if (busiestSite) ts.value = busiestSite.id;
   if (!sites.length) ul.appendChild(el("li", "Zatím žádná lokalita", "muted"));
 }
 
@@ -338,9 +340,11 @@ async function loadSitePanel() {
   const prev = sel.value;
   sel.textContent = "";
   for (const s of sites) { const o = el("option", s.name); o.value = s.id; sel.appendChild(o); }
-  sel.value = prev && sites.some((s) => s.id === prev) ? prev : (sites[0] ? sites[0].id : "");
-  $("topo-wrap").hidden = true;
-  $("clients-wrap").hidden = true;
+  // výchozí lokalita: ta s nejvíce zařízeními (ne první podle abecedy)
+  const busiest = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
+  sel.value = prev && sites.some((s) => s.id === prev) ? prev : (busiest ? busiest.id : "");
+  // panely jsou vázané na lokalitu – při změně je zavřít, ať neukazují data jiné lokality
+  for (const w of ["topo-wrap", "clients-wrap", "wifi-wrap", "stp-wrap", "upg-wrap"]) $(w).hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
   const prim = $("ntp-primary");
@@ -910,7 +914,7 @@ async function openDetail(id) {
   for (const f of d.security || []) {
     const li = el("li", (f.severity === "critical" ? "⚠ " : "") + f.text,
                   "sev-" + (f.severity === "critical" ? "error" : f.severity));
-    if (f.fix) { li.appendChild(document.createTextNode(" ")); li.appendChild(el("code", f.fix)); }
+    if (f.fix) { li.appendChild(document.createTextNode(" → ")); li.appendChild(el("code", f.fix)); }
     sec.appendChild(li);
   }
   const da = $("d-alerts"); da.textContent = "";

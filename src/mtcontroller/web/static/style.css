@@ -61,3 +61,5 @@ tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--bg);
 .overview .tile { background: var(--card); border-radius: 6px; padding: 8px 14px; min-width: 110px; }
 .overview .tile b { display: block; font-size: 22px; } .overview .tile span { color: var(--muted); font-size: 12px; }
 .overview .tile.bad b { color: var(--bad); } .overview .tile.warn b { color: var(--warn); }
+
+.panel { border-top: 1px solid var(--muted); margin-top: 12px; padding-top: 4px; }
