@@ -55,7 +55,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
     def q():
         with tenant_scope(st.db, tid) as tx:
             d = tx.fetchone(
-                """SELECT d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state,
+                """SELECT d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state, d.note,
                           host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
                           d.last_checkin_at, d.last_status, d.adopted_at, d.inventory_at, d.inventory_error,
                           d.backup_at
@@ -97,6 +97,17 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
         }
 
     return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def device_update(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    data = await _json(request)
+    did = _uuid(request.path_params["device_id"])
+    from .. import services
+
+    res = await run_in_threadpool(services.update_device, st.db, tid, did, data, p.user_id, client_ip(request))
+    return json_response(res)
 
 
 @endpoint(READ)
@@ -481,6 +492,7 @@ def routes() -> list[Route]:
     s = T + "/sites/{site_id}"
     return [
         Route(d, device_detail, methods=["GET"]),
+        Route(d, device_update, methods=["PATCH"]),
         Route(d + "/modules", device_module, methods=["POST"]),
         Route(d + "/backup", request_backup, methods=["POST"]),
         Route(d + "/backups/{backup_id}/diff", backup_diff, methods=["GET"]),

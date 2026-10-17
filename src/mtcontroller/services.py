@@ -279,7 +279,7 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
     dorovná), schválení samotné tím neselže."""
     if not settings.tunnel.concentrators:
         raise ServiceError("v konfiguraci není žádný koncentrátor (tunnel.concentrators)")
-    if role not in {"unknown", "gateway", "switch", "ap", "ptp"}:
+    if role not in DEVICE_ROLES:
         raise ServiceError("neplatná role zařízení")
     with tenant_scope(db, tenant_id) as tx:
         dev = tx.fetchone(
@@ -322,6 +322,54 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
             log.warning("koncentrátor %s: ensure_account selhal: %s", p.name, e)
             errors.append(f"{p.name}: {e}")
     return errors
+
+
+DEVICE_ROLES = {"unknown", "gateway", "switch", "ap", "ptp"}
+
+
+def update_device(db: Database, tenant_id: Any, device_id: Any, changes: dict,
+                  user_id: Any = None, ip: str | None = None) -> dict:
+    """Úprava schváleného zařízení v controlleru (lokalita, role, poznámka).
+    Na zařízení nic nemění."""
+    allowed = {"site_id", "role", "note"}
+    unknown = set(changes) - allowed
+    if unknown or not changes:
+        raise ServiceError(f"lze měnit jen {', '.join(sorted(allowed))}")
+    with tenant_scope(db, tenant_id) as tx:
+        dev = tx.fetchone("SELECT site_id, role::text AS role, note, state FROM device WHERE id = %(d)s",
+                          {"d": str(device_id)})
+        if not dev:
+            raise NotFound("zařízení neexistuje")
+        if dev["state"] in ("pending", "removed"):
+            raise ServiceError("čekající zařízení se upravuje při schválení")
+        new = {"site_id": str(dev["site_id"]) if dev["site_id"] else None, "role": dev["role"], "note": dev["note"]}
+        if "site_id" in changes:
+            sid = str(changes["site_id"] or "")
+            try:
+                uuid.UUID(sid)
+            except ValueError:
+                raise ServiceError("neplatná lokalita") from None
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            new["site_id"] = sid
+        if "role" in changes:
+            if changes["role"] not in DEVICE_ROLES:
+                raise ServiceError("neplatná role zařízení")
+            new["role"] = changes["role"]
+        if "note" in changes:
+            note = str(changes["note"] or "").strip()
+            if len(note) > 500 or not re.fullmatch(r"[^\x00-\x08\x0b-\x1f\x7f]*", note):
+                raise ServiceError("poznámka: max. 500 znaků bez řídicích znaků")
+            new["note"] = note
+        before = {k: (str(dev[k]) if k == "site_id" and dev[k] else dev[k]) for k in new}
+        if new == before:
+            return new
+        tx.execute("UPDATE device SET site_id = %(s)s, role = %(r)s, note = %(n)s WHERE id = %(d)s",
+                   {"s": new["site_id"], "r": new["role"], "n": new["note"], "d": str(device_id)})
+        audit(tx, "device.update", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+              before={k: v for k, v in before.items() if v != new[k]},
+              after={k: v for k, v in new.items() if v != before[k]}, ip=ip)
+        return new
 
 
 # --- příkazy -----------------------------------------------------------------------

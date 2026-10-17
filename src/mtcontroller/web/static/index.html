@@ -159,7 +159,13 @@
         <p id="d-notes-more" class="muted"></p>
       </div>
       <div class="grid">
-        <div><h3>Přehled</h3><table><tbody id="d-summary"></tbody></table></div>
+        <div><h3>Přehled</h3><table><tbody id="d-summary"></tbody></table>
+             <form id="d-edit" class="inline">
+               <select id="d-edit-site" aria-label="Lokalita"></select>
+               <select id="d-edit-role" aria-label="Role"></select>
+               <input id="d-edit-note" maxlength="500" placeholder="Poznámka (umístění, kontakt…)">
+               <button type="submit" class="small">Uložit</button>
+             </form></div>
         <div><h3>Moduly</h3><table><tbody id="d-modules"></tbody></table>
              <h3>NTP</h3><table><tbody id="d-ntp"></tbody></table></div>
       </div>

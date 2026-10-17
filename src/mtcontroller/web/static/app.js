@@ -615,6 +615,18 @@ function drawTraffic(r) {
     (r.resolution === "1h" ? " · hodinové průměry, čárkovaně špičky" : " · 5min vzorky");
 }
 
+$("d-edit").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!detailId) return;
+  try {
+    await api("PATCH", `/tenants/${tenantId}/devices/${detailId}`,
+              { site_id: $("d-edit-site").value, role: $("d-edit-role").value, note: $("d-edit-note").value });
+    msg("Uloženo");
+    loadDevices();
+    openDetail(detailId);
+  } catch (e) { msg(e.message, true); }
+});
+
 // --- release notes ------------------------------------------------------------------------
 
 async function loadReleaseNotes(id) {
@@ -698,6 +710,13 @@ async function openDetail(id) {
         .then(() => msg("Aktualizace RouterBOOT naplánována")).catch((e) => msg(e.message, true));
     };
   }
+  const es = $("d-edit-site"); es.textContent = "";
+  for (const st of sites) { const o = el("option", st.name); o.value = st.id; es.appendChild(o); }
+  es.value = dev.site_id || "";
+  const er = $("d-edit-role"); er.textContent = "";
+  for (const r of ["unknown", "gateway", "switch", "ap", "ptp"]) { const o = el("option", r); o.value = r; er.appendChild(o); }
+  er.value = dev.role || "unknown";
+  $("d-edit-note").value = dev.note || "";
   const da = $("d-alerts"); da.textContent = "";
   for (const a of d.alerts || []) da.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : a.severity)));
   kv($("d-summary"), [
@@ -705,7 +724,7 @@ async function openDetail(id) {
     ["RouterBOOT", sm.firmware ? `${sm.firmware}${sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware ? " → " + sm.firmware_upgrade : ""}` : null],
     ["Uptime", sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} % (${sm.cpu || ""})` : null],
     ["Paměť", sm.memory_used_pct != null ? `${sm.memory_used_pct} %` : null], ["Úložiště", sm.hdd_used_pct != null ? `${sm.hdd_used_pct} %` : null],
-    ["Lokalita", dev.site], ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
+    ["Lokalita", dev.site], ["Poznámka", dev.note], ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
     ["Check-in", fmtTime(dev.last_checkin_at)], ["Inventura", fmtTime(dev.inventory_at)], ["Záloha", fmtTime(dev.backup_at)],
   ]);
   // moduly

@@ -357,3 +357,33 @@ def test_traffic_endpoint():
         assert c.get(base).status_code == 400
     finally:
         drop_db(name)
+
+
+def test_device_update_site_role_note():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        s2 = services.create_site(db, tid, "Brno")
+        c = _login(app)
+        url = f"/api/admin/tenants/{tid}/devices/{gw}"
+        r = c.patch(url, json_body={"site_id": str(s2["id"]), "role": "gateway", "note": "rack 2, U14"})
+        assert r.status_code == 200, r.text
+        d = c.get(url).json()["device"]
+        assert d["site_id"] == str(s2["id"]) and d["role"] == "gateway" and d["note"] == "rack 2, U14"
+        # lokalita cizího tenanta / neexistující, nepovolené pole, řídicí znaky
+        other = services.create_tenant(db, settings, "Jina")
+        foreign = services.create_site(db, other["id"], "Cizi")
+        assert c.patch(url, json_body={"site_id": str(foreign["id"])}).status_code == 404
+        assert c.patch(url, json_body={"state": "adopted"}).status_code == 400
+        assert c.patch(url, json_body={"tunnel_ip": "10.200.9.9"}).status_code == 400
+        assert c.patch(url, json_body={"note": "a\x1bb"}).status_code == 400
+        assert c.patch(url, json_body={"role": "router"}).status_code == 400
+        # bez CSRF neprojde
+        token, c.csrf = c.csrf, None
+        assert c.patch(url, json_body={"note": "x"}).status_code == 403
+        c.csrf = token
+        with operator_scope(db) as tx:
+            a = tx.fetchall("SELECT before, after FROM audit_log WHERE action = 'device.update'")
+        assert len(a) == 1 and a[0]["after"]["note"] == "rack 2, U14" and a[0]["before"]["role"] == "unknown"
+    finally:
+        drop_db(name)
