@@ -73,3 +73,12 @@ api_fingerprint = "0000000000000000000000000000000000000000000000000000000000000
 # url = "https://hooks.example.cz/mtc"
 # secret_file = "/etc/mtcontroller/webhook.secret"
 # min_severity = "critical"
+#
+# [[notify]]
+# name = "mail"
+# kind = "email"
+# url = "smtp://alerts%40firma.cz@mail.firma.cz:587"   # STARTTLS povinně; smtps://…:465 = TLS od začátku
+# secret_file = "/etc/mtcontroller/smtp.secret"           # heslo k SMTP účtu
+# mail_from = "mtc@firma.cz"
+# mail_to = ["noc@firma.cz"]
+# min_severity = "critical"

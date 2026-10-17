@@ -7,6 +7,8 @@ s hlavičkami X-Nextcloud-Talk-Bot-Random a X-Nextcloud-Talk-Bot-Signature
 registruje příkazem `occ talk:bot:install` a povolí v konverzaci.
 
 JSON webhook: tělo = alert v JSON, hlavička X-MTC-Signature: sha256=<HMAC těla>.
+
+E-mail: smtps:// (TLS) nebo smtp:// s povinným STARTTLS, heslo v secret_file.
 """
 
 from __future__ import annotations
@@ -16,8 +18,12 @@ import hmac
 import json
 import logging
 import secrets
+import smtplib
 import ssl
 import urllib.request
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
+from urllib.parse import unquote, urlsplit
 
 from .config import NotifyTarget, Settings
 from .db import Database, operator_scope
@@ -43,7 +49,46 @@ def format_text(alert: dict, resolved: bool) -> str:
     return f"{_ICON.get(alert['severity'], '')} {alert['message']}"
 
 
-def send(target: NotifyTarget, alert: dict, resolved: bool, post=_post) -> None:
+def _smtp_send(target: NotifyTarget, msg: EmailMessage) -> None:
+    """smtps:// = TLS od začátku, smtp:// = povinný STARTTLS (bez šifrování se neodešle)."""
+    u = urlsplit(target.url)
+    ctx = ssl.create_default_context()
+    password = target.secret()
+    if u.scheme == "smtps":
+        conn = smtplib.SMTP_SSL(u.hostname, u.port or 465, context=ctx, timeout=20)
+    else:
+        conn = smtplib.SMTP(u.hostname, u.port or 587, timeout=20)
+        conn.ehlo()
+        conn.starttls(context=ctx)
+        conn.ehlo()
+    with conn:
+        if u.username:
+            conn.login(unquote(u.username), password)
+        conn.send_message(msg)
+
+
+def email_message(target: NotifyTarget, alert: dict, resolved: bool) -> EmailMessage:
+    sev = {"critical": "KRITICKÉ", "warning": "varování", "info": "info"}.get(alert.get("severity"), "")
+    first = str(alert.get("message", "")).splitlines()[0][:120] if alert.get("message") else ""
+    msg = EmailMessage()
+    msg["Subject"] = f"[MTC] {'Vyřešeno' if resolved else sev}: {first}"
+    msg["From"] = target.mail_from
+    msg["To"] = ", ".join(target.mail_to)
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=target.mail_from.split("@")[-1])
+    lines = [format_text(alert, resolved), ""]
+    for k, label in (("kind", "Typ"), ("severity", "Závažnost"), ("opened_at", "Otevřeno"),
+                     ("resolved_at", "Vyřešeno"), ("device_id", "Zařízení"), ("tenant_id", "Tenant")):
+        if alert.get(k):
+            lines.append(f"{label}: {alert[k]}")
+    msg.set_content("\n".join(lines))
+    return msg
+
+
+def send(target: NotifyTarget, alert: dict, resolved: bool, post=_post, smtp=_smtp_send) -> None:
+    if target.kind == "email":
+        smtp(target, email_message(target, alert, resolved))
+        return
     secret = target.secret().encode()
     if target.kind == "nextcloud_talk":
         text = format_text(alert, resolved)
@@ -66,7 +111,7 @@ def _targets_for(settings: Settings, alert: dict) -> list[NotifyTarget]:
             and (not t.tenants or str(alert["tenant_id"]) in t.tenants)]
 
 
-def deliver(db: Database, settings: Settings, post=_post) -> int:
+def deliver(db: Database, settings: Settings, post=_post, smtp=_smtp_send) -> int:
     """Pošle čekající notifikace (otevření i uzavření). Vrací počet odeslaných."""
     if not settings.notify:
         return 0
@@ -86,7 +131,7 @@ def deliver(db: Database, settings: Settings, post=_post) -> int:
         ok = True
         for t in targets:
             try:
-                send(t, a, resolved, post)
+                send(t, a, resolved, post, smtp)
             except Exception as e:  # síť, 4xx/5xx
                 ok = False
                 log.warning("notifikace %s přes %s selhala: %s", a["id"], t.name, e)

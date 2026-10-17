@@ -154,20 +154,35 @@ class TunnelConfig(BaseModel):
 
 class NotifyTarget(BaseModel):
     name: str
-    # "nextcloud_talk" (bot Talk) nebo "json" (obecný webhook s HMAC podpisem)
+    # "nextcloud_talk" (bot Talk), "json" (obecný webhook s HMAC podpisem) nebo "email"
     kind: str = "json"
+    # webhook: https://…; email: smtps://uživatel@server:465 nebo smtp://uživatel@server:587 (STARTTLS povinně)
     url: str
+    # webhook: tajemství podpisu; email: heslo k SMTP (prázdné = bez přihlášení)
     secret_file: Path
     min_severity: str = "warning"
     # prázdné = všichni tenanti; jinak seznam UUID tenantů
     tenants: list[str] = Field(default_factory=list)
+    # jen email
+    mail_from: str = ""
+    mail_to: list[str] = Field(default_factory=list)
 
     @field_validator("kind")
     @classmethod
     def _kind(cls, v: str) -> str:
-        if v not in {"nextcloud_talk", "json"}:
-            raise ValueError("notify.kind: nextcloud_talk | json")
+        if v not in {"nextcloud_talk", "json", "email"}:
+            raise ValueError("notify.kind: nextcloud_talk | json | email")
         return v
+
+    @model_validator(mode="after")
+    def _email(self) -> "NotifyTarget":
+        if self.kind == "email":
+            if not self.mail_from or not self.mail_to:
+                raise ValueError("notify (email): vyplň mail_from a mail_to")
+            for a in [self.mail_from, *self.mail_to]:
+                if not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", a):
+                    raise ValueError(f"notify (email): neplatná adresa {a!r}")
+        return self
 
     @field_validator("min_severity")
     @classmethod
@@ -179,9 +194,16 @@ class NotifyTarget(BaseModel):
     @field_validator("url")
     @classmethod
     def _url(cls, v: str) -> str:
-        if not v.startswith("https://"):
-            raise ValueError("notify.url musí být https://")
+        if not v.startswith(("https://", "smtps://", "smtp://")):
+            raise ValueError("notify.url musí být https:// (webhook) nebo smtps:// / smtp:// (email)")
         return v
+
+    @model_validator(mode="after")
+    def _url_kind(self) -> "NotifyTarget":
+        is_mail = self.url.startswith(("smtps://", "smtp://"))
+        if is_mail != (self.kind == "email"):
+            raise ValueError("notify: email potřebuje url smtps:// nebo smtp://, webhooky https://")
+        return self
 
     def secret(self) -> str:
         return self.secret_file.read_text().strip()

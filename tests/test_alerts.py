@@ -144,3 +144,87 @@ def test_half_duplex_alert():
         assert [a.subject for a in found] == ["ether5"] and "100Mbps" in found[0].message
     finally:
         drop_db(name)
+
+
+def _mail_target(tmp: Path, url="smtp://alerts%40firma.cz@mail.firma.cz:587") -> NotifyTarget:
+    sec = tmp / "smtp.secret"
+    sec.write_text("smtp-heslo\n")
+    return NotifyTarget(name="mail", kind="email", url=url, secret_file=sec, min_severity="critical",
+                        mail_from="mtc@firma.cz", mail_to=["noc@firma.cz", "admin@firma.cz"])
+
+
+def test_email_config_validation():
+    import pytest
+
+    tmp = Path(tempfile.mkdtemp())
+    _mail_target(tmp)
+    with pytest.raises(Exception):
+        NotifyTarget(name="m", kind="email", url="https://x.test", secret_file=tmp / "s",
+                     mail_from="a@b.cz", mail_to=["c@d.cz"])
+    with pytest.raises(Exception):
+        NotifyTarget(name="m", kind="json", url="smtp://mail.test", secret_file=tmp / "s")
+    with pytest.raises(Exception):
+        NotifyTarget(name="m", kind="email", url="smtps://mail.test", secret_file=tmp / "s",
+                     mail_from="a@b.cz", mail_to=["c@d.cz\nBcc: x@y.cz"])  # vložení hlavičky
+    with pytest.raises(Exception):
+        NotifyTarget(name="m", kind="email", url="smtps://mail.test", secret_file=tmp / "s", mail_to=["c@d.cz"])
+
+
+def test_email_starttls_before_login(monkeypatch=None):
+    import smtplib
+
+    tmp = Path(tempfile.mkdtemp())
+    t = _mail_target(tmp)
+    log = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            log.append(("connect", host, port))
+
+        def ehlo(self):
+            log.append(("ehlo",))
+
+        def starttls(self, context=None):
+            assert context is not None and context.verify_mode != 0  # ověřený certifikát
+            log.append(("starttls",))
+
+        def login(self, user, pw):
+            log.append(("login", user, pw))
+
+        def send_message(self, msg):
+            log.append(("send", msg["Subject"], msg["To"]))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            log.append(("quit",))
+
+    orig = smtplib.SMTP
+    smtplib.SMTP = FakeSMTP
+    try:
+        notify.send(t, {"id": 7, "tenant_id": "t", "severity": "critical", "kind": "offline",
+                        "message": "gw: zařízení je offline\nřádek 2"}, False)
+    finally:
+        smtplib.SMTP = orig
+    kinds = [x[0] for x in log]
+    assert kinds == ["connect", "ehlo", "starttls", "ehlo", "login", "send", "quit"]
+    assert log[0] == ("connect", "mail.firma.cz", 587)
+    assert log[4] == ("login", "alerts@firma.cz", "smtp-heslo")
+    assert log[5][1] == "[MTC] KRITICKÉ: gw: zařízení je offline" and log[5][2] == "noc@firma.cz, admin@firma.cz"
+
+
+def test_email_deliver_uses_smtp_hook():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        a = _adopted(db, box, tid, sid, "A1", "10.200.1.1", "gw")
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET state = 'offline' WHERE id = %(d)s", {"d": a})
+        alerts.reconcile(db)
+        st = Settings.model_validate({**settings.model_dump(),
+                                      "notify": [_mail_target(Path(tempfile.mkdtemp())).model_dump()]})
+        sent = []
+        assert notify.deliver(db, st, smtp=lambda t, m: sent.append(m["Subject"])) == 1
+        assert sent and sent[0].startswith("[MTC] KRITICKÉ")
+    finally:
+        drop_db(name)

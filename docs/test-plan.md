@@ -235,6 +235,10 @@ Prahy alertů (v `alerts.py`): CPU/paměť ≥ 90 %, ≥ 5 výpadků linky za 2 
 3. `systemctl restart mtc-worker`, pak `mtc-admin notify-test talk`.
    Chyba 401 = nesedí tajemství nebo bot není v konverzaci povolený.
 
+E-mail: blok `[[notify]]` s `kind = "email"` (viz config.toml.example), heslo k SMTP
+do souboru v `secret_file` (0640 root:mtcontroller), `mtc-admin notify-test mail`.
+Bez TLS (smtps://) nebo STARTTLS (smtp://) se e-mail neodešle.
+
 Neodeslané notifikace worker zkouší znovu (max. 5×); stejně funguje JSON webhook
 (`kind = "json"`, podpis v hlavičce `X-MTC-Signature: sha256=<HMAC těla>`).
 
