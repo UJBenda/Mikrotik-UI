@@ -84,6 +84,16 @@ def collect(api: RosApi) -> tuple[dict[str, Any], list[str]]:
     vyhazuje hned – nemá smysl zkoušet další sekce."""
     data: dict[str, Any] = {}
     errors: list[str] = []
+    try:
+        _collect_into(api, data, errors)
+    finally:
+        close = getattr(api, "close", None)
+        if close:
+            close()
+    return data, errors
+
+
+def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     for s in SECTIONS:
         params = {".proplist": s.proplist} if s.proplist else None
         try:
@@ -96,7 +106,6 @@ def collect(api: RosApi) -> tuple[dict[str, Any], list[str]]:
             if e.status in (400, 404, 406) or e.status is None and "no such" in str(e):
                 continue  # menu na tomto zařízení neexistuje
             errors.append(f"{s.name}: {e}")
-    return data, errors
 
 
 def basis_sha(data: dict[str, Any], sections: list[str]) -> str:

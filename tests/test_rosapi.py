@@ -165,3 +165,23 @@ def test_bad_credentials_raise():
 def test_unreachable_is_rosapierror():
     with pytest.raises(RosApiError):
         RosApi("https://127.0.0.1:1", "u", "p", "00" * 32, timeout=2).get("/system/identity")
+
+
+def test_keepalive_reuses_connection_and_survives_server_close():
+    tmp = Path(tempfile.mkdtemp())
+    c, k, fp = _self_signed(tmp)
+    state = FakeRouterOS()
+    srv = _server(state, c, k)
+    srv.RequestHandlerClass.protocol_version = "HTTP/1.1"  # keep-alive
+    url = f"https://127.0.0.1:{srv.server_address[1]}"
+    try:
+        with RosApi(url, "mtc-controller", "secret", fp) as api:
+            for _ in range(5):
+                assert api.get("/system/identity") == {"name": "vpn1"}
+            assert api.connections_opened == 1
+            # server spojení zavře – klient otevře nové (s novou kontrolou otisku)
+            api._conn.sock.close()
+            assert api.get("/system/identity") == {"name": "vpn1"}
+            assert api.connections_opened == 2
+    finally:
+        srv.shutdown()

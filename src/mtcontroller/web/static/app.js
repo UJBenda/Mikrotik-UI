@@ -289,16 +289,18 @@ async function loadSitePanel() {
   const prev = sel.value;
   sel.textContent = "";
   for (const s of sites) { const o = el("option", s.name); o.value = s.id; sel.appendChild(o); }
-  if (prev && sites.some((s) => s.id === prev)) sel.value = prev;
+  sel.value = prev && sites.some((s) => s.id === prev) ? prev : (sites[0] ? sites[0].id : "");
   $("topo-wrap").hidden = true;
   $("clients-wrap").hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
   const prim = $("ntp-primary");
   prim.textContent = "";
-  for (const d of devicesCache.filter((x) => x.site_id === siteId() && x.state !== "pending")) {
+  const siteDevs = devicesCache.filter((x) => x.site_id === siteId() && x.state !== "pending");
+  for (const d of siteDevs) {
     const o = el("option", `${d.identity || d.serial} (${d.model || "?"})`); o.value = d.id; prim.appendChild(o);
   }
+  prim.value = siteDevs[0] ? siteDevs[0].id : "";
   const pol = (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/policy/ntp`)).policy;
   const f = $("ntp-form");
   if (pol) {

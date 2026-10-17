@@ -67,26 +67,60 @@ class RosApi:
         token = base64.b64encode(f"{user}:{password}".encode()).decode()
         self._auth = f"Basic {token}"
 
+    _conn: _PinnedConnection | None = None
+    connections_opened: int = 0
+
+    def _connection(self) -> _PinnedConnection:
+        if self._conn is None:
+            self._conn = _PinnedConnection(self.host, self.port, self.fingerprint, self.timeout)
+            self.connections_opened += 1
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
+
+    def __enter__(self) -> "RosApi":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def request(self, method: str, path: str, body: Any = None,
                 params: dict[str, str] | None = None) -> Any:
+        """Jeden dotaz. Spojení se drží otevřené (keep-alive) a znovu použije;
+        při jeho ztrátě se jednou otevře nové – vždy s novou kontrolou otisku."""
         url = "/rest" + quote(path, safe="/*-._~")
         if params:
             url += "?" + urlencode(params)
-        conn = _PinnedConnection(self.host, self.port, self.fingerprint, self.timeout)
-        try:
-            data = json.dumps(body).encode() if body is not None else None
-            headers = {"Authorization": self._auth, "Accept": "application/json"}
-            if data is not None:
-                headers["Content-Type"] = "application/json"
-            conn.request(method, url, body=data, headers=headers)
-            resp = conn.getresponse()
-            raw = resp.read()
-        except (OSError, socket.timeout, http.client.HTTPException) as e:
-            if isinstance(e, RosApiError):
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"Authorization": self._auth, "Accept": "application/json", "Connection": "keep-alive"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        for attempt in (1, 2):
+            reused = self._conn is not None
+            conn = self._connection()
+            conn.timeout = self.timeout
+            try:
+                conn.request(method, url, body=data, headers=headers)
+                resp = conn.getresponse()
+                raw = resp.read()
+                if resp.getheader("Connection", "").lower() == "close" or resp.version == 10:
+                    self.close()
+                break
+            except PinMismatch:
+                self.close()
                 raise
-            raise RosApiError(None, f"{type(e).__name__}: {e}") from e
-        finally:
-            conn.close()
+            except (OSError, socket.timeout, http.client.HTTPException) as e:
+                self.close()
+                # znovu jen pokud selhalo už dříve otevřené (např. serverem zavřené) spojení;
+                # po timeoutu ne – zařízení může dotaz ještě zpracovávat
+                if attempt == 1 and reused and not isinstance(e, (socket.timeout, TimeoutError)):
+                    continue
+                raise RosApiError(None, f"{type(e).__name__}: {e}") from e
         if resp.status >= 400:
             msg = raw.decode(errors="replace")[:300]
             try:

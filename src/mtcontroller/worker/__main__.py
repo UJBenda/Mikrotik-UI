@@ -36,6 +36,12 @@ RESEND_AFTER_MIN = 10
 MAX_ATTEMPTS = 3
 
 
+def _close(api) -> None:
+    close = getattr(api, "close", None)
+    if close:
+        close()
+
+
 def mark_offline(db: Database) -> int:
     with operator_scope(db) as tx:
         rows = tx.fetchall(
@@ -82,6 +88,8 @@ def verify_provisioning(db: Database, box: SecretBox, timeout: float = 8.0) -> i
         except RosApiError as e:
             log.info("zařízení %s zatím přes tunel neodpovídá: %s", d["serial"], e)
             continue
+        finally:
+            _close(api)
         with operator_scope(db) as tx:
             tx.execute(
                 """UPDATE device SET state = 'adopted', adopted_at = now(), identity = %(i)s,
@@ -151,7 +159,10 @@ def run_backups(db: Database, box: SecretBox, limit: int = BACKUPS_PER_TICK) -> 
     for d, api in due:
         api.timeout = 30.0
         try:
-            text = backup.fetch_export(api)
+            try:
+                text = backup.fetch_export(api)
+            finally:
+                _close(api)
             backup.store(db, box, d["tenant_id"], d["id"], text)
             done += 1
         except Exception as e:
@@ -179,6 +190,8 @@ def check_updates(db: Database, box: SecretBox, limit: int = 20) -> int:
             n += 1
         except Exception as e:
             log.info("kontrola aktualizací %s selhala: %s", d["serial"], e)
+        finally:
+            _close(api)
         with operator_scope(db) as tx:
             tx.execute("UPDATE device SET update_checked_at = now(), inventory_at = NULL WHERE id = %(d)s",
                        {"d": str(d["id"])})
