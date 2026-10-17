@@ -100,6 +100,10 @@ class RosApi:
     def get(self, path: str, **params: str) -> Any:
         return self.request("GET", path, params=params or None)
 
+    def post(self, path: str, body: dict) -> Any:
+        """Spuštění příkazu (POST = libovolný příkaz konzole)."""
+        return self.request("POST", path, body)
+
     def put(self, path: str, body: dict) -> Any:
         return self.request("PUT", path, body)
 

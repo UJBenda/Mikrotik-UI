@@ -54,6 +54,8 @@ class SecurityConfig(BaseModel):
     adoption_token_ttl_minutes: int = Field(default=60, ge=5, le=24 * 60)
     # RouterOS fetch: "yes-without-crl" (doporučeno), "yes", nebo "no" jen pro laboratoř
     device_check_certificate: str = "yes-without-crl"
+    # moduly, jejichž plány musí schválit jiný uživatel než autor
+    four_eyes_modules: list[str] = Field(default_factory=lambda: ["vlan", "firewall"])
 
     @field_validator("device_check_certificate")
     @classmethod

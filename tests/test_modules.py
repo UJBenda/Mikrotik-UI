@@ -1,0 +1,195 @@
+"""End-to-end: inventura, metriky, zálohy, NTP plány, detail a topologie."""
+
+import copy
+import re
+import tempfile
+from pathlib import Path
+
+from fixtures import legacy_per_vlan_bridges, modern
+from helpers import AsgiClient, FakeProvider, drop_db, fresh_db, make_settings, new_box
+from test_flow import PASSWORD, _login
+
+from mtcontroller import auth, backup, inventory, services
+from mtcontroller.db import operator_scope, tenant_scope
+from mtcontroller.web.app import AppState, create_app
+from mtcontroller.worker import __main__ as worker
+
+
+def _env():
+    db, name = fresh_db()
+    tmp = Path(tempfile.mkdtemp())
+    settings = make_settings(tmp)
+    box = new_box()
+    app = create_app(AppState(settings, db, box, [FakeProvider()]))
+    from mtcontroller.web import admin as _admin
+    _admin._attempts.clear()
+    with operator_scope(db) as tx:
+        uid = auth.create_user(tx, "admin@example.cz", PASSWORD)
+        tx.execute("INSERT INTO role_binding (user_id, role) VALUES (%(u)s, 'superadmin')", {"u": uid})
+    t = services.create_tenant(db, settings, "Firma")
+    s = services.create_site(db, t["id"], "Praha")
+    return db, name, settings, box, app, str(t["id"]), str(s["id"])
+
+
+def _adopted(db, box, tid, sid, serial, ip, identity):
+    with tenant_scope(db, tid) as tx:
+        d = tx.fetchone(
+            """INSERT INTO device (tenant_id, site_id, serial, state, tunnel_ip, identity, ros_version,
+                                   api_cert_fingerprint, checkin_key_hash, last_checkin_at)
+               VALUES (%(t)s, %(s)s, %(se)s, 'adopted', %(ip)s, %(i)s, '7.20.1 (stable)', %(fp)s, %(k)s, now())
+               RETURNING id""",
+            {"t": tid, "s": sid, "se": serial, "ip": ip, "i": identity, "fp": "ab" * 32,
+             "k": services.token_hash("key-" + serial)})
+        services.put_secret(tx, box, tid, d["id"], "api_password", "pw-" + serial)
+        services.put_secret(tx, box, tid, d["id"], "checkin_key", "key-" + serial)
+    return str(d["id"])
+
+
+def test_inventory_metrics_and_detail():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        sw = _adopted(db, box, tid, sid, "SW1", "10.200.1.2", "sw")
+        inv_gw, inv_sw = modern(), legacy_per_vlan_bridges()
+        inv_gw["neighbors"] = [{"interface": "ether1", "mac-address": "AA:00:00:00:00:01", "identity": "sw"}]
+        inv_gw["resource"] = {"version": "7.24.1 (stable)", "board-name": "RB5009UG+S+", "uptime": "1d",
+                              "free-memory": "500", "total-memory": "1000"}
+
+        # worker: inventura přes podvržené REST API
+        from test_inventory_backup import FakeApi
+        apis = {"10.200.1.1": inv_gw, "10.200.1.2": inv_sw}
+
+        def fake_device_api(tx, box_, dev, timeout=10.0):
+            inv = apis[dev["tunnel_ip"]]
+            resp = {s.path: inv.get(s.name, []) for s in inventory.SECTIONS}
+            return FakeApi(resp)
+
+        orig = services.device_api
+        services.device_api = fake_device_api
+        try:
+            assert worker.poll_inventory(db, box) == 2
+            assert worker.poll_inventory(db, box) == 0  # do 5 minut znovu ne
+            # druhý vzorek o 5 minut později pro výpočet rychlosti
+            with operator_scope(db) as tx:
+                tx.execute("UPDATE interface_sample SET at = at - interval '5 minutes'")
+                tx.execute("UPDATE device SET inventory_at = NULL")
+            inv_gw["interfaces"][0]["rx-byte"] = str(1000 + 300 * 1000 * 1000 // 8)  # +1 Mbit/s * 300 s
+            assert worker.poll_inventory(db, box) == 2
+        finally:
+            services.device_api = orig
+        assert inventory.rollup(db) > 0
+        with tenant_scope(db, tid) as tx:
+            h = tx.fetchone("SELECT rx_bps_avg FROM interface_hourly WHERE device_id = %(d)s AND name = 'ether1'",
+                            {"d": gw})
+        assert 990_000 <= h["rx_bps_avg"] <= 1_010_000, h
+
+        c = _login(app)
+        r = c.get(f"/api/admin/tenants/{tid}/devices/{gw}")
+        assert r.status_code == 200, r.text
+        det = r.json()
+        assert det["device"]["model"] == "RB5009UG+S+" and det["summary"]["memory_used_pct"] == 50
+        assert det["vlan"]["status"] == "conforming"
+        assert any(w["severity"] == "critical" for w in det["warnings"])  # 7.24.1
+        assert det["modules"]["ntp"] == "observe"
+        r = c.get(f"/api/admin/tenants/{tid}/devices/{sw}/vlan-migration")
+        assert r.json()["analysis"]["status"] == "legacy" and r.json()["plan"]["ok"]
+        topo = c.get(f"/api/admin/tenants/{tid}/sites/{sid}/topology").json()
+        assert any({e["a"], e["b"]} == {gw, sw} for e in topo["edges"])
+        m = c.get(f"/api/admin/tenants/{tid}/devices/{gw}/metrics?interface=ether1").json()
+        assert m and m[0]["name"] == "ether1"
+    finally:
+        drop_db(name)
+
+
+def test_ntp_plan_flow():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        cl = _adopted(db, box, tid, sid, "AP1", "10.200.1.2", "ap")
+        inv_gw = modern()
+        inv_cl = copy.deepcopy(modern())
+        inv_cl["addresses"] = [{"address": "10.0.10.30/24", "interface": "vlan10", "disabled": "false", "dynamic": "false"}]
+        inventory.store(db, tid, gw, inv_gw, [])
+        inventory.store(db, tid, cl, inv_cl, [])
+
+        c = _login(app)
+        base = f"/api/admin/tenants/{tid}"
+        # politika: primární musí být z lokality
+        r = c.post(f"{base}/sites/{sid}/policy/ntp", json_body={"primary_device_id": gw, "timezone": "Europe/Prague"})
+        assert r.status_code == 200, r.text
+        r = c.post(f"{base}/sites/{sid}/plans/ntp")
+        res = {x["device_id"]: x for x in r.json()}
+        assert res[gw]["result"] == "plan" and res[cl]["result"] == "plan"
+        plans = c.get(f"{base}/plans").json()
+        p_gw = next(p for p in plans if p["device_id"] == gw)
+        p_cl = next(p for p in plans if p["device_id"] == cl)
+        assert "ntp server set enabled=yes" in p_gw["script"]
+        assert 'servers="10.0.10.2,tik.cesnet.cz"' in p_cl["script"]
+
+        # režim observe → schválení odmítnuto
+        r = c.post(f"{base}/plans/{p_gw['id']}/approve")
+        assert r.status_code == 400 and "observe" in r.text
+        assert c.post(f"{base}/devices/{gw}/modules", json_body={"module": "ntp", "mode": "manage"}).status_code == 200
+        # VLAN zatím jen observe
+        assert c.post(f"{base}/devices/{gw}/modules", json_body={"module": "vlan", "mode": "manage"}).status_code == 400
+        r = c.post(f"{base}/plans/{p_gw['id']}/approve")
+        assert r.status_code == 200, r.text
+
+        # check-in doručí plán, ack ho označí jako aplikovaný
+        dev = AsgiClient(app, "checkin.test")
+        r = dev.post("/api/checkin", json_body={"sstp": "up"}, headers={"authorization": "Bearer key-GW1"})
+        assert "/system ntp server set enabled=yes" in r.text
+        cid = int(re.search(r"ack\\?\?id=(\d+)", r.text).group(1))
+        dev.post(f"/api/checkin/ack?id={cid}&status=done", headers={"authorization": "Bearer key-GW1"})
+        with tenant_scope(db, tid) as tx:
+            st = tx.fetchone("SELECT status FROM config_plan WHERE id = %(i)s", {"i": p_gw["id"]})["status"]
+            inv_at = tx.fetchone("SELECT inventory_at FROM device WHERE id = %(d)s", {"d": gw})["inventory_at"]
+        assert st == "applied" and inv_at is None  # inventura se načte znovu
+
+        # změna zařízení mezi vytvořením a schválením → plán propadne
+        c.post(f"{base}/devices/{cl}/modules", json_body={"module": "ntp", "mode": "manage"})
+        inv_cl["ntp_client"] = {"enabled": "true", "servers": "1.2.3.4"}
+        inventory.store(db, tid, cl, inv_cl, [])
+        r = c.post(f"{base}/plans/{p_cl['id']}/approve")
+        assert r.status_code == 400 and "změnila" in r.text
+        assert c.post(f"{base}/plans/{p_cl['id']}/approve").status_code == 400  # už není draft
+    finally:
+        drop_db(name)
+
+
+def test_backups_store_diff_and_rbac():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        e1 = "# 2026-10-17 20:00:00 by RouterOS 7.20.1\n/system identity set name=gw\n/user add name=x password=tajne1\n"
+        e2 = e1.replace("2026-10-17", "2026-10-18")  # jen hlavička → beze změny
+        e3 = e2.replace("name=gw", "name=gw2")
+        b1 = backup.store(db, box, tid, gw, e1)
+        b2 = backup.store(db, box, tid, gw, e2)
+        b3 = backup.store(db, box, tid, gw, e3)
+        assert b1["changed"] and not b2["changed"] and b3["changed"]
+        with operator_scope(db) as tx:
+            raw = [bytes(r["ciphertext"]) for r in tx.fetchall("SELECT ciphertext FROM device_backup")]
+            actions = [r["action"] for r in tx.fetchall("SELECT action FROM audit_log")]
+        assert all(b"tajne1" not in x for x in raw)  # zálohy jen šifrovaně
+        assert actions.count("device.config_changed") == 1  # drift jen u skutečné změny
+
+        admin = _login(app)
+        base = f"/api/admin/tenants/{tid}/devices/{gw}/backups"
+        d = admin.get(f"{base}/{b3['id']}/diff").json()
+        assert "+/system identity set name=gw2" in d["diff"] and "tajne1" not in d["diff"]
+        dl = admin.get(f"{base}/{b3['id']}/download")
+        assert dl.status_code == 200 and "tajne1" in dl.text and "attachment" in dl.headers["content-disposition"]
+
+        # technik smí diff, ale ne stáhnout celý export s hesly
+        with operator_scope(db) as tx:
+            u = auth.create_user(tx, "tech@firma.cz", PASSWORD)
+            tx.execute("INSERT INTO role_binding (user_id, role, tenant_id) VALUES (%(u)s, 'technician', %(t)s)",
+                       {"u": u, "t": tid})
+        tech = _login(app, "tech@firma.cz")
+        assert tech.get(f"{base}/{b3['id']}/diff").status_code == 200
+        assert tech.get(f"{base}/{b3['id']}/download").status_code == 404
+        # vyžádání zálohy
+        assert tech.post(f"/api/admin/tenants/{tid}/devices/{gw}/backup").status_code == 200
+    finally:
+        drop_db(name)

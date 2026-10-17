@@ -54,7 +54,7 @@ def client_ip(request: Request) -> str | None:
 
 
 def create_app(state: AppState) -> Starlette:
-    from . import admin, checkin
+    from . import admin, checkin, devices
 
     settings = state.settings
     ui_host, checkin_host = settings.web.ui_host, settings.web.checkin_host
@@ -82,7 +82,7 @@ def create_app(state: AppState) -> Starlette:
     async def healthz(request: Request) -> Response:
         return json_response({"status": "ok", "version": __version__})
 
-    routes = [Route("/healthz", healthz)] + checkin.routes() + admin.routes()
+    routes = [Route("/healthz", healthz)] + checkin.routes() + admin.routes() + devices.routes()
     app = Starlette(routes=routes, middleware=[Middleware(BaseHTTPMiddleware, dispatch=host_separation)])
     app.state.mtc = state
     return app

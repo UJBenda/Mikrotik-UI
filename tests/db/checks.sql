@@ -190,6 +190,37 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 13) inventura, zálohy a plány: izolace tenantů
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_inventory (tenant_id, device_id, section, data)
+SELECT tenant_id, id, 'resource', '{"x":1}' FROM device WHERE serial = 'SER-B1';
+INSERT INTO device_backup (tenant_id, device_id, size_bytes, sha256, content_sha, changed, wrapped_key, ciphertext)
+SELECT tenant_id, id, 1, repeat('a',64), repeat('a',64), true, '\x00', '\x00' FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_inventory) + (SELECT count(*) FROM device_backup) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí inventuru nebo zálohy tenanta B';
+  END IF;
+  BEGIN
+    INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, basis_sha)
+    VALUES ('00000000-0000-0000-0000-0000000000b1',
+            (SELECT id FROM device LIMIT 1), 'ntp', 'x', '{}', '', repeat('a',64));
+    RAISE EXCEPTION 'FAIL: plán do cizího tenanta prošel';
+  EXCEPTION WHEN insufficient_privilege OR not_null_violation THEN
+    RAISE NOTICE 'OK 13 inventura, zálohy a plány izolované';
+  END;
+  BEGIN
+    UPDATE device_backup SET size_bytes = 2;
+    RAISE EXCEPTION 'FAIL: zálohu šlo upravit';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'OK 13b zálohy nejdou upravovat';
+  END;
+END $$;
+COMMIT;
+
 -- 11) superadmin role musí být globální
 BEGIN;
 DO $$ BEGIN

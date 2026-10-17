@@ -1,0 +1,341 @@
+"""Admin API: detail zařízení, moduly, zálohy, plány změn, topologie."""
+
+from __future__ import annotations
+
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from .. import analysis, backup, inventory, plans, ros_versions
+from ..auth import MANAGE, OPERATE, READ, Principal
+from ..db import tenant_scope
+from ..services import NotFound, ServiceError, audit
+from .admin import _err, _json, _uuid, endpoint
+from .app import client_ip, get_state, json_response
+
+T = "/api/admin/tenants/{tenant_id}"
+
+
+def _int(v, default: int, lo: int, hi: int) -> int:
+    try:
+        return max(lo, min(hi, int(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _summary(inv: dict) -> dict:
+    res = inv.get("resource") if isinstance(inv.get("resource"), dict) else {}
+    rb = inv.get("routerboard") if isinstance(inv.get("routerboard"), dict) else {}
+    upd = inv.get("update") if isinstance(inv.get("update"), dict) else {}
+
+    def pct(free, total):
+        try:
+            return round(100 - 100 * int(free) / int(total))
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    return {
+        "board": res.get("board-name"), "version": res.get("version"), "uptime": res.get("uptime"),
+        "cpu_load": res.get("cpu-load"), "cpu": res.get("cpu"), "architecture": res.get("architecture-name"),
+        "memory_used_pct": pct(res.get("free-memory"), res.get("total-memory")),
+        "hdd_used_pct": pct(res.get("free-hdd-space"), res.get("total-hdd-space")),
+        "firmware": rb.get("current-firmware"), "firmware_upgrade": rb.get("upgrade-firmware"),
+        "serial": rb.get("serial-number"),
+        "update_channel": upd.get("channel"), "latest_version": upd.get("latest-version"),
+        "update_status": upd.get("status"),
+    }
+
+
+@endpoint(READ)
+async def device_detail(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            d = tx.fetchone(
+                """SELECT d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state,
+                          host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
+                          d.last_checkin_at, d.last_status, d.adopted_at, d.inventory_at, d.inventory_error,
+                          d.backup_at
+                   FROM device d LEFT JOIN site s ON s.id = d.site_id WHERE d.id = %(d)s""", {"d": did})
+            if not d:
+                raise NotFound("zařízení neexistuje")
+            inv = inventory.load(tx, did)
+            backups = tx.fetchall(
+                """SELECT id, taken_at, reason, size_bytes, changed FROM device_backup
+                   WHERE device_id = %(d)s ORDER BY id DESC LIMIT 30""", {"d": did})
+            pl = tx.fetchall(
+                """SELECT id, module, summary, status, created_at, approved_at, finished_at
+                   FROM config_plan WHERE device_id = %(d)s ORDER BY id DESC LIMIT 20""", {"d": did})
+            cmds = tx.fetchall(
+                """SELECT id, kind, status, attempts, created_at, finished_at FROM device_command
+                   WHERE device_id = %(d)s ORDER BY id DESC LIMIT 20""", {"d": did})
+            modes = plans.module_modes(tx, did)
+        ifaces = [{
+            "name": i.get("name"), "type": i.get("type"), "running": i.get("running") == "true",
+            "disabled": i.get("disabled") == "true", "mac": i.get("mac-address"), "comment": i.get("comment"),
+            "link_downs": i.get("link-downs"), "rx_error": i.get("rx-error"), "tx_error": i.get("tx-error"),
+        } for i in (inv.get("interfaces") or []) if isinstance(i, dict) and i.get("dynamic") != "true"]
+        return {
+            "device": d, "summary": _summary(inv), "modules": modes,
+            "warnings": [{"severity": i.severity, "text": i.text, "source": i.source}
+                         for i in ros_versions.issues_for(d.get("ros_version") or "")],
+            "interfaces": ifaces,
+            "addresses": inv.get("addresses") or [],
+            "neighbors": inv.get("neighbors") or [],
+            "vlan": analysis.analyze_vlan(inv).as_dict() if inv else None,
+            "ntp": analysis.ntp_status(inv) if inv else None,
+            "backups": backups, "plans": pl, "commands": cmds,
+        }
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def device_module(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    data = await _json(request)
+    await run_in_threadpool(plans.set_module_mode, st.db, tid, _uuid(request.path_params["device_id"]),
+                            str(data.get("module", "")), str(data.get("mode", "")), p.user_id, client_ip(request))
+    return json_response({"ok": True})
+
+
+@endpoint(OPERATE)
+async def request_backup(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            n = tx.execute("UPDATE device SET backup_at = NULL WHERE id = %(d)s AND state = 'adopted'", {"d": did})
+            if not n:
+                raise ServiceError("zálohu lze vyžádat jen u adoptovaného zařízení")
+            audit(tx, "device.backup_requested", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
+                  ip=client_ip(request))
+
+    await run_in_threadpool(q)
+    return json_response({"ok": True, "detail": "záloha proběhne do minuty"})
+
+
+@endpoint(OPERATE)
+async def backup_diff(request: Request, p: Principal, tid: str) -> Response:
+    """Diff zálohy proti předchozí – hesla jsou v diffu skrytá."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    bid = _int(request.path_params["backup_id"], 0, 0, 2**62)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            prev = tx.fetchone("""SELECT id FROM device_backup WHERE device_id = %(d)s AND id < %(b)s
+                                  ORDER BY id DESC LIMIT 1""", {"d": did, "b": bid})
+            new = backup.load_text(tx, st.box, did, bid)
+            old = backup.load_text(tx, st.box, did, prev["id"]) if prev else ""
+            audit(tx, "device.backup_diff", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
+                  after={"backup_id": bid}, ip=client_ip(request))
+        return {"diff": backup.diff(old, new), "previous_id": prev["id"] if prev else None}
+
+    try:
+        return json_response(await run_in_threadpool(q))
+    except backup.BackupError as e:
+        return _err(404, str(e))
+
+
+@endpoint(MANAGE)
+async def backup_download(request: Request, p: Principal, tid: str) -> Response:
+    """Celý export včetně hesel – jen tenant_admin, vždy auditováno."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    bid = _int(request.path_params["backup_id"], 0, 0, 2**62)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            text = backup.load_text(tx, st.box, did, bid)
+            serial = tx.fetchone("SELECT serial FROM device WHERE id = %(d)s", {"d": did})["serial"]
+            audit(tx, "device.backup_download", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
+                  after={"backup_id": bid}, ip=client_ip(request))
+        return text, serial
+
+    try:
+        text, serial = await run_in_threadpool(q)
+    except backup.BackupError as e:
+        return _err(404, str(e))
+    return Response(text, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{serial}-{bid}.rsc"'})
+
+
+@endpoint(READ)
+async def vlan_migration(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    target = request.query_params.get("target") or None
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            inv = inventory.load(tx, did)
+        if not inv:
+            raise ServiceError("inventura zatím neproběhla")
+        return {"analysis": analysis.analyze_vlan(inv).as_dict(),
+                "plan": analysis.plan_vlan_migration(inv, target).as_dict()}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def metrics(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    hours = _int(request.query_params.get("hours"), 24, 1, 24 * 400)
+    iface = request.query_params.get("interface")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return tx.fetchall(
+                """SELECT hour, name, rx_bps_avg, tx_bps_avg, rx_bps_max, tx_bps_max,
+                          rx_errors, tx_errors, link_downs
+                   FROM interface_hourly WHERE device_id = %(d)s
+                     AND hour > now() - make_interval(hours => %(h)s)
+                     AND (%(i)s::text IS NULL OR name = %(i)s)
+                   ORDER BY name, hour""", {"d": did, "h": hours, "i": iface})
+
+    return json_response(await run_in_threadpool(q))
+
+
+# --- lokalita: NTP politika, plány, topologie ------------------------------------------
+
+
+@endpoint(READ)
+async def site_ntp_policy(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    if request.method == "POST":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        data = await _json(request)
+        pol = await run_in_threadpool(plans.set_site_policy, st.db, tid, sid, "ntp", data, p.user_id,
+                                      client_ip(request))
+        return json_response(pol)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return plans.get_site_policy(tx, sid, "ntp")
+
+    return json_response({"policy": await run_in_threadpool(q)})
+
+
+@endpoint(OPERATE)
+async def generate_plans(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    module = request.path_params["module"]
+    if module != "ntp":
+        return _err(400, "plány lokality jsou zatím jen pro NTP")
+    out = await run_in_threadpool(plans.generate_ntp_plans, st.db, tid, sid, p.user_id, client_ip(request))
+    return json_response(out)
+
+
+@endpoint(READ)
+async def plan_list(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    status = request.query_params.get("status", "draft")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return tx.fetchall(
+                """SELECT pl.id, pl.module, pl.summary, pl.changes, pl.script, pl.status, pl.created_at,
+                          d.id AS device_id, d.serial, d.identity, s.name AS site
+                   FROM config_plan pl JOIN device d ON d.id = pl.device_id LEFT JOIN site s ON s.id = d.site_id
+                   WHERE pl.status::text = %(s)s ORDER BY pl.id DESC LIMIT 200""", {"s": status})
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def plan_approve(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    pid = _int(request.path_params["plan_id"], 0, 0, 2**62)
+    cid = await run_in_threadpool(plans.approve_plan, st.db, st.settings, tid, pid, p.user_id, client_ip(request))
+    return json_response({"ok": True, "command_id": cid})
+
+
+@endpoint(OPERATE)
+async def plan_discard(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    pid = _int(request.path_params["plan_id"], 0, 0, 2**62)
+    await run_in_threadpool(plans.discard_plan, st.db, tid, pid, p.user_id, client_ip(request))
+    return json_response({"ok": True})
+
+
+def build_topology(devices: list[dict], invs: dict[str, dict]) -> dict:
+    """Uzly = zařízení lokality, hrany = MNDP/LLDP sousedé spárovaní podle MAC
+    nebo identity. Neznámí sousedé jsou samostatné uzly (nespravovaná zařízení)."""
+    mac_owner: dict[str, str] = {}
+    ident_owner: dict[str, str] = {}
+    for d in devices:
+        did = str(d["id"])
+        for i in invs.get(did, {}).get("interfaces") or []:
+            if isinstance(i, dict) and i.get("mac-address"):
+                mac_owner[str(i["mac-address"]).upper()] = did
+        if d.get("identity"):
+            ident_owner[str(d["identity"])] = did
+    nodes = [{"id": str(d["id"]), "label": d.get("identity") or d["serial"], "managed": True,
+              "state": d.get("state"), "model": d.get("model")} for d in devices]
+    unknown: dict[str, dict] = {}
+    edges: dict[tuple, dict] = {}
+    for d in devices:
+        a = str(d["id"])
+        for n in invs.get(a, {}).get("neighbors") or []:
+            if not isinstance(n, dict):
+                continue
+            mac = str(n.get("mac-address", "")).upper()
+            b = mac_owner.get(mac) or ident_owner.get(str(n.get("identity", "")))
+            if not b:
+                key = mac or str(n.get("identity"))
+                b = f"ext:{key}"
+                unknown.setdefault(b, {"id": b, "label": n.get("identity") or mac, "managed": False,
+                                       "model": n.get("board") or n.get("platform"), "address": n.get("address")})
+            if b == a:
+                continue
+            local_if = str(n.get("interface", "")).split(",")[0]
+            k = tuple(sorted((a, b)))
+            e = edges.setdefault(k, {"a": k[0], "b": k[1], "ports": {}})
+            e["ports"][a] = local_if
+            if n.get("interface-name"):
+                e["ports"].setdefault(b, n.get("interface-name"))
+    return {"nodes": nodes + list(unknown.values()), "edges": list(edges.values())}
+
+
+@endpoint(READ)
+async def topology(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            devs = tx.fetchall("""SELECT id, serial, identity, model, state FROM device
+                                  WHERE site_id = %(s)s AND state <> 'removed'""", {"s": sid})
+            invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
+        return build_topology(devs, invs)
+
+    return json_response(await run_in_threadpool(q))
+
+
+def routes() -> list[Route]:
+    d = T + "/devices/{device_id}"
+    s = T + "/sites/{site_id}"
+    return [
+        Route(d, device_detail, methods=["GET"]),
+        Route(d + "/modules", device_module, methods=["POST"]),
+        Route(d + "/backup", request_backup, methods=["POST"]),
+        Route(d + "/backups/{backup_id}/diff", backup_diff, methods=["GET"]),
+        Route(d + "/backups/{backup_id}/download", backup_download, methods=["GET"]),
+        Route(d + "/vlan-migration", vlan_migration, methods=["GET"]),
+        Route(d + "/metrics", metrics, methods=["GET"]),
+        Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
+        Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
+        Route(s + "/topology", topology, methods=["GET"]),
+        Route(T + "/plans", plan_list, methods=["GET"]),
+        Route(T + "/plans/{plan_id}/approve", plan_approve, methods=["POST"]),
+        Route(T + "/plans/{plan_id}/discard", plan_discard, methods=["POST"]),
+    ]

@@ -1,0 +1,224 @@
+"""Inventura zařízení přes REST (jen čtení) a metriky rozhraní.
+
+Sbírá se jen to, co je potřeba pro přehled, analýzu VLAN/NTP a topologii.
+Žádná sekce nesmí obsahovat hesla (uživatelé, PPP secrety, wifi klíče se
+nečtou). Chybějící menu (např. /system/routerboard na CHR) se přeskočí.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
+
+from .db import Database, operator_scope, tenant_scope
+from .rosapi import PinMismatch, RosApi, RosApiError
+
+log = logging.getLogger("mtc.inventory")
+_HOUR = timedelta(hours=1)
+
+
+@dataclass(frozen=True)
+class Section:
+    name: str
+    path: str
+    proplist: str | None = None
+
+
+SECTIONS: list[Section] = [
+    Section("identity", "/system/identity"),
+    Section("resource", "/system/resource"),
+    Section("routerboard", "/system/routerboard"),
+    Section("clock", "/system/clock"),
+    Section("packages", "/system/package", "name,version,disabled,build-time"),
+    Section("update", "/system/package/update"),
+    Section("interfaces", "/interface",
+            "name,type,mac-address,running,disabled,mtu,comment,rx-byte,tx-byte,rx-error,tx-error,"
+            "rx-drop,tx-drop,link-downs,last-link-up-time,slave,dynamic"),
+    Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out"),
+    Section("switch", "/interface/ethernet/switch", "name,type"),
+    Section("bridges", "/interface/bridge",
+            "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment"),
+    Section("bridge_ports", "/interface/bridge/port",
+            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment"),
+    Section("bridge_vlans", "/interface/bridge/vlan",
+            "bridge,vlan-ids,tagged,untagged,current-tagged,current-untagged,disabled,dynamic"),
+    Section("vlans", "/interface/vlan", "name,vlan-id,interface,disabled,comment"),
+    Section("addresses", "/ip/address", "address,interface,network,disabled,dynamic"),
+    Section("neighbors", "/ip/neighbor",
+            "interface,address,mac-address,identity,platform,board,version,interface-name"),
+    Section("ntp_client", "/system/ntp/client"),
+    Section("ntp_server", "/system/ntp/server"),
+    Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled"),
+]
+
+# rozhraní, pro která má smysl ukládat čítače (dynamická PPP serverová rozhraní ne)
+_SKIP_TYPES = {"pppoe-in", "sstp-in", "l2tp-in", "ovpn-in", "pptp-in", "loopback"}
+
+# klíče, které nikdy nesmí do DB (pojistka, kdyby je RouterOS přidal do výpisu)
+_FORBIDDEN_KEYS = {"password", "passphrase", "secret", "private-key", "psk", "authentication-key"}
+
+
+def _scrub(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _scrub(v) for k, v in obj.items() if not any(f in k.lower() for f in _FORBIDDEN_KEYS)}
+    if isinstance(obj, list):
+        return [_scrub(x) for x in obj]
+    return obj
+
+
+def collect(api: RosApi) -> tuple[dict[str, Any], list[str]]:
+    """Načte všechny sekce. Vrací (data, chyby). Chyba pinningu/přihlášení se
+    vyhazuje hned – nemá smysl zkoušet další sekce."""
+    data: dict[str, Any] = {}
+    errors: list[str] = []
+    for s in SECTIONS:
+        params = {".proplist": s.proplist} if s.proplist else None
+        try:
+            data[s.name] = _scrub(api.request("GET", s.path, params=params))
+        except PinMismatch:
+            raise
+        except RosApiError as e:
+            if e.status in (401, 403):
+                raise
+            if e.status in (400, 404, 406) or e.status is None and "no such" in str(e):
+                continue  # menu na tomto zařízení neexistuje
+            errors.append(f"{s.name}: {e}")
+    return data, errors
+
+
+def basis_sha(data: dict[str, Any], sections: list[str]) -> str:
+    """Otisk vybraných sekcí – plán změn vzniká z konkrétního stavu."""
+    blob = json.dumps({k: data.get(k) for k in sorted(sections)}, sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _int(v: Any) -> int | None:
+    try:
+        return int(str(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def interface_samples(data: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for i in data.get("interfaces") or []:
+        if not isinstance(i, dict) or i.get("type") in _SKIP_TYPES or i.get("dynamic") == "true":
+            continue
+        name = str(i.get("name", ""))[:100]
+        if not name or name.startswith("<"):
+            continue
+        out.append({
+            "name": name,
+            "running": i.get("running") == "true",
+            "rx_bytes": _int(i.get("rx-byte")), "tx_bytes": _int(i.get("tx-byte")),
+            "rx_errors": _int(i.get("rx-error")), "tx_errors": _int(i.get("tx-error")),
+            "rx_drops": _int(i.get("rx-drop")), "tx_drops": _int(i.get("tx-drop")),
+            "link_downs": _int(i.get("link-downs")),
+        })
+    return out
+
+
+def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], errors: list[str]) -> None:
+    with tenant_scope(db, tenant_id) as tx:
+        for section, value in data.items():
+            tx.execute(
+                """INSERT INTO device_inventory (tenant_id, device_id, section, data)
+                   VALUES (%(t)s, %(d)s, %(s)s, %(v)s)
+                   ON CONFLICT (device_id, section) DO UPDATE SET data = EXCLUDED.data, collected_at = now()""",
+                {"t": str(tenant_id), "d": str(device_id), "s": section,
+                 "v": value if isinstance(value, (dict, list)) else {"value": value}},
+            )
+        for smp in interface_samples(data):
+            tx.execute(
+                """INSERT INTO interface_sample (tenant_id, device_id, name, running, rx_bytes, tx_bytes,
+                       rx_errors, tx_errors, rx_drops, tx_drops, link_downs)
+                   VALUES (%(t)s, %(d)s, %(name)s, %(running)s, %(rx_bytes)s, %(tx_bytes)s,
+                       %(rx_errors)s, %(tx_errors)s, %(rx_drops)s, %(tx_drops)s, %(link_downs)s)""",
+                dict(smp, t=str(tenant_id), d=str(device_id)),
+            )
+        ident = (data.get("identity") or {}).get("name") if isinstance(data.get("identity"), dict) else None
+        res = data.get("resource") if isinstance(data.get("resource"), dict) else {}
+        tx.execute(
+            """UPDATE device SET inventory_at = now(), inventory_error = %(e)s,
+                   identity = coalesce(%(i)s, identity),
+                   ros_version = coalesce(%(v)s, ros_version),
+                   model = coalesce(%(m)s, model)
+               WHERE id = %(d)s""",
+            {"e": "; ".join(errors)[:1000] or None, "i": (str(ident)[:200] if ident else None),
+             "v": (str(res.get("version"))[:50] if res.get("version") else None),
+             "m": (str(res.get("board-name"))[:100] if res.get("board-name") else None), "d": str(device_id)},
+        )
+
+
+def store_error(db: Database, tenant_id: Any, device_id: Any, error: str) -> None:
+    with tenant_scope(db, tenant_id) as tx:
+        tx.execute("UPDATE device SET inventory_at = now(), inventory_error = %(e)s WHERE id = %(d)s",
+                   {"e": error[:1000], "d": str(device_id)})
+
+
+def load(tx, device_id: Any) -> dict[str, Any]:
+    rows = tx.fetchall("SELECT section, data FROM device_inventory WHERE device_id = %(d)s",
+                       {"d": str(device_id)})
+    return {r["section"]: r["data"] for r in rows}
+
+
+ROLLUP_SQL = """
+WITH s AS (
+  SELECT tenant_id, device_id, name, at,
+         rx_bytes - lag(rx_bytes) OVER w AS drx, tx_bytes - lag(tx_bytes) OVER w AS dtx,
+         rx_errors - lag(rx_errors) OVER w AS derx, tx_errors - lag(tx_errors) OVER w AS detx,
+         rx_drops - lag(rx_drops) OVER w AS ddrx, tx_drops - lag(tx_drops) OVER w AS ddtx,
+         link_downs - lag(link_downs) OVER w AS dld,
+         extract(epoch FROM at - lag(at) OVER w) AS secs
+  FROM interface_sample
+  WHERE at >= %(start)s::timestamptz - interval '20 minutes' AND at < %(stop)s::timestamptz
+  WINDOW w AS (PARTITION BY device_id, name ORDER BY at)
+)
+INSERT INTO interface_hourly (tenant_id, device_id, hour, name, rx_bps_avg, tx_bps_avg,
+                              rx_bps_max, tx_bps_max, rx_errors, tx_errors, rx_drops, tx_drops,
+                              link_downs, samples)
+SELECT tenant_id, device_id, date_trunc('hour', at), name,
+       avg(drx * 8 / secs) FILTER (WHERE drx >= 0 AND secs > 0)::bigint,
+       avg(dtx * 8 / secs) FILTER (WHERE dtx >= 0 AND secs > 0)::bigint,
+       max(drx * 8 / secs) FILTER (WHERE drx >= 0 AND secs > 0)::bigint,
+       max(dtx * 8 / secs) FILTER (WHERE dtx >= 0 AND secs > 0)::bigint,
+       sum(greatest(derx, 0)), sum(greatest(detx, 0)),
+       sum(greatest(ddrx, 0)), sum(greatest(ddtx, 0)), sum(greatest(dld, 0)),
+       count(*)
+FROM s
+WHERE at >= %(start)s::timestamptz AND secs IS NOT NULL AND secs < 3600
+GROUP BY tenant_id, device_id, date_trunc('hour', at), name
+ON CONFLICT (device_id, name, hour) DO UPDATE SET
+  rx_bps_avg = EXCLUDED.rx_bps_avg, tx_bps_avg = EXCLUDED.tx_bps_avg,
+  rx_bps_max = EXCLUDED.rx_bps_max, tx_bps_max = EXCLUDED.tx_bps_max,
+  rx_errors = EXCLUDED.rx_errors, tx_errors = EXCLUDED.tx_errors,
+  rx_drops = EXCLUDED.rx_drops, tx_drops = EXCLUDED.tx_drops,
+  link_downs = EXCLUDED.link_downs, samples = EXCLUDED.samples
+"""
+
+
+def rollup(db: Database, hours_back: int = 3) -> int:
+    """Přepočítá hodinové agregace za posledních `hours_back` hodin (idempotentní)."""
+    with operator_scope(db) as tx:
+        r = tx.fetchone("SELECT date_trunc('hour', now()) AS stop")
+        stop = r["stop"]
+        start = tx.fetchone("SELECT %(s)s::timestamptz - make_interval(hours => %(h)s) AS start",
+                            {"s": stop, "h": hours_back})["start"]
+        # i rozpracovaná aktuální hodina, ať je graf čerstvý
+        return tx.execute(ROLLUP_SQL, {"start": start, "stop": stop + _HOUR})
+
+
+def retention(db: Database, sample_days: int = 14, hourly_days: int = 400, backup_days: int = 400) -> None:
+    with operator_scope(db) as tx:
+        tx.execute("DELETE FROM interface_sample WHERE at < now() - make_interval(days => %(d)s)", {"d": sample_days})
+        tx.execute("DELETE FROM interface_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
+        # nejnovější záloha zařízení zůstává vždy
+        tx.execute(
+            """DELETE FROM device_backup b WHERE taken_at < now() - make_interval(days => %(d)s)
+               AND id <> (SELECT max(id) FROM device_backup x WHERE x.device_id = b.device_id)""",
+            {"d": backup_days})
+

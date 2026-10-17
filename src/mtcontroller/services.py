@@ -326,7 +326,7 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
 
 # --- příkazy -----------------------------------------------------------------------
 
-COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision"}
+COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan"}
 
 
 def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
@@ -380,6 +380,10 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.REBOOT_TAIL)
     if kind == "deprovision":
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.DEPROVISION_TAIL)
+    if kind == "apply_plan":
+        from .plans import plan_script
+
+        return routeros.wrap_command(ack_url, key, plan_script(tx, int(cmd["params"]["plan_id"]), dev["id"]), opts)
     raise ServiceError(f"neznámý příkaz {kind}")
 
 
@@ -506,6 +510,12 @@ def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | 
             return False
         audit(tx, f"device.command.{status}", tenant_id=tenant_id, target=f"device:{device_ref['id']}",
               after={"command_id": command_id, "kind": row["kind"]}, ip=ip)
+        if row["kind"] == "apply_plan":
+            from .plans import finish_plan
+
+            finish_plan(tx, command_id, status == "done")
+            # konfigurace se změnila – inventuru načíst co nejdřív znovu
+            tx.execute("UPDATE device SET inventory_at = NULL WHERE id = %(d)s", {"d": str(device_ref["id"])})
         if row["kind"] == "deprovision" and status == "done":
             tx.execute(
                 """UPDATE device SET state = 'removed', checkin_key_hash = NULL, tunnel_ip = NULL,
@@ -535,3 +545,14 @@ def valid_ip(v: str | None) -> str | None:
         return str(ipaddress.ip_address(v)) if v else None
     except ValueError:
         return None
+
+
+def device_api(tx: Tx, box: SecretBox, dev: dict, timeout: float = 10.0):
+    """REST klient na zařízení přes tunel: servisní účet + pinning certifikátu,
+    který zařízení nahlásilo během provisioningu."""
+    from .rosapi import RosApi
+
+    if not dev.get("tunnel_ip") or not dev.get("fp"):
+        raise ServiceError("zařízení nemá tunelovou IP nebo otisk certifikátu")
+    pw = get_secret(tx, box, dev["id"], "api_password") or ""
+    return RosApi(f"https://{dev['tunnel_ip']}", routeros.API_USER, pw, dev["fp"], timeout=timeout)

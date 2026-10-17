@@ -18,6 +18,7 @@ import threading
 import time
 
 from ..auth import purge_expired_sessions
+from ..plans import finish_plan
 from ..config import Settings, get_settings
 from ..db import Database, get_db, operator_scope
 from ..rosapi import RosApi, RosApiError
@@ -52,11 +53,15 @@ def requeue_stale(db: Database) -> int:
             f"""UPDATE device_command SET status = 'queued'
                 WHERE status = 'sent' AND sent_at < now() - interval '{RESEND_AFTER_MIN} minutes'
                   AND attempts < {MAX_ATTEMPTS}""")
-        n += tx.execute(
+        failed = tx.fetchall(
             f"""UPDATE device_command SET status = 'failed', finished_at = now(), result = 'bez potvrzení'
                 WHERE status = 'sent' AND sent_at < now() - interval '{RESEND_AFTER_MIN} minutes'
-                  AND attempts >= {MAX_ATTEMPTS}""")
-        return n
+                  AND attempts >= {MAX_ATTEMPTS}
+                RETURNING id, kind""")
+        for f in failed:
+            if f["kind"] == "apply_plan":
+                finish_plan(tx, f["id"], False)
+        return n + len(failed)
 
 
 def verify_provisioning(db: Database, box: SecretBox, timeout: float = 8.0) -> int:
@@ -91,6 +96,73 @@ def verify_provisioning(db: Database, box: SecretBox, timeout: float = 8.0) -> i
     return done
 
 
+INVENTORY_EVERY_MIN = 5
+BACKUP_EVERY_HOURS = 24
+POOL_SIZE = 8
+BACKUPS_PER_TICK = 4
+
+
+def _due(db: Database, box: SecretBox, where: str, limit: int) -> list[tuple[dict, object]]:
+    """Zařízení k obsloužení + jejich REST klient (hesla se dešifrují v jedné transakci)."""
+    from ..services import device_api
+
+    with operator_scope(db) as tx:
+        devs = tx.fetchall(
+            f"""SELECT id, tenant_id, serial, host(tunnel_ip) AS tunnel_ip, api_cert_fingerprint AS fp
+                FROM device WHERE state = 'adopted' AND tunnel_ip IS NOT NULL
+                  AND api_cert_fingerprint IS NOT NULL AND ({where})
+                ORDER BY id LIMIT {int(limit)}""")
+        return [(d, device_api(tx, box, d)) for d in devs]
+
+
+def poll_inventory(db: Database, box: SecretBox, limit: int = 200) -> int:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .. import inventory
+
+    due = _due(db, box, f"inventory_at IS NULL OR inventory_at < now() - interval '{INVENTORY_EVERY_MIN} minutes'",
+               limit)
+
+    def one(item) -> bool:
+        d, api = item
+        try:
+            data, errors = inventory.collect(api)
+            inventory.store(db, d["tenant_id"], d["id"], data, errors)
+            return True
+        except Exception as e:  # zařízení nedostupné, pin nesedí apod.
+            log.info("inventura %s selhala: %s", d["serial"], e)
+            try:
+                inventory.store_error(db, d["tenant_id"], d["id"], str(e))
+            except Exception:
+                log.exception("zápis chyby inventury selhal")
+            return False
+
+    if not due:
+        return 0
+    with ThreadPoolExecutor(max_workers=POOL_SIZE) as pool:
+        return sum(pool.map(one, due))
+
+
+def run_backups(db: Database, box: SecretBox, limit: int = BACKUPS_PER_TICK) -> int:
+    from .. import backup
+
+    due = _due(db, box, f"backup_at IS NULL OR backup_at < now() - interval '{BACKUP_EVERY_HOURS} hours'", limit)
+    done = 0
+    for d, api in due:
+        api.timeout = 30.0
+        try:
+            text = backup.fetch_export(api)
+            backup.store(db, box, d["tenant_id"], d["id"], text)
+            done += 1
+        except Exception as e:
+            log.warning("záloha %s selhala: %s", d["serial"], e)
+            # zkusit znovu až za hodinu, ne v každém ticku
+            with operator_scope(db) as tx:
+                tx.execute("UPDATE device SET backup_at = now() - interval '23 hours' WHERE id = %(d)s",
+                           {"d": str(d["id"])})
+    return done
+
+
 def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvider]) -> None:
     if not providers:
         return
@@ -114,20 +186,38 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
+    from .. import inventory
+
     last_reconcile = 0.0
+    last_rollup = 0.0
     log.info("worker běží (%d koncentrátorů)", len(providers))
     while not stop.is_set():
-        try:
-            mark_offline(db)
-            requeue_stale(db)
-            verify_provisioning(db, box)
-            if time.monotonic() - last_reconcile > RECONCILE_EVERY:
+        # každý krok zvlášť: chyba jednoho (např. nedostupný koncentrátor) nesmí zastavit ostatní
+        for name, step in (("offline", lambda: mark_offline(db)),
+                           ("requeue", lambda: requeue_stale(db)),
+                           ("verify", lambda: verify_provisioning(db, box)),
+                           ("inventory", lambda: poll_inventory(db, box)),
+                           ("backup", lambda: run_backups(db, box))):
+            try:
+                step()
+            except Exception:
+                log.exception("krok %s selhal", name)
+        now = time.monotonic()
+        if now - last_rollup > 300:
+            try:
+                inventory.rollup(db)
+                last_rollup = now
+            except Exception:
+                log.exception("agregace metrik selhala")
+        if now - last_reconcile > RECONCILE_EVERY:
+            try:
                 reconcile_tunnels(db, box, providers)
                 with operator_scope(db) as tx:
                     purge_expired_sessions(tx)
-                last_reconcile = time.monotonic()
-        except Exception:
-            log.exception("tick selhal")
+                inventory.retention(db)
+            except Exception:
+                log.exception("údržba selhala")
+            last_reconcile = now
         stop.wait(TICK)
     log.info("worker zastaven")
 
