@@ -1015,6 +1015,37 @@ async function loadPortEditor(port) {
     if (!st.vlan_filtering) f.appendChild(el("p", "Bridge nemá zapnuté vlan-filtering – PVID a tagování se zatím neuplatní.", "sev-warning"));
   }
   box.appendChild(f);
+  // profily portů: výběr vyplní formulář, použití jde stejnou cestou (plán s návratem)
+  if (st.bridge || poe) {
+    const pr = el("div", null, "pe-prof");
+    pr.appendChild(el("span", "Profil portu", "muted"));
+    const sel = el("select"); sel.setAttribute("aria-label", "Profil portu");
+    const o0 = el("option", "— vlastní nastavení —"); o0.value = ""; sel.appendChild(o0);
+    for (const pf of st.profiles || []) { const o = el("option", pf.name); o.value = String(pf.id); sel.appendChild(o); }
+    sel.value = st.profile != null ? String(st.profile) : "";
+    const del = el("button", "Smazat profil", "small secondary"); del.type = "button";
+    del.hidden = !sel.value;
+    sel.addEventListener("change", () => {
+      del.hidden = !sel.value;
+      const pf = (st.profiles || []).find((x) => String(x.id) === sel.value);
+      if (!pf) return;
+      if (pvid && pf.pvid != null) pvid.value = pf.pvid;
+      if (edge && pf.edge) edge.value = pf.edge;
+      if (poe && pf.poe) poe.value = pf.poe;
+      if (tagBox && pf.tagged) {
+        for (const c of tagChecks) c.checked = pf.tagged.includes(c.value);
+        addVlan.value = pf.tagged.filter((v) => !tagChecks.some((c) => c.value === v)).join(",");
+      }
+    });
+    del.onclick = async () => {
+      const pf = (st.profiles || []).find((x) => String(x.id) === sel.value);
+      if (!pf || !confirm(`Smazat profil „${pf.name}“? Porty se tím nezmění.`)) return;
+      try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadPortEditor(port); }
+      catch (e) { msg(e.message, true); }
+    };
+    pr.append(sel, del);
+    box.insertBefore(pr, f);
+  }
   const desired = () => {
     const d = { disabled: !enabled.checked, comment: comment.value };
     if (poe) d.poe = poe.value;
@@ -1041,6 +1072,19 @@ async function loadPortEditor(port) {
   go.onclick = () => { if (confirm("Použít změnu portu? Když se zařízení po změně do 5 minut neozve, vrátí ji samo.")) send(true); };
   const save = el("button", "Uložit jako plán", "small secondary"); save.type = "button"; save.onclick = () => send(false);
   acts.append(go, save);
+  if (st.bridge || poe) {
+    const mk = el("button", "Uložit jako profil…", "small secondary"); mk.type = "button";
+    mk.onclick = async () => {
+      const name = prompt("Jméno profilu (např. Kamery, AP trunk):");
+      if (!name) return;
+      const d = desired();
+      try {
+        await api("POST", `/tenants/${tenantId}/port-profiles`, { name, pvid: d.pvid, tagged: d.tagged, poe: d.poe, edge: d.edge });
+        msg(`Profil „${name}“ uložen`); loadPortEditor(port);
+      } catch (e) { msg(e.message, true); }
+    };
+    acts.appendChild(mk);
+  }
   if (st.poe && st.poe !== "off") {
     const pc = el("button", "Restart PoE (power-cycle)", "small secondary"); pc.type = "button";
     pc.onclick = async () => {

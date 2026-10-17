@@ -81,20 +81,30 @@ class _PsycopgTx:
 
         return {k: Jsonb(v) if isinstance(v, (dict, list)) else v for k, v in params.items()}
 
+    def _run(self, sql: str, params: Params, fetch: str) -> Any:
+        import psycopg
+
+        # chyby SQL převést hned, aby `except DatabaseError` (např. unikátní jméno) fungoval
+        # uvnitř transakce stejně jako v testovacím ovladači
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(sql, self._adapt(params))
+                if fetch == "all":
+                    return list(cur.fetchall())
+                if fetch == "one":
+                    return cur.fetchone()
+                return cur.rowcount
+        except psycopg.Error as e:
+            raise DatabaseError(e.sqlstate, str(e)) from e
+
     def fetchall(self, sql: str, params: Params = None) -> list[Row]:
-        with self._conn.cursor() as cur:
-            cur.execute(sql, self._adapt(params))
-            return list(cur.fetchall())
+        return self._run(sql, params, "all")
 
     def fetchone(self, sql: str, params: Params = None) -> Row | None:
-        with self._conn.cursor() as cur:
-            cur.execute(sql, self._adapt(params))
-            return cur.fetchone()
+        return self._run(sql, params, "one")
 
     def execute(self, sql: str, params: Params = None) -> int:
-        with self._conn.cursor() as cur:
-            cur.execute(sql, self._adapt(params))
-            return cur.rowcount
+        return self._run(sql, params, "count")
 
 
 # --- scope ------------------------------------------------------------------

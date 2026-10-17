@@ -2001,7 +2001,30 @@
     "40"
    ],
    "uplink": true,
-   "module_mode": "observe"
+   "module_mode": "observe",
+   "profiles": [
+    {
+     "id": 1,
+     "name": "Kamery",
+     "pvid": 10,
+     "tagged": [],
+     "poe": "forced-on",
+     "edge": "yes"
+    },
+    {
+     "id": 2,
+     "name": "AP trunk",
+     "pvid": 1,
+     "tagged": [
+      "10",
+      "40",
+      "50"
+     ],
+     "poe": "auto-on",
+     "edge": null
+    }
+   ],
+   "profile": null
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

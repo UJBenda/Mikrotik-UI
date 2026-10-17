@@ -18,6 +18,7 @@ class El {
   get textContent() { return this._text + this.children.map((c) => (c instanceof El ? c.textContent : String(c))).join(""); }
   set innerHTML(v) { throw new Error("innerHTML nesmí být použito (XSS): " + this.id); }
   appendChild(c) { this.children.push(c); return c; }
+  insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); return c; }
   append(...cs) { for (const c of cs) this.children.push(typeof c === "string" ? c : c); }
   remove() {}
   setAttribute(k, v) { this.attrs[k] = String(v); }
@@ -152,6 +153,23 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["port-edit"].hidden) errors.push("editor portu se neotevřel");
     const pe = JSON.stringify(byId["port-edit"].textContent);
     if (!pe.includes("Povolit správu portů") || !pe.includes("Použít")) errors.push("editor portu: chybí akce " + pe.slice(0, 120));
+    // profil portu: výběr „AP trunk“ zaškrtne VLAN 10 a 40 a doplní 50
+    const find = (n, pred) => pred(n) ? n : (n.children || []).reduce((a, c) => a || (c instanceof El ? find(c, pred) : null), null);
+    const prof = find(byId["port-edit"], (n) => n.className === "pe-prof");
+    if (!prof || byId["port-edit"].children.indexOf(prof) > byId["port-edit"].children.findIndex((c) => c.className === "pe-grid"))
+      errors.push("editor portu: výběr profilu chybí nebo je pod formulářem");
+    else {
+      const sel = prof.children[1];
+      if (sel.children.length !== 3) errors.push("profil: čekány 3 volby");
+      sel.value = "2"; await sel.fire("change");
+      const checks = [];
+      find(byId["port-edit"], (n) => { if (n.tagName === "INPUT" && n.type === "checkbox" && n.value) checks.push(n); return false; });
+      const on = checks.filter((c) => c.checked).map((c) => c.value).join(",");
+      const extra = find(byId["port-edit"], (n) => n.tagName === "INPUT" && n.placeholder && n.placeholder.startsWith("další VLAN"));
+      if (on !== "10,40" || !extra || extra.value !== "50") errors.push(`profil: VLAN ${on} / ${extra && extra.value}`);
+      if (prof.children[2].hidden) errors.push("profil: chybí tlačítko smazat");
+    }
+    if (!pe.includes("Uložit jako profil")) errors.push("editor portu: chybí uložení profilu");
     await byId["tr-range"].children[2].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const l7 = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;

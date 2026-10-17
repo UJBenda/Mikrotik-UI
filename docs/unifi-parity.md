@@ -96,11 +96,11 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 | UniFi | Co dělá | RouterOS / náš návrh | Stav |
 | --- | --- | --- | --- |
 | Infrastructure Topology (10.2) | mapa páteře: WAN → gateway → switche, STP, CPU, rozpojené linky | strom ze sousedů MNDP/LLDP, WAN z výchozích rout, STP root, CPU/RAM, porty na spojích (`infra.py`) | ✅ |
-| Port Manager + Ports Insights | přední panel, profily portů, PoE, VLAN | panel portů s pohledy + editor portu (zapnutí, popis, PoE, PVID, tagované VLAN, STP edge, restart PoE) | ✅ (profily ⏳) |
+| Port Manager + Ports Insights | přední panel, profily portů, PoE, VLAN | panel portů s pohledy + editor portu (zapnutí, popis, PoE, PVID, tagované VLAN, STP edge, restart PoE) | ✅ |
 | Time Machine portů (10.2, 10.6) | 24h historie stavů portů | máme 5min vzorky čítačů; ⏳ časová osa událostí (link up/down, PoE) z `link-downs` a stavů | 🟡 |
 | Port Anomaly (9.5) | flapping, smyčky, včasné alerty | alerty flapping, chyby, half-duplex ✅; ⏳ `loop-protect` na ethernet portech + alert | 🟡 |
 | STP Edge / Auto STP Edge (10.2) | edge porty k zařízením, rychlejší konvergence | bridge port `edge=yes/auto`; varování „konvergence STP“ v Infrastruktuře | 🟡 |
-| Ethernet Port Profiles | šablona portu (VLAN, PoE, STP, storm control) | profil = sada vlastností bridge port + bridge vlan + ethernet (poe-out, storm-rate…); aplikace přes plán změn s potvrzením | ⏳ |
+| Ethernet Port Profiles | šablona portu (VLAN, PoE, STP, storm control) | profil = sada vlastností bridge port + bridge vlan + ethernet (poe-out, storm-rate…); aplikace přes plán změn s potvrzením | ◐ profily tenanta (PVID, tagované VLAN, PoE, edge), výběr v editoru portu, shoda portu s profilem; hromadné použití a storm control zbývají |
 | Port locking (10.6) | port uzamčený na konkrétní zařízení | bridge port `learn=no` + statický bridge host, nebo `/interface bridge filter` s MAC | ⏳ |
 | Device Supervisor (10.2) | ping watchdog, power-cycle přes PoE | controller pingne zařízení přes REST souseda → `/interface ethernet poe power-cycle` na portu switche (se schválením) | ⏳ |
 

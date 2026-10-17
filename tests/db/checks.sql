@@ -321,5 +321,30 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 18) profily portů izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO port_profile (tenant_id, name, pvid) VALUES ('00000000-0000-0000-0000-0000000000b1', 'B trunk', 1);
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM port_profile) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí profily tenanta B'; END IF;
+  DELETE FROM port_profile;
+  BEGIN
+    INSERT INTO port_profile (tenant_id, name, pvid) VALUES ('00000000-0000-0000-0000-0000000000b1', 'evil', 1);
+    RAISE EXCEPTION 'FAIL: tenant A založil profil tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RAISE NOTICE 'OK 18 profily portů izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM port_profile) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant A smazal profil B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

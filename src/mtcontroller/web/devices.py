@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import analysis, backup, firewall, inventory, plans, ports, ros_versions
+from .. import analysis, backup, firewall, inventory, plans, ports, profiles, ros_versions
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
 from ..services import NotFound, ServiceError, audit
@@ -142,7 +142,10 @@ async def port_get(request: Request, p: Principal, tid: str) -> Response:
             vlans = sorted({str(v.get("vlan-ids")) for v in inv.get("bridge_vlans") or []
                             if isinstance(v, dict) and str(v.get("vlan-ids", "")).isdigit()}, key=int)
             mode = plans.module_modes(tx, did).get("ports")
-            return {**state, "known_vlans": vlans, "uplink": port in _uplinks(tx, inv), "module_mode": mode}
+            profs = profiles.list_profiles(tx)
+            match = profiles.matching(profs, state)
+            return {**state, "known_vlans": vlans, "uplink": port in _uplinks(tx, inv), "module_mode": mode,
+                    "profiles": profs, "profile": match["id"] if match else None}
 
     return json_response(await run_in_threadpool(q))
 
@@ -168,6 +171,33 @@ async def port_plan(request: Request, p: Principal, tid: str) -> Response:
         return res
 
     return json_response(await run_in_threadpool(run), 201)
+
+
+@endpoint(READ)
+async def port_profiles(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    if request.method == "POST":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        data = await _json(request)
+        return json_response(await run_in_threadpool(profiles.create, st.db, tid, data, p.user_id, client_ip(request)), 201)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return profiles.list_profiles(tx)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def port_profile_delete(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    try:
+        pid = int(request.path_params["profile_id"])
+    except ValueError:
+        return _err(404, "profil neexistuje")
+    await run_in_threadpool(profiles.delete, st.db, tid, pid, p.user_id, client_ip(request))
+    return json_response({"ok": True})
 
 
 @endpoint(READ)
@@ -674,6 +704,8 @@ def routes() -> list[Route]:
         Route(s + "/infra", site_infra, methods=["GET"]),
         Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
+        Route(T + "/port-profiles", port_profiles, methods=["GET", "POST"]),
+        Route(T + "/port-profiles/{profile_id}", port_profile_delete, methods=["DELETE"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),

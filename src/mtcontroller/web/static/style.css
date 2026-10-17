@@ -265,3 +265,4 @@ td.fw-block { background: rgba(208, 52, 44, .10); }
 tr.fw-disabled td { opacity: .5; text-decoration: line-through; }
 .fw-rules td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .fw .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .85em; font-weight: 600; }
+.pe-prof { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px; }
