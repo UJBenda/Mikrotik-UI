@@ -648,6 +648,50 @@ async function loadReleaseNotes(id) {
       (n.complete ? "" : " Changelog cílové verze zatím chybí.");
 }
 
+// --- postupná aktualizace lokality -----------------------------------------------------------
+
+const UPG_STEP = { pending: "čeká", running: "probíhá", done: "hotovo", skipped: "přeskočeno", failed: "chyba" };
+const UPG_JOB = { running: "běží", done: "dokončeno", stopped: "zastaveno", cancelled: "zrušeno" };
+
+async function loadUpgrade() {
+  let u;
+  try { u = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); } catch (e) { return msg(e.message, true); }
+  $("upg-wrap").hidden = false;
+  const ol = $("upg-cands"); ol.textContent = "";
+  for (const c of u.candidates) ol.appendChild(el("li", `${c.label} (${c.role}) ${c.from} → ${c.version}`));
+  const running = u.jobs.some((j) => j.status === "running");
+  $("upg-start").hidden = !u.candidates.length || running;
+  if (!u.candidates.length) ol.appendChild(el("li", "Žádné online zařízení s dostupnou aktualizací", "muted"));
+  const ul = $("upg-jobs"); ul.textContent = "";
+  for (const j of u.jobs) {
+    const li = el("li", `#${j.id} ${UPG_JOB[j.status] || j.status} – ${fmtTime(j.created_at)} (${j.created_by || "?"})` +
+                        (j.message ? `: ${j.message}` : ""), j.status === "stopped" ? "sev-warning" : "");
+    if (j.status === "running") {
+      const b = el("button", "Zastavit", "small danger");
+      b.onclick = async () => {
+        if (!confirm("Zastavit další kroky? Právě probíhající aktualizace zařízení doběhne.")) return;
+        try { await api("POST", `/tenants/${tenantId}/upgrade-jobs/${j.id}/cancel`); loadUpgrade(); } catch (e) { msg(e.message, true); }
+      };
+      li.append(" ", b);
+    }
+    const steps = el("ol");
+    for (const st of j.steps) {
+      steps.appendChild(el("li", `${st.label}: ${st.from || "?"} → ${st.version} – ${UPG_STEP[st.status] || st.status}` +
+                                 (st.message ? ` (${st.message})` : ""), st.status === "failed" ? "sev-error" : ""));
+    }
+    li.appendChild(steps);
+    ul.appendChild(li);
+  }
+}
+
+$("upg-btn").addEventListener("click", () => loadUpgrade());
+$("upg-start").addEventListener("click", async () => {
+  const n = $("upg-cands").children.length;
+  if (!confirm(`Spustit postupnou aktualizaci ${n} zařízení? Každé se restartuje (výpadek ~2–5 min na zařízení).`)) return;
+  try { await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); msg("Postupná aktualizace spuštěna"); loadUpgrade(); }
+  catch (e) { msg(e.message, true); }
+});
+
 // --- STP lokality ------------------------------------------------------------------------
 
 $("stp-btn").addEventListener("click", async () => {

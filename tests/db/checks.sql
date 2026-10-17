@@ -279,5 +279,25 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 16) postupné aktualizace izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO upgrade_job (tenant_id, site_id, steps)
+SELECT tenant_id, id, '[]' FROM site WHERE tenant_id = '00000000-0000-0000-0000-0000000000b1' LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM upgrade_job) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí úlohy tenanta B'; END IF;
+  BEGIN
+    INSERT INTO upgrade_job (tenant_id, site_id, steps)
+    SELECT '00000000-0000-0000-0000-0000000000b1', id, '[]' FROM site LIMIT 1;
+    RAISE EXCEPTION 'FAIL: tenant A založil úlohu tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RAISE NOTICE 'OK 16 postupné aktualizace izolované';
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

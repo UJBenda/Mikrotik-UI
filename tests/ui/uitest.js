@@ -82,12 +82,15 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["clients-btn"].fire("click");
     await byId["wifi-btn"].fire("click");
     await byId["stp-btn"].fire("click");
+    await byId["upg-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const topoEls = byId["topo"].children.length;
     const clientRows = byId["clients"].children.length;
     const wifiRows = byId["wifi-radios"].children.length;
     if (wifiRows !== 5) errors.push("wifi: čekáno 5 rádií, je " + wifiRows);
     if (byId["wifi-caps-t"].hidden) errors.push("wifi: tabulka CAPsMAN skrytá");
+    if (byId["upg-wrap"].hidden || byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");
+    if (!byId["upg-start"].hidden) errors.push("aktualizace lokality: spuštění musí být skryté, když úloha běží");
     const stpRows = byId["stp-bridges"].children.length;
     if (stpRows !== 3) errors.push("stp: čekány 3 bridge, je " + stpRows);
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");

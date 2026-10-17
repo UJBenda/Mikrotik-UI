@@ -196,6 +196,7 @@ Všechno níže je jen čtení, kromě NTP plánu, který se aplikuje až po sch
 | Aktualizace | seznam zařízení | do 24 h (nebo po restartu workeru) se u verze ukáže ↑ dostupná verze |
 | Upgrade RouterOS | seznam → „Aktualizovat → X“ (nebo detail) | do minuty `mtc: aktualizace RouterOS…` v logu MikroTiku, stažení + restart, po startu nová verze v UI; když se verze do 15 min nezmění, alert „upgrade_failed“. Verze s kritickým známým problémem (např. 7.24–7.24.4) controller odmítne |
 | Release notes | detail zařízení s dostupnou aktualizací | sekce „Co přinese X“: důležité změny (!) a změny komponent, které zařízení používá (bridge, wifi, sstp…); controller potřebuje odchozí HTTPS na download.mikrotik.com (stahuje jednou denně, při startu workeru hned) |
+| Aktualizace lokality | Lokalita → Aktualizace lokality | náhled pořadí (AP/PtP → switche → gateway), Spustit; po jednom zařízení, další až po návratu s novou verzí (kontrola každou minutu); při chybě nebo 30 min bez návratu se zastaví; Zastavit nechá doběhnout jen právě běžící |
 | RouterBOOT | detail → „RouterBOOT → X“ (jen když se liší) | `routerboard upgrade` + restart; po startu stejná current/upgrade verze |
 | NTP | Lokalita → NTP politika → Uložit → Vygenerovat plány | v Plánech změn plán pro každé zařízení; Schválit odmítne, dokud na zařízení nepovolíš správu NTP (detail → Moduly) |
 

@@ -450,6 +450,40 @@ async def site_stp(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_upgrade(request: Request, p: Principal, tid: str) -> Response:
+    """GET: náhled pořadí a poslední úlohy; POST (MANAGE): spustí postupnou aktualizaci."""
+    from .. import upgrades
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    if request.method == "POST":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        res = await run_in_threadpool(upgrades.start, st.db, tid, sid, p.user_id, client_ip(request))
+        return json_response(res, 201)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            cands = upgrades.candidates(tx, sid)
+            return {"candidates": [{"device_id": str(c["id"]), "label": c["identity"] or c["serial"],
+                                    "role": c["role"], "from": (c["ros_version"] or "").split(" ")[0],
+                                    "version": c["latest"]} for c in cands],
+                    "jobs": upgrades.jobs(tx, sid)}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def upgrade_cancel(request: Request, p: Principal, tid: str) -> Response:
+    from .. import upgrades
+
+    st = get_state(request)
+    jid = _int(request.path_params["job_id"], 0, 0, 2**62)
+    await run_in_threadpool(upgrades.cancel, st.db, tid, jid, p.user_id, client_ip(request))
+    return json_response({"ok": True})
+
+
+@endpoint(READ)
 async def alert_list(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     open_only = request.query_params.get("all") != "1"
@@ -507,6 +541,8 @@ def routes() -> list[Route]:
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),
+        Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
+        Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),
         Route(T + "/alerts/{alert_id}/ack", alert_ack, methods=["POST"]),

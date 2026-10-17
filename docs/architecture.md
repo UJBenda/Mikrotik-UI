@@ -310,6 +310,15 @@ Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko vý
   Globální data: číst smí každý, zapisovat jen provozovatel (RLS, kontrola 15).
   U zařízení se ukazují důležité změny a změny komponent, které zařízení používá.
 
+## Postupná aktualizace lokality
+
+`upgrades.py`, tabulka `upgrade_job` (migrace 0007, RLS, kontrola 16). Kroky v jsonb,
+v lokalitě nejvýš jedna běžící úloha (unikátní index). Worker každou minutu: běžící
+krok je hotový, až příkaz potvrdil `done` a zařízení se ozvalo s cílovou verzí; při
+`failed` nebo po 30 min se úloha zastaví. Další krok jde přes `services.request_command`,
+tedy se stejnými kontrolami jako ruční aktualizace. Pořadí podle role (ap, ptp, unknown,
+switch, gateway) – restart nikdy neodřízne cestu k ještě neaktualizovaným zařízením.
+
 ## Moduly a převzetí stávající konfigurace (F1)
 
 Controller nesmí nic převzít ani předělat sám od sebe. Platí tato pravidla:
