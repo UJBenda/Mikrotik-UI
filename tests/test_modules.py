@@ -239,3 +239,70 @@ def test_site_clients_endpoint():
                              "candidates": 1}]
     finally:
         drop_db(name)
+
+
+def test_upgrade_and_firmware_commands():
+    from test_flow import _device_post
+
+    from mtcontroller import alerts
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        c = _login(app)
+        url = f"/api/admin/tenants/{tid}/devices/{gw}/commands"
+        # dostupná verze zatím neznámá
+        r = c.post(url, json_body={"kind": "upgrade", "version": "7.20.5"})
+        assert r.status_code == 400 and "není známá" in r.json()["detail"]
+        inv = modern()
+        inv["update"] = {"channel": "stable", "installed-version": "7.20.1", "latest-version": "7.20.5"}
+        inventory.store(db, tid, gw, inv, [])
+        devs = c.get(f"/api/admin/tenants/{tid}/devices").json()
+        assert devs[0]["update_available"] and devs[0]["latest_version"] == "7.20.5"
+        # uživatel musí potvrdit přesně tu verzi, kterou zařízení nabízí
+        r = c.post(url, json_body={"kind": "upgrade", "version": "7.20.4"})
+        assert r.status_code == 400 and "nabízí verzi 7.20.5" in r.json()["detail"]
+        r = c.post(url, json_body={"kind": "upgrade", "version": "7.20.5"})
+        assert r.status_code == 201, r.text
+        cid = r.json()["command_id"]
+        # druhá aktualizace se nezařadí, dokud první neproběhne
+        assert c.post(url, json_body={"kind": "firmware"}).status_code == 400
+
+        r = _device_post(app, "/api/checkin", "key-GW1", {"version": "7.20.1 (stable)", "sstp": "up"})
+        s = r.text
+        assert "check-for-updates once" in s and '"7.20.5"' in s
+        # ack odchází před instalací; instalace jen když verze ještě není nainstalovaná
+        assert s.index("/tool fetch") < s.index("/system package update install")
+        assert 'installed-version] != "7.20.5"' in s
+        s.encode("ascii")
+        _device_post(app, f"/api/checkin/ack?id={cid}&status=done", "key-GW1")
+
+        def upgrade_alerts():
+            with operator_scope(db) as tx:
+                return [a for a in alerts.conditions(tx) if a.kind == "upgrade_failed"]
+
+        assert upgrade_alerts() == []  # lhůta na stažení a restart
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device_command SET finished_at = now() - interval '20 minutes' WHERE id = %(c)s",
+                       {"c": cid})
+        found = upgrade_alerts()
+        assert len(found) == 1 and "7.20.5" in found[0].message
+        _device_post(app, "/api/checkin", "key-GW1", {"version": "7.20.5 (stable)", "sstp": "up"})
+        assert upgrade_alerts() == []
+
+        # verze s kritickým známým problémem se odmítne
+        inv["update"] = {"channel": "stable", "installed-version": "7.20.5", "latest-version": "7.24.2"}
+        inventory.store(db, tid, gw, inv, [])
+        r = c.post(url, json_body={"kind": "upgrade", "version": "7.24.2"})
+        assert r.status_code == 400 and "kritický" in r.json()["detail"]
+
+        # RouterBOOT: restart jen při rozdílné verzi, po ack
+        r = c.post(url, json_body={"kind": "firmware"})
+        assert r.status_code == 201
+        s = _device_post(app, "/api/checkin", "key-GW1", {"sstp": "up"}).text
+        assert "/system routerboard upgrade" in s
+        assert s.index("/tool fetch") < s.index("/system reboot")
+        with operator_scope(db) as tx:
+            acts = [r["action"] for r in tx.fetchall("SELECT action FROM audit_log ORDER BY id")]
+        assert "device.command.upgrade" in acts and "device.command.firmware" in acts
+    finally:
+        drop_db(name)

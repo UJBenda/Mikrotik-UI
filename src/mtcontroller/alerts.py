@@ -124,6 +124,22 @@ def conditions(tx: Tx) -> list[Active]:
         elif not (r["after"] or {}).get("by_controller"):
             out.append(Active(r["tenant_id"], r["device_id"], "config_drift", "", "info",
                               f"{_label(r)}: konfigurace změněna mimo controller (viz zálohy)"))
+    for r in tx.fetchall(
+            """SELECT DISTINCT ON (c.device_id) c.tenant_id, c.device_id, c.status::text AS status,
+                      c.params->>'version' AS target, c.finished_at < now() - interval '15 minutes' AS grace_over,
+                      d.ros_version, d.identity, d.serial, d.id
+               FROM device_command c JOIN device d ON d.id = c.device_id
+               WHERE c.kind = 'upgrade' AND c.status IN ('done', 'failed')
+                 AND c.finished_at > now() - interval '7 days'
+               ORDER BY c.device_id, c.id DESC"""):
+        if r["status"] == "failed":
+            out.append(Active(r["tenant_id"], r["device_id"], "upgrade_failed", r["target"] or "", "warning",
+                              f"{_label(r)}: aktualizace na {r['target']} se nespustila (verze není v kanálu zařízení?)"))
+        elif (ros_versions.parse(r["ros_version"] or "") != ros_versions.parse(r["target"] or "")
+              and r["grace_over"]):
+            out.append(Active(r["tenant_id"], r["device_id"], "upgrade_failed", r["target"] or "", "warning",
+                              f"{_label(r)}: po aktualizaci na {r['target']} hlásí verzi {r['ros_version']}"
+                              " – stažení nebo instalace selhaly (místo na disku? /log)"))
     return out
 
 

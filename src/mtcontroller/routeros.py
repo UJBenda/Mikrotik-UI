@@ -238,3 +238,54 @@ DEPROVISION_TAIL = f""":log warning "mtc: odebrani ze spravy controlleru"
 /system scheduler remove [find name="mtc-checkin"]
 /system script remove [find name="mtc-checkin"]
 """
+
+
+# --- aktualizace -----------------------------------------------------------------
+
+_VERSION = re.compile(r"^\d+\.\d+(\.\d+)?(beta\d+|rc\d+)?$")
+
+
+def upgrade_body(version: str) -> str:
+    """Ověří, že zařízení ve svém kanálu nabízí přesně schválenou verzi.
+    Samotná instalace (stažení + restart) je v upgrade_tail() až po odeslání ack."""
+    if not _VERSION.match(version):
+        raise ValueError(f"neplatná verze {version!r}")
+    v = q(version)
+    return f""":log info ("mtc: kontrola aktualizace na " . {v})
+/system package update check-for-updates once
+:local i 0
+:while ($i < 30 && [:len [/system package update get latest-version]] = 0) do={{ :delay 1s; :set i ($i + 1) }}
+:delay 3s
+:local lv [/system package update get latest-version]
+:if ([/system package update get installed-version] = {v}) do={{ :log info ("mtc: " . {v} . " uz je nainstalovana") }} else={{
+  :if ($lv != {v}) do={{ :error ("mtc: zarizeni nabizi " . $lv . ", schvaleno " . {v}) }}
+}}
+:log warning ("mtc: aktualizace RouterOS na " . {v} . " - stazeni a restart")
+"""
+
+
+def upgrade_tail(version: str) -> str:
+    """install = stažení + restart; :execute, aby skript stihl doběhnout a ack
+    odejít. Jen pokud verze ještě není nainstalovaná (opakované doručení)."""
+    if not _VERSION.match(version):
+        raise ValueError(f"neplatná verze {version!r}")
+    return (f':if ([/system package update get installed-version] != {q(version)}) do={{\n'
+            f'  :execute ":delay 5s; /system package update install"\n'
+            f'}}\n')
+
+
+FIRMWARE_BODY = """:local cur [/system routerboard get current-firmware]
+:local up [/system routerboard get upgrade-firmware]
+:if ($cur = $up) do={ :log info ("mtc: RouterBOOT " . $cur . " je aktualni") } else={
+  :log warning ("mtc: RouterBOOT " . $cur . " -> " . $up . ", nasleduje restart")
+  /system routerboard upgrade
+}
+"""
+
+# restart jen když se RouterBOOT opravdu mění (nový se zavede až po restartu)
+FIRMWARE_TAIL = """:do {
+  :if ([/system routerboard get current-firmware] != [/system routerboard get upgrade-firmware]) do={
+    :execute ":delay 5s; /system reboot"
+  }
+} on-error={}
+"""

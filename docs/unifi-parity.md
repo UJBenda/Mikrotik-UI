@@ -29,7 +29,7 @@ viditelná odchylka zařízení, vědomé srovnání.
 | Remote management (Site Manager) | outbound 443 (SSTP + HTTPS) | konektivita | hotovo (F0) |
 | Site overview, seznam zařízení | `/system/resource`, `/system/routerboard` | inventura | F1 – tato noc |
 | Backups | `/export` + `/file/read` po 32 KiB přes REST | zálohy | F1 – tato noc (experimentální) |
-| Update Manager | `/system/package/update` | verze a aktualizace | F1 přehled; hromadný rollout F3 |
+| Update Manager | `/system/package/update`, `/system/routerboard` | verze a aktualizace | aktualizace RouterOS a RouterBOOT jedním tlačítkem (blokuje verze s kritickým známým problémem, alert když se nepovede); hromadný rollout F3 |
 | Topology | `/ip/neighbor` (MNDP/LLDP), bridge host | topologie | F2 (sousedé už v inventuře) |
 | Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | F2 |
 | Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan` | VLAN | analýza (observe) tato noc, správa F3 |

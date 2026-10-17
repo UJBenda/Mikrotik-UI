@@ -217,6 +217,11 @@ async function loadDevices() {
     const act = el("td");
     if (d.state === "pending") act.appendChild(approveControls(d));
     else {
+      if (d.update_available && d.state === "adopted") {
+        const b = el("button", `Aktualizovat → ${d.latest_version}`, "small");
+        b.onclick = () => upgradeDevice(d);
+        act.append(b, " ");
+      }
       for (const [kind, label, cls] of [["provision", "Znovu provisioning", "secondary"],
                                         ["reboot", "Restart", "secondary"],
                                         ["deprovision", "Odebrat", "danger"]]) {
@@ -256,12 +261,23 @@ function approveControls(d) {
   return wrap;
 }
 
-async function sendCommand(d, kind, label) {
+async function sendCommand(d, kind, label, extra) {
   if (!confirm(`${label}: ${d.serial}?`)) return;
   try {
-    await api("POST", `/tenants/${tenantId}/devices/${d.id}/commands`, { kind });
+    await api("POST", `/tenants/${tenantId}/devices/${d.id}/commands`, Object.assign({ kind }, extra || {}));
     msg(`${label} naplánováno – provede se při dalším check-inu`);
   } catch (e) { msg(e.message, true); }
+}
+
+function upgradeDevice(d) {
+  const warn = (d.warnings || []).filter((x) => x.severity !== "info").map((x) => "• " + x.text);
+  const text = `Aktualizovat RouterOS na ${d.serial} z ${d.ros_version} na ${d.latest_version}?\n` +
+    "Zařízení si verzi stáhne a restartuje se (výpadek ~2–5 min). Předtím se doporučuje záloha." +
+    (warn.length ? "\n\nZnámé problémy současné verze:\n" + warn.join("\n") : "");
+  if (!confirm(text)) return;
+  api("POST", `/tenants/${tenantId}/devices/${d.id}/commands`, { kind: "upgrade", version: d.latest_version })
+    .then(() => msg(`Aktualizace ${d.serial} na ${d.latest_version} naplánována – provede se při dalším check-inu`))
+    .catch((e) => msg(e.message, true));
 }
 
 async function loadAudit() {
@@ -497,6 +513,20 @@ async function openDetail(id) {
   const w = $("d-warn"); w.textContent = "";
   for (const x of d.warnings) w.appendChild(el("p", (x.severity === "critical" ? "⚠ " : "ⓘ ") + x.text, "sev-" + (x.severity === "critical" ? "error" : "warning")));
   if (dev.inventory_error) w.appendChild(el("p", "Inventura: " + dev.inventory_error, "sev-warning"));
+  const listed = (devicesCache || []).find((x) => x.id === id);
+  const up = $("d-upgrade");
+  up.hidden = !(listed && listed.update_available && dev.state === "adopted");
+  if (!up.hidden) { up.textContent = `Aktualizovat → ${listed.latest_version}`; up.onclick = () => upgradeDevice(listed); }
+  const fw = $("d-firmware");
+  fw.hidden = !(dev.state === "adopted" && sm.firmware && sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware);
+  if (!fw.hidden) {
+    fw.textContent = `RouterBOOT → ${sm.firmware_upgrade}`;
+    fw.onclick = () => {
+      if (!confirm(`Aktualizovat RouterBOOT ${sm.firmware} → ${sm.firmware_upgrade}? Zařízení se restartuje.`)) return;
+      api("POST", `/tenants/${tenantId}/devices/${id}/commands`, { kind: "firmware" })
+        .then(() => msg("Aktualizace RouterBOOT naplánována")).catch((e) => msg(e.message, true));
+    };
+  }
   const da = $("d-alerts"); da.textContent = "";
   for (const a of d.alerts || []) da.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : a.severity)));
   kv($("d-summary"), [

@@ -144,3 +144,17 @@ def test_firewall_move_skips_dynamic_rules(tmp_path):
         for ln in moves:
             assert "find dynamic=no]->0" in ln, ln
         assert re.search(r"find\]\s*->", s) is None
+
+
+def test_upgrade_scripts():
+    for s in (routeros.wrap_command("https://c/api/checkin/ack?id=1", "K", routeros.upgrade_body("7.20.5"), OPTS,
+                                    tail=routeros.upgrade_tail("7.20.5")),
+              routeros.wrap_command("https://c/api/checkin/ack?id=2", "K", routeros.FIRMWARE_BODY, OPTS,
+                                    tail=routeros.FIRMWARE_TAIL)):
+        assert _balanced(s), s
+        s.encode("ascii")
+    for bad in ("7.20.5; /system reset-configuration", "latest", "", '7.1"'):
+        with pytest.raises(ValueError):
+            routeros.upgrade_body(bad)
+        with pytest.raises(ValueError):
+            routeros.upgrade_tail(bad)

@@ -189,6 +189,8 @@ Všechno níže je jen čtení, kromě NTP plánu, který se aplikuje až po sch
 | Drift | změň ručně identitu MikroTiku, Zálohovat teď | v auditu `device.config_changed` |
 | Topologie | Lokalita → Topologie | spravovaná zařízení a sousedé (MNDP/LLDP) s porty |
 | Aktualizace | seznam zařízení | do 24 h (nebo po restartu workeru) se u verze ukáže ↑ dostupná verze |
+| Upgrade RouterOS | seznam → „Aktualizovat → X“ (nebo detail) | do minuty `mtc: aktualizace RouterOS…` v logu MikroTiku, stažení + restart, po startu nová verze v UI; když se verze do 15 min nezmění, alert „upgrade_failed“. Verze s kritickým známým problémem (např. 7.24–7.24.4) controller odmítne |
+| RouterBOOT | detail → „RouterBOOT → X“ (jen když se liší) | `routerboard upgrade` + restart; po startu stejná current/upgrade verze |
 | NTP | Lokalita → NTP politika → Uložit → Vygenerovat plány | v Plánech změn plán pro každé zařízení; Schválit odmítne, dokud na zařízení nepovolíš správu NTP (detail → Moduly) |
 
 | Klienti | Lokalita → Klienti | DHCP/ARP/bridge host/wifi klienti; u každého zařízení + port (u wifi AP, SSID, signál), VLAN; port k jinému spravovanému MikroTiku se nepočítá jako poloha klienta |

@@ -326,7 +326,8 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
 
 # --- příkazy -----------------------------------------------------------------------
 
-COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan"}
+COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware"}
+USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware"}
 
 
 def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
@@ -342,20 +343,54 @@ def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
 
 
 def request_command(db: Database, tenant_id: Any, device_id: Any, kind: str,
-                    user_id: Any = None, ip: str | None = None) -> int:
-    """Příkaz vyžádaný uživatelem (reboot, deprovision, opakovaný provision)."""
-    if kind not in {"reboot", "deprovision", "provision"}:
+                    user_id: Any = None, ip: str | None = None, params: dict | None = None) -> int:
+    """Příkaz vyžádaný uživatelem (reboot, deprovision, opakovaný provision,
+    aktualizace RouterOS a firmwaru)."""
+    if kind not in USER_COMMANDS:
         raise ServiceError("tento příkaz nelze vyžádat ručně")
     with tenant_scope(db, tenant_id) as tx:
-        dev = tx.fetchone("SELECT state FROM device WHERE id = %(d)s", {"d": str(device_id)})
+        dev = tx.fetchone("SELECT state, ros_version FROM device WHERE id = %(d)s", {"d": str(device_id)})
         if not dev:
             raise NotFound("zařízení neexistuje")
         if dev["state"] not in ("provisioning", "adopted", "offline"):
             raise ServiceError(f"příkaz nelze poslat zařízení ve stavu {dev['state']}")
-        cid = enqueue(tx, tenant_id, device_id, kind, {}, user_id)
+        p: dict = {}
+        if kind in ("upgrade", "firmware"):
+            if dev["state"] != "adopted":
+                raise ServiceError("aktualizaci lze poslat jen spravovanému zařízení, které je online")
+            if tx.fetchone("""SELECT 1 FROM device_command WHERE device_id = %(d)s
+                              AND kind IN ('upgrade', 'firmware') AND status IN ('queued', 'sent')""",
+                           {"d": str(device_id)}):
+                raise ServiceError("aktualizace tohoto zařízení už čeká na provedení")
+        if kind == "upgrade":
+            p = _upgrade_params(tx, device_id, dev["ros_version"] or "", str((params or {}).get("version", "")))
+        cid = enqueue(tx, tenant_id, device_id, kind, p, user_id)
         audit(tx, f"device.command.{kind}", tenant_id=tenant_id, user_id=user_id,
-              target=f"device:{device_id}", after={"command_id": cid}, ip=ip)
+              target=f"device:{device_id}", after={"command_id": cid, **p}, ip=ip)
         return cid
+
+
+def _upgrade_params(tx: Tx, device_id: Any, current: str, requested: str) -> dict:
+    """Cílová verze musí být ta, kterou zařízení samo nahlásilo jako dostupnou
+    ve svém kanálu (uživatel potvrzuje přesně to, co viděl), novější než
+    stávající a bez kritického známého problému."""
+    from . import ros_versions
+
+    row = tx.fetchone("""SELECT data->>'latest-version' AS v, data->>'channel' AS ch FROM device_inventory
+                         WHERE device_id = %(d)s AND section = 'update'""", {"d": str(device_id)})
+    latest = (row or {}).get("v") or ""
+    if not latest:
+        raise ServiceError("dostupná verze zatím není známá – počkej na kontrolu aktualizací")
+    if requested != latest:
+        raise ServiceError(f"zařízení nabízí verzi {latest}, ne {requested or '?'} – obnov stránku")
+    if not re.fullmatch(r"\d+\.\d+(\.\d+)?(beta\d+|rc\d+)?", latest):
+        raise ServiceError(f"neočekávaný formát verze {latest!r}")
+    if ros_versions.parse(latest) <= ros_versions.parse(current):
+        raise ServiceError(f"verze {latest} není novější než nainstalovaná {current}")
+    critical = [i.text for i in ros_versions.issues_for(latest) if i.severity == "critical"]
+    if critical:
+        raise ServiceError(f"verze {latest} má kritický známý problém: {critical[0]}")
+    return {"version": latest, "channel": (row or {}).get("ch") or ""}
 
 
 def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: dict) -> str:
@@ -380,6 +415,12 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.REBOOT_TAIL)
     if kind == "deprovision":
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.DEPROVISION_TAIL)
+    if kind == "upgrade":
+        version = str(cmd["params"].get("version", ""))
+        return routeros.wrap_command(ack_url, key, routeros.upgrade_body(version), opts,
+                                     tail=routeros.upgrade_tail(version))
+    if kind == "firmware":
+        return routeros.wrap_command(ack_url, key, routeros.FIRMWARE_BODY, opts, tail=routeros.FIRMWARE_TAIL)
     if kind == "apply_plan":
         from .plans import plan_script
 

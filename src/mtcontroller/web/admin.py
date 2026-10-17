@@ -259,8 +259,9 @@ async def command(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     data = await _json(request)
     did = _uuid(request.path_params["device_id"])
+    params = {"version": str(data["version"])[:40]} if data.get("version") else None
     cid = await run_in_threadpool(services.request_command, st.db, tid, did, str(data.get("kind", "")),
-                                  p.user_id, client_ip(request))
+                                  p.user_id, client_ip(request), params)
     return json_response({"command_id": cid}, 201)
 
 

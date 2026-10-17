@@ -25,6 +25,8 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] Analýza VLAN/bridge proti cílovému modelu + náhled migrace
 - [x] Modul NTP s plány změn (observe/manage, schválení, zneplatnění)
 - [x] Topologie lokality (MNDP/LLDP), dostupné aktualizace RouterOS, známé problémy verzí
+- [x] Aktualizace RouterOS a RouterBOOT z UI (potvrzená verze, blokace kritických verzí, kontrola výsledku)
+- [x] `mtc-admin doctor` – kontrola instalace
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
 - [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP
 - [x] Alerty (offline, tunel, REST, certifikát, CPU/paměť, porty, zálohy, verze) a notifikace (webhook, Nextcloud Talk)
