@@ -52,7 +52,8 @@ SECTIONS: list[Section] = [
             "interface,address,mac-address,identity,platform,board,version,interface-name"),
     Section("ntp_client", "/system/ntp/client"),
     Section("ntp_server", "/system/ntp/server"),
-    Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled"),
+    Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled,address-pool"),
+    Section("ip_pools", "/ip/pool", "name,ranges,next-pool"),
     # klienti
     Section("dhcp_leases", "/ip/dhcp-server/lease",
             "address,active-address,mac-address,active-mac-address,host-name,server,status,last-seen,dynamic"),
@@ -189,6 +190,11 @@ def interface_samples(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], errors: list[str]) -> None:
+    from .health import dhcp_pools
+
+    if "dhcp_servers" in data:
+        # odvozené při uložení: alerty pak nemusí každou minutu číst všechny leases
+        data = dict(data, dhcp_usage=dhcp_pools(data))
     with tenant_scope(db, tenant_id) as tx:
         for section, value in data.items():
             tx.execute(

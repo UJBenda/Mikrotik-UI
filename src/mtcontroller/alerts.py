@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from . import ros_versions
+from . import health, ros_versions
 from .db import Database, Tx, operator_scope
 
 log = logging.getLogger("mtc.alerts")
@@ -124,6 +124,24 @@ def conditions(tx: Tx) -> list[Active]:
         elif not (r["after"] or {}).get("by_controller"):
             out.append(Active(r["tenant_id"], r["device_id"], "config_drift", "", "info",
                               f"{_label(r)}: konfigurace změněna mimo controller (viz zálohy)"))
+    # DHCP pooly a NTP: jen zařízení, která DHCP server / NTP klienta mají
+    for r in tx.fetchall(
+            """SELECT d.id, d.tenant_id, d.identity, d.serial,
+                      jsonb_object_agg(i.section, i.data) AS inv
+               FROM device d JOIN device_inventory i ON i.device_id = d.id
+               WHERE d.state = 'adopted'
+                 AND i.section IN ('dhcp_usage', 'ntp_client', 'resource')
+               GROUP BY d.id, d.tenant_id, d.identity, d.serial"""):
+        inv = r["inv"] or {}
+        for p in inv.get("dhcp_usage") or []:
+            if p["pct"] >= health.POOL_FULL_PCT:
+                out.append(Active(r["tenant_id"], r["id"], "dhcp_pool_full", str(p["server"]), "warning",
+                                  f"{_label(r)}: DHCP {p['server']} – pool {p['pool']} zaplněn na {p['pct']} % "
+                                  f"({p['used']}/{p['size']})"))
+        st = health.ntp_unsynced(inv)
+        if st:
+            out.append(Active(r["tenant_id"], r["id"], "ntp_unsynced", "", "warning",
+                              f"{_label(r)}: hodiny nejsou synchronizované přes NTP (stav {st})"))
     for r in tx.fetchall(
             """SELECT i.tenant_id, i.device_id, e->>'name' AS name, e->>'rate' AS rate, d.identity, d.serial, d.id
                FROM device_inventory i JOIN device d ON d.id = i.device_id,

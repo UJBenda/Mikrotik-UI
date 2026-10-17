@@ -212,7 +212,9 @@ Záloha přes REST (`/file/read`) je zatím ověřená jen proti simulaci. Když
 v `journalctl -u mtc-worker` bude „záloha … selhala" s důvodem – pošli mi ho.
 
 Prahy alertů (v `alerts.py`): CPU/paměť ≥ 90 %, ≥ 5 výpadků linky za 2 h
-(flapping), ≥ 100 chyb portu za hodinu, záloha starší 48 h, tunel neběží ≥ 3 check-iny.
+(flapping), ≥ 100 chyb portu za hodinu, záloha starší 48 h, tunel neběží ≥ 3 check-iny,
+half-duplex na lince, DHCP pool ≥ 90 % (`health.py`), NTP klient nesynchronizovaný
+víc než hodinu po startu, aktualizace se nepovedla.
 
 ### Notifikace do Nextcloud Talk
 
