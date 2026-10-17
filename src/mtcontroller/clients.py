@@ -12,6 +12,12 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from .db import Database, operator_scope, tenant_scope
+
+# sekce inventury, které korelace potřebuje (worker nenačítá zbytek)
+SECTIONS = ["interfaces", "neighbors", "dhcp_leases", "arp", "bridge_hosts", "wifi_clients", "wireless_clients"]
+RETENTION_DAYS = 90
+
 
 def _rows(inv: dict, key: str) -> list[dict]:
     v = inv.get(key)
@@ -124,3 +130,83 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
         c.update(device_id=did, device=names[did], port=port, vlan=vid)
 
     return sorted(clients.values(), key=lambda c: (c["device"] or "~", c["port"] or "", c["ip"] or "", c["mac"]))
+
+
+def present(c: dict) -> bool:
+    """Je klient opravdu připojený? (vidět na portu / ve wifi nebo platný DHCP lease)"""
+    return bool(c.get("port")) or c.get("dhcp_status") == "bound"
+
+
+_UPSERT = """
+INSERT INTO client (tenant_id, site_id, mac, ip, hostname, device_id, device, port, vlan, ssid, signal)
+SELECT %(t)s, %(s)s, x.mac, x.ip, x.hostname, x.device_id::uuid, x.device, x.port, x.vlan, x.ssid, x.signal
+FROM jsonb_to_recordset(%(rows)s) AS x(mac text, ip text, hostname text, device_id text, device text,
+                                       port text, vlan text, ssid text, signal text)
+ON CONFLICT (site_id, mac) DO UPDATE SET
+  last_seen = now(),
+  ip = coalesce(EXCLUDED.ip, client.ip), hostname = coalesce(EXCLUDED.hostname, client.hostname),
+  device_id = coalesce(EXCLUDED.device_id, client.device_id), device = coalesce(EXCLUDED.device, client.device),
+  port = coalesce(EXCLUDED.port, client.port), vlan = coalesce(EXCLUDED.vlan, client.vlan),
+  ssid = EXCLUDED.ssid, signal = EXCLUDED.signal
+"""
+
+
+def _row(c: dict) -> dict:
+    def t(v: Any, n: int) -> str | None:
+        return str(v)[:n] if v not in (None, "") else None
+
+    w = c.get("wifi") or {}
+    return {"mac": c["mac"], "ip": t(c.get("ip"), 45), "hostname": t(c.get("hostname"), 255),
+            "device_id": c.get("device_id"), "device": t(c.get("device"), 200), "port": t(c.get("port"), 100),
+            "vlan": t(c.get("vlan"), 20), "ssid": t(w.get("ssid"), 64), "signal": t(w.get("signal"), 20)}
+
+
+def record(db: Database) -> int:
+    """Krok workeru: aktuální klienty všech lokalit uloží do historie. Vrací počet."""
+    import re
+
+    from . import inventory
+
+    with operator_scope(db) as tx:
+        sites = tx.fetchall("""SELECT DISTINCT tenant_id, site_id FROM device
+                               WHERE state = 'adopted' AND site_id IS NOT NULL""")
+    n = 0
+    for s in sites:
+        with tenant_scope(db, s["tenant_id"]) as tx:
+            devs = tx.fetchall("""SELECT id, serial, identity FROM device
+                                  WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""",
+                               {"s": str(s["site_id"])})
+            invs = {str(d["id"]): inventory.load(tx, d["id"], SECTIONS) for d in devs}
+            rows = [_row(c) for c in correlate(devs, invs)
+                    if present(c) and re.fullmatch(r"[0-9A-F]{2}(:[0-9A-F]{2}){5}", c["mac"])]
+            if rows:
+                tx.execute(_UPSERT, {"t": str(s["tenant_id"]), "s": str(s["site_id"]), "rows": rows})
+            n += len(rows)
+    return n
+
+
+def purge(db: Database, days: int = RETENTION_DAYS) -> int:
+    with operator_scope(db) as tx:
+        return tx.execute("DELETE FROM client WHERE last_seen < now() - make_interval(days => %(d)s)", {"d": days})
+
+
+def history(tx, site_id: Any, days: int = 30) -> list[dict]:
+    return tx.fetchall(
+        """SELECT mac, ip, hostname, device_id, device, port, vlan, ssid, signal, first_seen, last_seen,
+                  last_seen > now() - interval '10 minutes' AS online
+           FROM client WHERE site_id = %(s)s AND last_seen > now() - make_interval(days => %(d)s)
+           ORDER BY last_seen DESC LIMIT 5000""", {"s": str(site_id), "d": days})
+
+
+def search(tx, q: str, limit: int = 100) -> list[dict]:
+    """Hledání klienta ve všech lokalitách tenanta (MAC, IP, jméno)."""
+    q = q.strip()
+    if len(q) < 2:
+        return []
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    return tx.fetchall(
+        """SELECT c.mac, c.ip, c.hostname, c.device, c.port, c.vlan, c.ssid, c.first_seen, c.last_seen,
+                  c.last_seen > now() - interval '10 minutes' AS online, s.name AS site, c.site_id
+           FROM client c JOIN site s ON s.id = c.site_id
+           WHERE c.mac ILIKE %(l)s OR c.ip ILIKE %(l)s OR c.hostname ILIKE %(l)s
+           ORDER BY c.last_seen DESC LIMIT %(n)s""", {"l": like, "n": limit})

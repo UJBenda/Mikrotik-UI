@@ -223,7 +223,7 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
-    from .. import alerts, heartbeat, inventory, notify, releases, routes, upgrades
+    from .. import alerts, clients, heartbeat, inventory, notify, releases, routes, upgrades
 
     # -inf: monotonic() počítá od startu systému, 0.0 by po čerstvém bootu oddálilo první běh
     last_reconcile = last_rollup = last_releases = float("-inf")
@@ -266,6 +266,10 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                 last_rollup = now
             except Exception:
                 log.exception("agregace metrik selhala")
+            try:
+                clients.record(db)
+            except Exception:
+                log.exception("historie klientů selhala")
         if now - last_releases > RELEASES_EVERY:
             last_releases = now
             try:
@@ -280,6 +284,7 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                 with operator_scope(db) as tx:
                     purge_expired_sessions(tx)
                 inventory.retention(db)
+                clients.purge(db)
             except Exception:
                 log.exception("údržba selhala")
             last_reconcile = now

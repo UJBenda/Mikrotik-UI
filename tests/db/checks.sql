@@ -299,5 +299,27 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 17) historie klientů izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO client (tenant_id, site_id, mac)
+SELECT tenant_id, id, 'AA:BB:CC:DD:EE:FF' FROM site WHERE tenant_id = '00000000-0000-0000-0000-0000000000b1' LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM client) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí klienty tenanta B'; END IF;
+  UPDATE client SET hostname = 'evil';
+  DELETE FROM client;
+  RAISE NOTICE 'OK 17 historie klientů izolovaná';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM client WHERE hostname IS NULL) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant A změnil klienty B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

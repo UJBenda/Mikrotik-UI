@@ -55,7 +55,7 @@ function route(method, url, body) {
 }
 
 const ctx = {
-  document, console, setTimeout: () => 0, setInterval: () => 0, Promise, Date, Math, JSON, Object, Array, String, Number,
+  document, console, setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, Promise, Date, Math, JSON, Object, Array, String, Number,
   confirm: () => true, navigator: { clipboard: { writeText: async () => {} } }, location: { reload() {} },
   FormData: class { constructor(form) { this.form = form; } get(n) { return this.form[n] ? this.form[n].value : ""; } },
   fetch: async (url, opt) => route((opt && opt.method) || "GET", url, opt && opt.body),

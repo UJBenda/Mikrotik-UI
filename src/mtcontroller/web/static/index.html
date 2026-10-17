@@ -52,6 +52,10 @@
     </div>
 
     <div id="overview" class="overview"></div>
+    <div class="row">
+      <input id="csearch" placeholder="Najít klienta ve všech lokalitách (MAC, IP, jméno)…" size="48">
+      <ul id="csearch-out"></ul>
+    </div>
 
     <div class="grid">
       <div class="card">
@@ -108,7 +112,8 @@
       </div>
       <div id="clients-wrap" hidden>
         <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
-        <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th></tr></thead>
+        <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
+        <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th></tr></thead>
         <tbody id="clients"></tbody></table>
       </div>
       <div class="grid">

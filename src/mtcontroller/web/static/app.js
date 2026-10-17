@@ -500,12 +500,37 @@ $("alerts-refresh").addEventListener("click", () => loadAlerts());
 
 let clientsCache = [];
 
-$("clients-btn").addEventListener("click", async () => {
+async function loadClients() {
   try {
-    clientsCache = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients`);
+    const hist = $("clients-history").checked ? "?history=1" : "";
+    clientsCache = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients${hist}`);
     $("clients-wrap").hidden = false;
     renderClients();
   } catch (e) { msg(e.message, true); }
+}
+$("clients-btn").addEventListener("click", () => loadClients());
+$("clients-history").addEventListener("change", () => loadClients());
+
+function isNew(c) {
+  return c.first_seen && Date.now() - new Date(c.first_seen).getTime() < 24 * 3600 * 1000;
+}
+
+let csearchTimer = null;
+$("csearch").addEventListener("input", () => {
+  clearTimeout(csearchTimer);
+  csearchTimer = setTimeout(async () => {
+    const q = $("csearch").value.trim();
+    const ul = $("csearch-out"); ul.textContent = "";
+    if (q.length < 2 || !tenantId) return;
+    let list;
+    try { list = await api("GET", `/tenants/${tenantId}/clients?q=${encodeURIComponent(q)}`); } catch (e) { return msg(e.message, true); }
+    for (const c of list) {
+      ul.appendChild(el("li", `${c.hostname || "?"} ${c.ip || ""} ${c.mac} – ${c.site}: ${c.device || "?"} ${c.port || ""}` +
+                              (c.vlan ? ` VLAN ${c.vlan}` : "") + (c.ssid ? ` (${c.ssid})` : "") +
+                              (c.online ? " · připojen" : ` · naposledy ${fmtTime(c.last_seen)}`), c.online ? "" : "muted"));
+    }
+    if (!list.length) ul.appendChild(el("li", "Nic nenalezeno (historie se plní každých 5 min)", "muted"));
+  }, 300);
 });
 $("clients-filter").addEventListener("input", () => renderClients());
 
@@ -513,16 +538,21 @@ function renderClients() {
   const q = $("clients-filter").value.trim().toLowerCase();
   const tb = $("clients");
   tb.textContent = "";
-  const list = clientsCache.filter((c) => !q || [c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, c.wifi && c.wifi.ssid]
+  const list = clientsCache.filter((c) => !q || [c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, c.wifi && c.wifi.ssid, c.ssid]
     .some((v) => v && String(v).toLowerCase().includes(q)));
   for (const c of list.slice(0, 1000)) {
     const tr = el("tr");
-    const wifi = c.wifi ? `${c.wifi.ssid || ""} ${c.wifi.signal || ""} dBm` : "";
-    tr.append(el("td", c.hostname || ""), el("td", c.ip || ""), el("td", c.mac), el("td", c.device || "?"),
-              el("td", (c.port || "") + (c.uncertain ? " ?" : "")), el("td", c.vlan || ""), el("td", wifi));
+    if (c.online === false) tr.className = "muted";
+    const ssid = c.wifi ? c.wifi.ssid : c.ssid, signal = c.wifi ? c.wifi.signal : c.signal;
+    const wifi = ssid || signal ? `${ssid || ""} ${signal ? signal + " dBm" : ""}` : "";
+    const name = el("td", c.hostname || "");
+    if (isNew(c)) name.appendChild(el("span", " nový", "badge"));
+    tr.append(name, el("td", c.ip || ""), el("td", c.mac), el("td", c.device || "?"),
+              el("td", (c.port || "") + (c.uncertain ? " ?" : "")), el("td", c.vlan || ""), el("td", wifi),
+              el("td", c.first_seen ? fmtTime(c.first_seen) : "–"), el("td", c.online ? "teď" : fmtTime(c.last_seen)));
     tb.appendChild(tr);
   }
-  if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr); }
+  if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 9; tr.appendChild(td); tb.appendChild(tr); }
 }
 
 // --- Wi-Fi lokality --------------------------------------------------------------------

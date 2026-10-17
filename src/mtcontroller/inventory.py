@@ -263,9 +263,14 @@ def store_error(db: Database, tenant_id: Any, device_id: Any, error: str) -> Non
                    {"e": error[:1000], "d": str(device_id)})
 
 
-def load(tx, device_id: Any) -> dict[str, Any]:
-    rows = tx.fetchall("SELECT section, data FROM device_inventory WHERE device_id = %(d)s",
-                       {"d": str(device_id)})
+def load(tx, device_id: Any, sections: list[str] | None = None) -> dict[str, Any]:
+    if sections:
+        rows = tx.fetchall("""SELECT section, data FROM device_inventory WHERE device_id = %(d)s
+                              AND section IN (SELECT jsonb_array_elements_text(%(s)s))""",
+                           {"d": str(device_id), "s": sections})
+    else:
+        rows = tx.fetchall("SELECT section, data FROM device_inventory WHERE device_id = %(d)s",
+                           {"d": str(device_id)})
     return {r["section"]: r["data"] for r in rows}
 
 

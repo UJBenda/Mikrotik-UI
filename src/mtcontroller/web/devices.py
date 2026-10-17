@@ -406,14 +406,41 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
 
+    history = request.query_params.get("history") == "1"
+
     def q():
         with tenant_scope(st.db, tid) as tx:
+            if history:
+                return clients.history(tx, sid, _int(request.query_params.get("days"), 30, 1, 90))
             devs = tx.fetchall("""SELECT id, serial, identity FROM device
                                   WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
-            invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
-        return clients.correlate(devs, invs)
+            invs = {str(d["id"]): inventory.load(tx, d["id"], clients.SECTIONS) for d in devs}
+            seen = {r["mac"]: r for r in tx.fetchall(
+                "SELECT mac, first_seen, last_seen FROM client WHERE site_id = %(s)s", {"s": sid})}
+        out = clients.correlate(devs, invs)
+        for c in out:
+            h = seen.get(c["mac"])
+            c["first_seen"] = h["first_seen"] if h else None
+            c["last_seen"] = h["last_seen"] if h else None
+            c["online"] = True
+        return out
 
     return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def client_search(request: Request, p: Principal, tid: str) -> Response:
+    """Hledání klienta ve všech lokalitách tenanta (historie, MAC/IP/jméno)."""
+    from .. import clients
+
+    st = get_state(request)
+    q = str(request.query_params.get("q") or "")[:64]
+
+    def run():
+        with tenant_scope(st.db, tid) as tx:
+            return clients.search(tx, q)
+
+    return json_response(await run_in_threadpool(run))
 
 
 @endpoint(READ)
@@ -545,6 +572,7 @@ def routes() -> list[Route]:
         Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
+        Route(T + "/clients", client_search, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),
         Route(T + "/alerts/{alert_id}/ack", alert_ack, methods=["POST"]),
         Route(T + "/plans/{plan_id}/approve", plan_approve, methods=["POST"]),
