@@ -32,7 +32,8 @@ def port_info(inv: dict) -> dict[str, dict]:
     def get(name: str) -> dict:
         return out.setdefault(name, {"link": None, "rate": None, "full_duplex": None, "sfp_rx_power": None,
                                      "poe": None, "poe_power": None, "bridge": None, "pvid": None,
-                                     "tagged": [], "untagged": []})
+                                     "tagged": [], "untagged": [], "stp_role": None, "stp_forwarding": None,
+                                     "edge": None})
 
     for m in _rows(inv, "ethernet_monitor"):
         if not m.get("name"):
@@ -52,6 +53,12 @@ def port_info(inv: dict) -> dict[str, dict]:
             p = get(str(bp["interface"]))
             p["bridge"] = bp.get("bridge")
             p["pvid"] = bp.get("pvid")
+    for sp in _rows(inv, "stp_ports"):
+        if sp.get("interface") and not _true(sp.get("disabled")):
+            p = get(str(sp["interface"]))
+            p["stp_role"] = sp.get("role")
+            p["stp_forwarding"] = _true(sp["forwarding"]) if sp.get("forwarding") is not None else None
+            p["edge"] = _true(sp["edge-port"]) if sp.get("edge-port") is not None else None
     for v in _rows(inv, "bridge_vlans"):
         if _true(v.get("disabled")):
             continue

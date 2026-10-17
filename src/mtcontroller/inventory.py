@@ -68,6 +68,10 @@ SECTIONS: list[Section] = [
     Section("wireless", "/interface/wireless",
             "name,mac-address,ssid,mode,band,frequency,channel-width,running,disabled,master-interface,"
             "interface-type,comment"),
+    # STP stav portů zvlášť (mění se často – nesmí do bridge_ports, ze kterých se počítá basis plánů)
+    Section("stp_ports", "/interface/bridge/port",
+            "interface,bridge,role,edge-port,point-to-point-port,forwarding,learning,root-path-cost,"
+            "designated-bridge,path-cost,inactive,disabled"),
     Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
     Section("capsman_caps_legacy", "/caps-man/remote-cap"),
 ]
@@ -132,6 +136,20 @@ def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     if names:
         _fetch(api, data, errors, "ethernet_monitor", "POST", "/interface/ethernet/monitor",
                body={"numbers": ",".join(names), "once": "true", ".proplist": MONITOR_PROPS})
+    stp = [str(b["name"]) for b in data.get("bridges") or []
+           if isinstance(b, dict) and b.get("name") and b.get("protocol-mode") not in (None, "", "none")
+           and b.get("disabled") != "true"]
+    if stp:
+        _fetch(api, data, errors, "stp_bridges", "POST", "/interface/bridge/monitor",
+               body={"numbers": ",".join(stp), "once": "true"})
+        rows = data.get("stp_bridges")
+        if isinstance(rows, dict):
+            rows = data["stp_bridges"] = [rows]
+        # výstup monitoru nemusí obsahovat jméno – odpovídá pořadí v "numbers"
+        if isinstance(rows, list) and len(rows) == len(stp):
+            for name, r in zip(stp, rows):
+                if isinstance(r, dict):
+                    r.setdefault("name", name)
     poe = [str(e["name"]) for e in eth if e.get("poe-out") not in (None, "", "off")]
     if poe:
         _fetch(api, data, errors, "poe_monitor", "POST", "/interface/ethernet/poe/monitor",

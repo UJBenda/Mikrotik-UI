@@ -61,7 +61,10 @@ def test_inventory_metrics_and_detail():
 
         def fake_device_api(tx, box_, dev, timeout=10.0):
             inv = apis[dev["tunnel_ip"]]
-            resp = {s.path: inv.get(s.name, []) for s in inventory.SECTIONS}
+            resp = {}
+            for s in inventory.SECTIONS:  # více sekcí může číst stejnou cestu (bridge_ports/stp_ports)
+                if s.name in inv or s.path not in resp:
+                    resp[s.path] = inv.get(s.name, [])
             return FakeApi(resp)
 
         orig = services.device_api

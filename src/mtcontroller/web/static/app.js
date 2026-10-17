@@ -529,6 +529,30 @@ function renderWifi(w) {
   }
 }
 
+// --- STP lokality ------------------------------------------------------------------------
+
+$("stp-btn").addEventListener("click", async () => {
+  try { renderStp(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/stp`)); } catch (e) { msg(e.message, true); }
+});
+
+function renderStp(s) {
+  $("stp-wrap").hidden = false;
+  $("stp-roots").textContent = s.roots.length
+    ? "Root bridge: " + s.roots.map((r) => (r.device || "nespravované zařízení") + ` (${r.root_id})`).join(", ")
+    : "Žádný bridge se zapnutým STP";
+  const ul = $("stp-warn"); ul.textContent = "";
+  for (const x of s.warnings) ul.appendChild(el("li", x.text, "sev-" + (x.severity === "info" ? "info" : "warning")));
+  const tb = $("stp-bridges"); tb.textContent = "";
+  for (const b of s.bridges) {
+    const tr = el("tr");
+    tr.append(el("td", b.device || "?"), el("td", b.bridge), el("td", b.protocol, b.protocol === "none" ? "muted" : ""),
+              el("td", b.root ? "ano" : (b.root_device || b.root_id || "–")), el("td", b.root_port || "–"),
+              el("td", b.root_path_cost != null ? String(b.root_path_cost) : "–"), el("td", b.managed_links.join(", ")));
+    tb.appendChild(tr);
+  }
+  if (!s.bridges.length) { const tr = el("tr"); const td = el("td", "Žádné bridge (inventura běží každých 5 min)", "muted"); td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr); }
+}
+
 // --- detail zařízení -----------------------------------------------------------------
 
 let detailId = null;
@@ -619,8 +643,9 @@ async function openDetail(id) {
                   p.untagged && p.untagged.length ? `U ${p.untagged.join(",")}` : "",
                   p.tagged && p.tagged.length ? `T ${p.tagged.join(",")}` : ""].filter(Boolean).join(" · ");
     const poe = p.poe ? p.poe + (p.poe_power ? ` ${p.poe_power} W` : "") : "";
+    const stp = p.stp_role ? p.stp_role.replace("-port", "") + (p.stp_forwarding === false ? " (blokuje)" : "") + (p.edge ? " · edge" : "") : "";
     tr.append(el("td", i.name), el("td", i.type), el("td", i.disabled ? "vypnuté" : i.running ? "běží" : "neběží", i.running ? "" : "sev-warning"),
-              el("td", link, p.full_duplex === false ? "sev-warning" : ""), el("td", vlan), el("td", poe),
+              el("td", link, p.full_duplex === false ? "sev-warning" : ""), el("td", vlan), el("td", stp, p.stp_forwarding === false ? "sev-warning" : ""), el("td", poe),
               el("td", i.mac || ""), el("td", i.link_downs || "0"), el("td", `${i.rx_error || 0} / ${i.tx_error || 0}`), el("td", i.comment || ""));
     it.appendChild(tr);
   }

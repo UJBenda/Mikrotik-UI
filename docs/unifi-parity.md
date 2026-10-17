@@ -33,6 +33,7 @@ viditelná odchylka zařízení, vědomé srovnání.
 | Topology | `/ip/neighbor` (MNDP/LLDP), bridge host | topologie | F2 (sousedé už v inventuře) |
 | Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | hotovo (seznam + poloha) |
 | Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan`, `/interface/ethernet/monitor`, `poe/monitor` | VLAN | tabulka portů (rychlost, duplex, SFP, PoE, PVID/tagované VLAN) + analýza hotové (jen čtení), správa F3 |
+| STP stav (port insights) | `/interface/bridge/monitor`, role portů v `/interface/bridge/port` | STP | root bridge, blokované porty, varování (STP vypnuté s více linkami, cizí root) – jen čtení |
 | Networks (VLAN per lokalita) | bridge vlan-filtering, VLAN rozhraní | VLAN | F3 |
 | Blueprints + Drift Inspector | – | politiky lokality + plány | základ tato noc (NTP) |
 | NTP / čas (UniFi řeší implicitně) | `/system/ntp/client`, `/system/ntp/server` | NTP | tato noc (první zápisový modul) |

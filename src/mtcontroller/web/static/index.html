@@ -72,7 +72,14 @@
       <h2>Lokalita <select id="site-sel"></select>
         <button id="topo-btn" type="button" class="small secondary">Topologie</button>
         <button id="clients-btn" type="button" class="small secondary">Klienti</button>
-        <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button></h2>
+        <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button>
+        <button id="stp-btn" type="button" class="small secondary">STP</button></h2>
+      <div id="stp-wrap" hidden>
+        <p id="stp-roots" class="muted"></p>
+        <ul id="stp-warn"></ul>
+        <table><thead><tr><th>Zařízení</th><th>Bridge</th><th>Protokol</th><th>Root</th><th>Root port</th><th>Cena k rootu</th><th>Linky ke spravovaným</th></tr></thead>
+        <tbody id="stp-bridges"></tbody></table>
+      </div>
       <div id="wifi-wrap" hidden>
         <p id="wifi-summary" class="muted"></p>
         <ul id="wifi-warn"></ul>
@@ -154,7 +161,7 @@
       <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
       <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
       <h3>Rozhraní</h3>
-      <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>Linka</th><th>VLAN</th><th>PoE</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
+      <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>Linka</th><th>VLAN</th><th>STP</th><th>PoE</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
       <h3>Sousedé</h3>
       <table><thead><tr><th>Port</th><th>Identita</th><th>Model</th><th>Adresa</th><th>MAC</th></tr></thead><tbody id="d-neigh"></tbody></table>
       <h3>Zálohy</h3>
