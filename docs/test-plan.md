@@ -79,6 +79,9 @@ Na controlleru vygeneruj konfigurační skript a vlož ho do terminálu koncentr
 mtc-admin concentrator-script vpn1 > /root/vpn1.rsc
 ```
 
+**Pozor:** skript přesune `www-ssl` (WebFig přes HTTPS) koncentrátoru na 8443 a povolí
+ho jen z IP controlleru – na 443 poběží SSTP. WebFig přes HTTP, Winbox a SSH se nemění.
+
 Skript nastaví PPP profil, SSTP server na 443, REST API na 8443 (jen z IP
 controlleru), účet `mtc-controller`, firewall (tunely se nevidí, do tunelů
 smí jen controller) a src-nat: správa z controlleru přichází na zařízení
@@ -143,6 +146,8 @@ zařízení provede provisioning. Kontroly na MikroTiku:
 /interface sstp-client print              # mtc-sstp, running
 /ip address print where interface=mtc-sstp  # 10.200.1.x
 /user print where name=mtc-ctl            # skupina mtc, address 10.200.0.1/32
+/ip service print where name=www-ssl      # zapnuté, certifikát mtc-rest; bylo-li dřív vypnuté,
+                                          # address=10.200.0.1/32 (WebFig HTTPS se neotevře do světa)
 /ip firewall filter print where comment~"mtc"
 ```
 

@@ -44,9 +44,6 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 :if ([:len [/ppp profile find name="{PPP_PROFILE}"]] = 0) do={{ /ppp profile add name="{PPP_PROFILE}" }}
 /ppp profile set [find name="{PPP_PROFILE}"] local-address={q(local)} interface-list="TUNNELS" only-one=yes change-tcp-mss=yes use-encryption=required use-compression=no comment="mtc"
 
-# --- SSTP server na 443 ---
-/interface sstp-server server set enabled=yes port=443 certificate=$sstpCert authentication=mschap2 default-profile="{PPP_PROFILE}"
-
 # --- REST API pro controller (self-signed, controller ho pinuje otiskem) ---
 :if ([:len [/certificate find name="mtc-api"]] = 0) do={{
   /certificate add name="mtc-api" common-name={q(c.name)} key-size=prime256v1 days-valid=3650 key-usage=tls-server
@@ -62,6 +59,9 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 }} else={{
   /user set [find name={q(c.api_user)}] group="mtc-controller" password=$apiPassword address=($ctrl . "/32")
 }}
+
+# --- SSTP server na 443 (az po presunu www-ssl z 443 na port REST) ---
+/interface sstp-server server set enabled=yes port=443 certificate=$sstpCert authentication=mschap2 default-profile="{PPP_PROFILE}"
 
 # --- firewall: tunely se nevidi, do tunelu smi jen controller ---
 /ip firewall address-list remove [find list="mtc-controller"]

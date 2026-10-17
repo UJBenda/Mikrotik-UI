@@ -186,7 +186,10 @@ def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
   /certificate sign "{REST_CERT}"
   :delay 5s
 }}
+:local wasOff [/ip service get www-ssl disabled]
 /ip service set www-ssl certificate="{REST_CERT}" disabled=no
+# www-ssl dosud vypnute = nikdo ho nepouzival: povolit jen ze spravy (neotevrit WebFig do sveta)
+:if ($wasOff) do={{ /ip service set www-ssl address={q(ctrl + "/32")} }}
 # ma-li www-ssl omezene adresy, pridej controller (jinak by REST pres tunel nesel)
 :do {{
   :local allowed [/ip service get www-ssl address]

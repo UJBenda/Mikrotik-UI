@@ -89,6 +89,9 @@ def test_provision_restricts_to_controller():
     assert 'in-interface="mtc-sstp" action=drop' in body  # zbytek z tunelu zahodit
     assert 'chain=forward in-interface="mtc-sstp" action=drop' in body  # z tunelu nikam dál
     assert "add-default-route=no" in body
+    # dosud vypnuté www-ssl se otevře jen pro správu, ne pro celý svět
+    assert ':if ($wasOff) do={ /ip service set www-ssl address="10.200.0.1/32" }' in body
+    assert body.index("wasOff [/ip service get www-ssl disabled]") < body.index("www-ssl certificate=")
     # žádné interaktivní přístupy pro servisní účet
     assert "ssh" not in routeros.MTC_GROUP_POLICY and "winbox" not in routeros.MTC_GROUP_POLICY
 
