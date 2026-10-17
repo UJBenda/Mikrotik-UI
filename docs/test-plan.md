@@ -185,8 +185,39 @@ Všechno níže je jen čtení, kromě NTP plánu, který se aplikuje až po sch
 | Aktualizace | seznam zařízení | do 24 h (nebo po restartu workeru) se u verze ukáže ↑ dostupná verze |
 | NTP | Lokalita → NTP politika → Uložit → Vygenerovat plány | v Plánech změn plán pro každé zařízení; Schválit odmítne, dokud na zařízení nepovolíš správu NTP (detail → Moduly) |
 
+| Klienti | Lokalita → Klienti | DHCP/ARP/bridge host/wifi klienti; u každého zařízení + port (u wifi AP, SSID, signál), VLAN; port k jinému spravovanému MikroTiku se nepočítá jako poloha klienta |
+| Alerty | karta Alerty nahoře | např. odpoj ethernet testovacího MikroTiku → do ~5 min „offline" (kritický); po připojení se sám uzavře; Potvrdit jen označí, že o něm víš |
+| Notifikace | `mtc-admin notify-test talk` | zpráva v konverzaci Talk (viz níže) |
+
 Záloha přes REST (`/file/read`) je zatím ověřená jen proti simulaci. Když selže,
 v `journalctl -u mtc-worker` bude „záloha … selhala" s důvodem – pošli mi ho.
+
+Prahy alertů (v `alerts.py`): CPU/paměť ≥ 90 %, ≥ 5 výpadků linky za 2 h
+(flapping), ≥ 100 chyb portu za hodinu, záloha starší 48 h, tunel neběží ≥ 3 check-iny.
+
+### Notifikace do Nextcloud Talk
+
+1. Na Nextcloudu (Talk 17.1+ / Nextcloud 27+):
+   ```sh
+   SECRET=$(openssl rand -hex 32); echo "$SECRET"
+   sudo -u www-data php occ talk:bot:install "MikroTik" "$SECRET" "https://mtc.invalid/" "Alerty MikroTik controlleru"
+   sudo -u www-data php occ talk:bot:list            # ID bota
+   sudo -u www-data php occ talk:bot:setup <ID> <token konverzace>
+   ```
+   Token konverzace je konec URL konverzace (`…/call/<token>`). URL bota (třetí
+   parametr) se pro odesílání nepoužívá – bot jen posílá zprávy.
+2. Na controlleru:
+   ```sh
+   echo "$SECRET" > /etc/mtcontroller/talk.secret
+   chown root:mtcontroller /etc/mtcontroller/talk.secret; chmod 0640 /etc/mtcontroller/talk.secret
+   ```
+   a v config.toml odkomentuj blok `[[notify]]` s `kind = "nextcloud_talk"`,
+   `url = "https://<cloud>/ocs/v2.php/apps/spreed/api/v1/bot/<token konverzace>/message"`.
+3. `systemctl restart mtc-worker`, pak `mtc-admin notify-test talk`.
+   Chyba 401 = nesedí tajemství nebo bot není v konverzaci povolený.
+
+Neodeslané notifikace worker zkouší znovu (max. 5×); stejně funguje JSON webhook
+(`kind = "json"`, podpis v hlavičce `X-MTC-Signature: sha256=<HMAC těla>`).
 
 ## 8. Záložní koncentrátor (volitelné, druhý MikroTik)
 

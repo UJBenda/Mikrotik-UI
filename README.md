@@ -26,7 +26,9 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] Modul NTP s plány změn (observe/manage, schválení, zneplatnění)
 - [x] Topologie lokality (MNDP/LLDP), dostupné aktualizace RouterOS, známé problémy verzí
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
-- [ ] Klienti (DHCP/ARP/bridge host/wifi), alerty, VLAN správa, CAPsMAN, PtP, firewall
+- [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP
+- [x] Alerty (offline, tunel, REST, certifikát, CPU/paměť, porty, zálohy, verze) a notifikace (webhook, Nextcloud Talk)
+- [ ] VLAN správa (aplikace migrace), CAPsMAN, PtP, firewall
 
 Mapování funkcí UniFi: [docs/unifi-parity.md](docs/unifi-parity.md).
 

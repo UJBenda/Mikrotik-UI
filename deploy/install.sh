@@ -102,13 +102,15 @@ SELECT 'CREATE ROLE mtc_app LOGIN NOBYPASSRLS' WHERE NOT EXISTS (SELECT 1 FROM p
 SELECT 'CREATE DATABASE mtcontroller OWNER mtc_owner' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mtcontroller') \gexec
 EOF
 runuser -u postgres -- psql -qX -d mtcontroller -c 'REVOKE ALL ON SCHEMA public FROM PUBLIC' -c 'ALTER SCHEMA public OWNER TO mtc_owner'
-if ! grep -q '^mtc ' "$PGETC/pg_ident.conf"; then
-  cat >> "$PGETC/pg_ident.conf" <<'EOF'
-# MikroTik controller: služba -> mtc_app, root (migrace) -> mtc_owner
-mtc   mtcontroller   mtc_app
-mtc   root           mtc_owner
-EOF
-fi
+# MikroTik controller: služba -> mtc_app; root -> mtc_owner (migrace) i mtc_app
+# (ostatní příkazy mtc-admin běží rolí aplikace, tedy s RLS)
+grep -q 'MikroTik controller' "$PGETC/pg_ident.conf" || \
+  echo '# MikroTik controller: sluzba -> mtc_app, root -> mtc_owner (migrace) a mtc_app (mtc-admin)' >> "$PGETC/pg_ident.conf"
+for m in "mtcontroller mtc_app" "root mtc_owner" "root mtc_app"; do
+  set -- $m
+  grep -Eq "^mtc[[:space:]]+$1[[:space:]]+$2[[:space:]]*\$" "$PGETC/pg_ident.conf" || \
+    printf 'mtc   %-14s %s\n' "$1" "$2" >> "$PGETC/pg_ident.conf"
+done
 if ! grep -q 'map=mtc' "$PGETC/pg_hba.conf"; then
   sed -i '0,/^local/s//local   mtcontroller   mtc_app,mtc_owner   peer map=mtc\n&/' "$PGETC/pg_hba.conf"
 fi
@@ -152,7 +154,8 @@ if [ -n "$CERTBOT" ] && [ ! -f "$CC" ]; then
   systemctl stop nginx || true
   certbot certonly --standalone --non-interactive --agree-tos -m "$CERTBOT" \
     -d "$H_ADMIN" -d "$H_CHECKIN" --cert-name mtcontroller \
-    --deploy-hook "systemctl reload nginx"
+    --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" \
+    || echo "!! certbot selhal (DNS/port 80?) – nginx se nastaví, až certifikát bude"
   systemctl start nginx || true
 fi
 sed -e "s|mtc-admin.example.cz|$H_ADMIN|g" -e "s|mtc-checkin.example.cz|$H_CHECKIN|g" \
