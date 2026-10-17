@@ -1095,6 +1095,12 @@ async function loadPortEditor(port) {
     acts.appendChild(pc);
   }
   box.appendChild(acts);
+  if ((st.history || []).length) {
+    box.appendChild(el("h4", "Historie portu (30 dní)"));
+    const ul = el("ul", null, "ph-list");
+    for (const e of st.history) ul.appendChild(phItem(e, false));
+    box.appendChild(ul);
+  }
 }
 
 async function showTraffic(devId, name) {
@@ -1517,6 +1523,7 @@ async function openDetail(id) {
     sec.appendChild(li);
   }
   renderFirewall(d.firewall);
+  phState.port = ""; loadPortHistory(id);
   const da = $("d-alerts"); da.textContent = "";
   for (const a of d.alerts || []) da.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : a.severity)));
   kv($("d-summary"), [
@@ -1745,4 +1752,48 @@ function fwRules(box, rows, nat) {
   }
   box.appendChild(t);
   if (!nat) box.appendChild(el("p", "D = dynamické pravidlo (vytvořené RouterOS), přeškrtnuté = vypnuté.", "muted"));
+}
+
+// --- historie portů (Port Time Machine) -------------------------------------------------------
+
+const phState = { days: 7, port: "" };
+const PH_CLS = { link: (e) => (e.new === "up" ? "ph-up" : "ph-down"), flaps: () => "ph-down", disabled: () => "ph-cfg",
+                 neighbor: (e) => (e.new ? "ph-up" : "ph-down") };
+
+function phItem(e, withPort) {
+  const li = el("li", null, (PH_CLS[e.field] ? PH_CLS[e.field](e) : "ph-cfg"));
+  const t = new Date(e.at);
+  li.appendChild(el("span", t.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" }), "ph-time"));
+  if (withPort) li.appendChild(el("b", e.port + " "));
+  li.appendChild(el("span", e.text));
+  li.title = t.toLocaleString("cs-CZ");
+  return li;
+}
+
+async function loadPortHistory(id) {
+  const q = `days=${phState.days}` + (phState.port ? `&port=${encodeURIComponent(phState.port)}` : "");
+  let h;
+  try { h = await api("GET", `/tenants/${tenantId}/devices/${id}/port-history?${q}`); } catch (e) { return; }
+  if (detailId !== id) return;
+  segmented($("d-ph-range"), [[1, "24 h"], [7, "7 dní"], [30, "30 dní"], [90, "90 dní"]], phState.days,
+            (v) => { phState.days = v; loadPortHistory(id); });
+  const sel = $("d-ph-port");
+  if (!phState.port) {
+    sel.textContent = "";
+    const o0 = el("option", "všechny porty"); o0.value = ""; sel.appendChild(o0);
+    const ports = [...new Set(h.events.map((e) => e.port))].sort((a, b) => portNum(a) - portNum(b));
+    for (const p of ports) { const o = el("option", p); o.value = p; sel.appendChild(o); }
+    sel.onchange = () => { phState.port = sel.value; loadPortHistory(id); };
+  }
+  sel.value = phState.port;
+  const n = h.events.length;
+  $("d-ph-n").textContent = n ? `(${n} ${n === 1 ? "změna" : n < 5 ? "změny" : "změn"})` : "";
+  const box = $("d-ph"); box.textContent = "";
+  if (!h.events.length) { box.appendChild(el("p", "Za zvolené období beze změn (historie se plní s každou inventurou).", "muted")); return; }
+  let day = null, ul = null;
+  for (const e of h.events) {
+    const dd = new Date(e.at).toLocaleDateString("cs-CZ", { weekday: "short", day: "numeric", month: "numeric" });
+    if (dd !== day) { day = dd; box.appendChild(el("h4", dd, "ph-day")); ul = el("ul", null, "ph-list"); box.appendChild(ul); }
+    ul.appendChild(phItem(e, !phState.port));
+  }
 }

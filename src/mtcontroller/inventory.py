@@ -236,6 +236,7 @@ def interface_samples(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], errors: list[str]) -> None:
+    from . import porthistory
     from .hardening import audit as hardening_audit
     from .health import dhcp_pools
 
@@ -245,6 +246,9 @@ def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], er
     if "ip_services" in data:
         data = dict(data, hardening=hardening_audit(data))
     with tenant_scope(db, tenant_id) as tx:
+        if "interfaces" in data:
+            # historie portů: porovnání s předchozí inventurou (před přepsáním)
+            porthistory.record(tx, tenant_id, device_id, load(tx, device_id, porthistory.KEEP_SECTIONS), data)
         for section, value in data.items():
             tx.execute(
                 """INSERT INTO device_inventory (tenant_id, device_id, section, data)
@@ -338,10 +342,12 @@ def rollup(db: Database, hours_back: int = 3) -> int:
         return tx.execute(ROLLUP_SQL, {"start": start, "stop": stop + _HOUR})
 
 
-def retention(db: Database, sample_days: int = 14, hourly_days: int = 400, backup_days: int = 400) -> None:
+def retention(db: Database, sample_days: int = 14, hourly_days: int = 400, backup_days: int = 400,
+              event_days: int = 90) -> None:
     with operator_scope(db) as tx:
         tx.execute("DELETE FROM interface_sample WHERE at < now() - make_interval(days => %(d)s)", {"d": sample_days})
         tx.execute("DELETE FROM interface_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
+        tx.execute("DELETE FROM port_event WHERE at < now() - make_interval(days => %(d)s)", {"d": event_days})
         # nejnovější záloha zařízení zůstává vždy
         tx.execute(
             """DELETE FROM device_backup b WHERE taken_at < now() - make_interval(days => %(d)s)

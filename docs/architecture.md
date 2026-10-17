@@ -396,6 +396,14 @@ a běží jako NTP server), ostatní zařízení berou čas z primárního (adre
 s prvním upstreamem jako zálohou, všude stejná časová zóna. U klientů se NTP server
 nemění. NTP je první zápisový modul – ověřujeme na něm celý mechanismus plánů.
 
+### Historie portů (Time Machine)
+
+`porthistory.py` při každé úplné inventuře (obsahuje `interfaces`) porovná stav
+fyzických portů s předchozí inventurou a změny zapíše do `port_event` (retence
+90 dní). Vlastnost se porovná jen tehdy, když její zdrojová sekce je v obou
+inventurách – selhání jednoho REST dotazu nevyrobí falešné události. Výpadky
+linky mezi inventurami se poznají z přírůstku `link-downs`.
+
 ### Firewall
 
 Zobrazení jako zone-based firewall UniFi (`firewall.py`, jen čtení): zóna = vlastní

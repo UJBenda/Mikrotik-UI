@@ -346,5 +346,26 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 19) historie portů izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO port_event (tenant_id, device_id, port, field, old, new)
+SELECT tenant_id, id, 'ether1', 'link', 'up', 'down' FROM device WHERE tenant_id = '00000000-0000-0000-0000-0000000000b1' LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM port_event) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí historii portů tenanta B'; END IF;
+  DELETE FROM port_event;
+  RAISE NOTICE 'OK 19 historie portů izolovaná';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM port_event) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant A smazal historii portů B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

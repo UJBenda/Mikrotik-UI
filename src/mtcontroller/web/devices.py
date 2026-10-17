@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import analysis, backup, firewall, inventory, plans, ports, profiles, ros_versions
+from .. import analysis, backup, firewall, inventory, plans, porthistory, ports, profiles, ros_versions
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
 from ..services import NotFound, ServiceError, audit
@@ -145,7 +145,8 @@ async def port_get(request: Request, p: Principal, tid: str) -> Response:
             profs = profiles.list_profiles(tx)
             match = profiles.matching(profs, state)
             return {**state, "known_vlans": vlans, "uplink": port in _uplinks(tx, inv), "module_mode": mode,
-                    "profiles": profs, "profile": match["id"] if match else None}
+                    "profiles": profs, "profile": match["id"] if match else None,
+                    "history": porthistory.history(tx, did, port, days=30, limit=20)}
 
     return json_response(await run_in_threadpool(q))
 
@@ -171,6 +172,27 @@ async def port_plan(request: Request, p: Principal, tid: str) -> Response:
         return res
 
     return json_response(await run_in_threadpool(run), 201)
+
+
+@endpoint(READ)
+async def port_history(request: Request, p: Principal, tid: str) -> Response:
+    """Historie portů zařízení (Port Time Machine), volitelně jen jednoho portu."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    port = request.query_params.get("port") or None
+    try:
+        days = max(1, min(90, int(request.query_params.get("days", "7"))))
+    except ValueError:
+        days = 7
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s", {"d": did}):
+                raise NotFound("zařízení neexistuje")
+            return {"days": days, "port": port,
+                    "events": porthistory.history(tx, did, port[:100] if port else None, days=days, limit=500)}
+
+    return json_response(await run_in_threadpool(q))
 
 
 @endpoint(READ)
@@ -693,6 +715,7 @@ def routes() -> list[Route]:
         Route(d + "/metrics", metrics, methods=["GET"]),
         Route(d + "/traffic", traffic, methods=["GET"]),
         Route(d + "/release-notes", release_notes, methods=["GET"]),
+        Route(d + "/port-history", port_history, methods=["GET"]),
         Route(d + "/ports/{port}", port_get, methods=["GET"]),
         Route(d + "/ports/{port}/plan", port_plan, methods=["POST"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),

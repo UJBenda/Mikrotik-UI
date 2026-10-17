@@ -266,3 +266,13 @@ tr.fw-disabled td { opacity: .5; text-decoration: line-through; }
 .fw-rules td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .fw .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .85em; font-weight: 600; }
 .pe-prof { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px; }
+
+/* historie portů */
+.ph-list { list-style: none; padding: 0; margin: 4px 0 10px; }
+.ph-list li { padding: 3px 0 3px 12px; border-left: 3px solid var(--line); margin-left: 4px; }
+.ph-list li.ph-up { border-left-color: #1a8f4c; }
+.ph-list li.ph-down { border-left-color: #d0342c; }
+.ph-list li.ph-cfg { border-left-color: var(--accent); }
+.ph-time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 10px; }
+.ph-day { margin: 10px 0 2px; color: var(--muted); font-size: .85em; text-transform: uppercase; }
+#d-ph-port { margin-left: 8px; }

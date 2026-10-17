@@ -110,6 +110,13 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
     if (byId["d-security"].children.length < 5) errors.push("bezpečnostní nálezy se nezobrazily");
+    // historie portů: dva dny, výběr portu filtruje
+    const ph = byId["d-ph"].children;
+    if (ph.length !== 4 || ph[0].tagName !== "H4" || ph[1].children.length !== 2) errors.push("historie portů: " + ph.length);
+    if (byId["d-ph-port"].children.length !== 3) errors.push("historie portů: výběr portu");
+    byId["d-ph-port"].value = "ether2"; await byId["d-ph-port"].onchange();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    if (byId["d-ph"].children.length !== 4 || byId["d-ph-n"].textContent !== "(2 změny)") errors.push("historie portů: filtr portu");
     // firewall: matice zón (WAN, LAN, GUEST + Router), klik na buňku, přepnutí na pravidla
     const fwT = byId["d-fw"].children[0];
     if (!fwT || fwT.className !== "fw-matrix" || fwT.children.length !== 4) errors.push("firewall: matice zón");
@@ -170,6 +177,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (prof.children[2].hidden) errors.push("profil: chybí tlačítko smazat");
     }
     if (!pe.includes("Uložit jako profil")) errors.push("editor portu: chybí uložení profilu");
+    if (!pe.includes("Historie portu") || !pe.includes("linka dole")) errors.push("editor portu: chybí historie");
     await byId["tr-range"].children[2].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const l7 = byId["d-traffic-svg"].children.filter((c) => c.tagName === "POLYLINE").length;
