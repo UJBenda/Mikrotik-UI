@@ -176,7 +176,7 @@ Další kroky (viz docs/test-plan.md):
   1. doplň [[tunnel.concentrators]] v $ETC/config.toml a restartuj: systemctl restart mtc-web mtc-worker
   2. první admin:            mtc-admin create-superadmin admin@...
   3. skript pro koncentrátor: mtc-admin concentrator-script vpn1
-  4. kontrola koncentrátoru:  mtc-admin concentrator-check
+  4. kontrola celé instalace: mtc-admin doctor
   5. UI: https://$H_ADMIN/  (z admin sítě $NET)
 Zdravotní kontrola: curl -sk --resolve $H_CHECKIN:443:127.0.0.1 https://$H_CHECKIN/healthz
 EOF

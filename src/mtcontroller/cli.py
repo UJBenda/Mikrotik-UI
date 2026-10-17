@@ -12,6 +12,7 @@
   concentrator-script NAME      vypíše .rsc pro nastavení koncentrátoru
   concentrator-check            ověří REST spojení na všechny koncentrátory
   notify-test NAME              pošle zkušební notifikaci na cíl z [[notify]]
+  doctor                        zkontroluje instalaci (konfigurace, DB, síť, koncentrátory)
 """
 
 from __future__ import annotations
@@ -187,6 +188,17 @@ def cmd_notify_test(a) -> int:
     return 0
 
 
+def cmd_doctor(a) -> int:
+    from . import doctor
+    from .db import PsycopgDatabase
+    s = get_settings()
+    checks = doctor.run(s, _db(), PsycopgDatabase(s.database.migrate_dsn))
+    print(doctor.render(checks))
+    bad = [c for c in checks if c.status == doctor.FAIL]
+    print("\nVšechno v pořádku." if not bad else f"\nProblémů: {len(bad)}")
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mtc-admin", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -205,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     x = sub.add_parser("concentrator-script"); x.add_argument("name"); x.set_defaults(fn=cmd_concentrator_script)
     sub.add_parser("concentrator-check").set_defaults(fn=cmd_concentrator_check)
     x = sub.add_parser("notify-test"); x.add_argument("name"); x.set_defaults(fn=cmd_notify_test)
+    sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
     a = p.parse_args(argv)
     try:
         return a.fn(a)

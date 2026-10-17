@@ -34,7 +34,7 @@ aplikují se nové migrace, služby se restartují).
 1. Doplň `[[tunnel.concentrators]]` v config.toml a `systemctl restart mtc-web mtc-worker`.
 2. `mtc-admin create-superadmin admin@firma.cz`
 3. `mtc-admin concentrator-script vpn1` → vložit do koncentrátoru, otisk do config.toml.
-4. `mtc-admin concentrator-check`
+4. `mtc-admin concentrator-check`, pak `mtc-admin doctor` (kontrola celé instalace)
 5. Routa na tunelový pool přes koncentrátor.
 6. Firewall hostu: z internetu jen 443 (a 80 pro obnovu certifikátu), SSH jen z admin sítě.
 

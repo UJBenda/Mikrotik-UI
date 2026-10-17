@@ -88,7 +88,13 @@ do `api_fingerprint` v config.toml a:
 ```sh
 systemctl restart mtc-web mtc-worker
 mtc-admin concentrator-check        # vpn1: OK (...), aktivních SSTP relací: 0
+mtc-admin doctor                    # kontrola celé instalace – vše [OK] kromě případných [!!] varování
 ```
+
+`doctor` kontroluje konfiguraci, master klíč, připojení k DB, migrace, že
+`controller_ip` je adresa serveru, routu na pool přes koncentrátor, DNS check-in
+hostu, otisky a REST koncentrátorů a soubory tajemství notifikací. U chyby (`[XX]`)
+napíše, co udělat. V laboratoři je `[!!] certifikáty zařízení` v pořádku.
 
 Když `concentrator-check` hlásí „otisk certifikátu nesouhlasí", vypíše i skutečný
 otisk serveru. Porovnej ho s `/certificate print detail where name=mtc-api`

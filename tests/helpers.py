@@ -54,6 +54,17 @@ def fresh_db():
     return PgWireDatabase("mtc_app", name), name
 
 
+def owner_db(name: str):
+    """Připojení rolí vlastníka schématu (migrace) k testovací DB."""
+    if os.environ.get("MTC_TEST_PSYCOPG"):
+        from mtcontroller.db import PsycopgDatabase
+
+        return PsycopgDatabase(f"dbname={name} user=mtc_owner host=/var/run/postgresql")
+    from pgwire import PgWireDatabase
+
+    return PgWireDatabase("mtc_owner", name)
+
+
 def drop_db(name: str) -> None:
     from pgwire import PgConnection
 
