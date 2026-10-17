@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import auth, services
+from .. import auth, ros_versions, services
 from ..auth import MANAGE, OPERATE, READ, AuthError, Principal
 from ..db import operator_scope, tenant_scope
 from ..services import NotFound, ServiceError
@@ -226,9 +226,13 @@ async def devices(request: Request, p: Principal, tid: str) -> Response:
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            return tx.fetchall(
+            rows = tx.fetchall(
                 f"""SELECT {_DEVICE_COLS} FROM device d LEFT JOIN site s ON s.id = d.site_id
                     WHERE d.state <> 'removed' ORDER BY d.state, s.name, d.serial""")
+        for r in rows:
+            r["warnings"] = [{"severity": i.severity, "text": i.text, "source": i.source}
+                             for i in ros_versions.issues_for(r.get("ros_version") or "")]
+        return rows
 
     return json_response(await run_in_threadpool(q))
 

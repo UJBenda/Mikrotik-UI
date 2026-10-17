@@ -108,7 +108,7 @@ def checkin_source(checkin_url: str, key: str, opts: FetchOpts) -> str:
 :local body ("{{\\"version\\":\\"" . $ver . "\\",\\"uptime\\":\\"" . $up . "\\",\\"cpu\\":" . $cpu . ",\\"sstp\\":\\"" . $sstp . "\\",\\"fp\\":\\"" . $fp . "\\"}}")
 /file remove [find name="mtc-cmd.rsc"]
 :do {{
-  /tool fetch url=$url http-method=post http-header-field=$hdr http-data=$body dst-path="mtc-cmd.rsc" check-certificate={opts.check_certificate}
+  :local r [/tool fetch url=$url http-method=post http-header-field=$hdr http-data=$body dst-path="mtc-cmd.rsc" check-certificate={opts.check_certificate} as-value]
   :delay 1s
   /import file-name="mtc-cmd.rsc"
 }} on-error={{ :log warning "mtc: check-in selhal" }}
@@ -124,7 +124,8 @@ def adopt_stage2(checkin_url: str, key: str, opts: FetchOpts) -> str:
 /system scheduler remove [find name="mtc-checkin"]
 /system script remove [find name="mtc-checkin"]
 /system script add name="mtc-checkin" policy={SCRIPT_POLICY} dont-require-permissions=no comment="mtc" source={q_source(src)}
-/system scheduler add name="mtc-checkin" interval=1m policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run mtc-checkin"
+# explicitni start: RouterOS 7.24-7.24.4 nespousti scheduler s vychozim datem/casem startu
+/system scheduler add name="mtc-checkin" interval=1m start-date=[/system clock get date] start-time=00:00:00 policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run mtc-checkin"
 :log info "mtc: zarizeni zaregistrovano, ceka na schvaleni v controlleru"
 :execute script="/system script run mtc-checkin"
 }}
@@ -151,7 +152,7 @@ def wrap_command(ack_url: str, key: str, body: str, opts: FetchOpts, tail: str =
 }} on-error={{ :set ok false }}
 :local st "done"
 :if (!$ok) do={{ :set st "failed" }}
-:do {{ /tool fetch url=({q(ack_url + "&status=")} . $st) http-method=post http-header-field={q("Authorization: Bearer " + key)} output=none check-certificate={opts.check_certificate} }} on-error={{ :log warning "mtc: ack selhal" }}
+:do {{ :local a [/tool fetch url=({q(ack_url + "&status=")} . $st) http-method=post http-header-field={q("Authorization: Bearer " + key)} output=none check-certificate={opts.check_certificate} as-value] }} on-error={{ :log warning "mtc: ack selhal" }}
 {tail.rstrip()}
 }}
 """

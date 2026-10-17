@@ -120,3 +120,11 @@ def test_concentrator_script_is_ascii_and_balanced(tmp_path):
     assert 'local-address="10.200.0.1"' in s and "port=8443" in s
     assert 'address=($ctrl . "/32")' in s
     assert 'action=src-nat to-addresses="10.200.0.1"' in s
+
+
+def test_scheduler_has_explicit_start_and_quiet_fetch():
+    # RouterOS 7.24–7.24.4 nespouští scheduler s výchozím startem
+    s = routeros.adopt_stage2("https://c.example/api/checkin", "K", OPTS)
+    assert "start-date=[/system clock get date] start-time=00:00:00" in s
+    src = routeros.checkin_source("https://c.example/api/checkin", "K", OPTS)
+    assert "as-value]" in src  # výstup fetch se nehromadí ve skriptu

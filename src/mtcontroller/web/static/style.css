@@ -36,3 +36,4 @@ code { word-break: break-all; }
            padding: 10px 12px; border-radius: 6px; margin-top: 6px; }
 #msg div.error { border-left-color: var(--bad); }
 ul { margin: 0 0 10px; padding-left: 18px; }
+.warn { color: var(--warn); cursor: help; }

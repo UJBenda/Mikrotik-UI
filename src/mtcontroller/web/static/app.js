@@ -192,7 +192,13 @@ async function loadDevices() {
     tr.appendChild(el("td", d.state, "state " + d.state));
     tr.appendChild(el("td", d.serial));
     tr.appendChild(el("td", d.model));
-    tr.appendChild(el("td", d.ros_version));
+    const verTd = el("td", d.ros_version);
+    if (d.warnings && d.warnings.length) {
+      const w = el("span", d.warnings.some((x) => x.severity === "critical") ? " ⚠" : " ⓘ", "warn");
+      w.title = d.warnings.map((x) => x.text).join("\n");
+      verTd.appendChild(w);
+    }
+    tr.appendChild(verTd);
     tr.appendChild(el("td", d.site || "–"));
     tr.appendChild(el("td", d.tunnel_ip || "–"));
     tr.appendChild(el("td", (d.last_status && d.last_status.sstp) || "–"));
