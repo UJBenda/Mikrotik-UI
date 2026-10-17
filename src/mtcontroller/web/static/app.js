@@ -491,6 +491,44 @@ function renderClients() {
   if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr); }
 }
 
+// --- Wi-Fi lokality --------------------------------------------------------------------
+
+$("wifi-btn").addEventListener("click", async () => {
+  try { renderWifi(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi`)); } catch (e) { msg(e.message, true); }
+});
+
+function renderWifi(w) {
+  $("wifi-wrap").hidden = false;
+  const sm = w.summary;
+  $("wifi-summary").textContent = `${sm.aps} zařízení, ${sm.radios} rádií, ${sm.clients} klientů` +
+    (sm.ssids.length ? ` · SSID: ${sm.ssids.join(", ")}` : "");
+  const ul = $("wifi-warn"); ul.textContent = "";
+  for (const x of w.warnings) ul.appendChild(el("li", x.text, "sev-" + (x.severity === "info" ? "info" : "warning")));
+  const tb = $("wifi-radios"); tb.textContent = "";
+  for (const r of w.radios) {
+    const tr = el("tr");
+    if (r.disabled) tr.className = "muted";
+    const sig = r.signal_avg != null ? `${r.signal_avg} / ${r.signal_min} dBm` : "";
+    tr.append(el("td", r.device || "?"),
+              el("td", r.interface + (r.master ? ` (virt. na ${r.master})` : "") + (r.capsman ? " · CAPsMAN" : "") +
+                       (r.disabled ? " · vypnuté" : !r.running ? " · neběží" : "")),
+              el("td", r.ssid || ""), el("td", r.mode || ""), el("td", r.band || ""), el("td", r.frequency || ""),
+              el("td", r.width || ""), el("td", String(r.clients)),
+              el("td", sig + (r.weak_clients ? ` (${r.weak_clients} slabých)` : ""),
+                 r.signal_min != null && r.signal_min < -75 ? "warn" : ""));
+    tb.appendChild(tr);
+  }
+  if (!w.radios.length) { const tr = el("tr"); const td = el("td", "Žádná Wi-Fi rádia (inventura běží každých 5 min)", "muted"); td.colSpan = 9; tr.appendChild(td); tb.appendChild(tr); }
+  const ct = $("wifi-caps"); ct.textContent = "";
+  $("wifi-caps-h").hidden = $("wifi-caps-t").hidden = !w.caps.length;
+  for (const c of w.caps) {
+    const tr = el("tr");
+    tr.append(el("td", c.controller || ""), el("td", c.identity || c.name || ""), el("td", c.address || ""),
+              el("td", c.board || ""), el("td", c.version || ""), el("td", c.state || ""));
+    ct.appendChild(tr);
+  }
+}
+
 // --- detail zařízení -----------------------------------------------------------------
 
 let detailId = null;

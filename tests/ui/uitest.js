@@ -77,9 +77,13 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // lokalita: topologie a klienti
     await byId["topo-btn"].fire("click");
     await byId["clients-btn"].fire("click");
+    await byId["wifi-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const topoEls = byId["topo"].children.length;
     const clientRows = byId["clients"].children.length;
+    const wifiRows = byId["wifi-radios"].children.length;
+    if (wifiRows !== 5) errors.push("wifi: čekáno 5 rádií, je " + wifiRows);
+    if (byId["wifi-caps-t"].hidden) errors.push("wifi: tabulka CAPsMAN skrytá");
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
     const diffBtn = byId["d-backups"].children[0].children[4].children[0];
@@ -89,7 +93,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["d-vlan-plan"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     const steps = byId["d-vlan-steps"].children.length;
-    console.log(JSON.stringify({ devRows, alertRows, plansN, topoEls, clientRows, diffShown, steps,
+    console.log(JSON.stringify({ devRows, alertRows, plansN, topoEls, clientRows, wifiRows, diffShown, steps,
                                  title: byId["d-title"].textContent, vlan: byId["d-vlan-status"].textContent,
                                  requests: requests.length }));
   } catch (e) { errors.push(e.stack || String(e)); }

@@ -29,8 +29,9 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] `mtc-admin doctor` – kontrola instalace
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
 - [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP
+- [x] Wi-Fi lokality: rádia (wifi i wireless), SSID, kanály, klienti, signál, CAPsMAN AP, varování
 - [x] Alerty (offline, tunel, REST, certifikát, CPU/paměť, porty, zálohy, verze) a notifikace (webhook, Nextcloud Talk)
-- [ ] VLAN správa (aplikace migrace), CAPsMAN, PtP, firewall
+- [ ] VLAN správa (aplikace migrace), správa SSID/CAPsMAN, PtP, firewall
 
 Mapování funkcí UniFi: [docs/unifi-parity.md](docs/unifi-parity.md).
 

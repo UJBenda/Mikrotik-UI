@@ -194,6 +194,7 @@ Všechno níže je jen čtení, kromě NTP plánu, který se aplikuje až po sch
 | NTP | Lokalita → NTP politika → Uložit → Vygenerovat plány | v Plánech změn plán pro každé zařízení; Schválit odmítne, dokud na zařízení nepovolíš správu NTP (detail → Moduly) |
 
 | Klienti | Lokalita → Klienti | DHCP/ARP/bridge host/wifi klienti; u každého zařízení + port (u wifi AP, SSID, signál), VLAN; port k jinému spravovanému MikroTiku se nepočítá jako poloha klienta |
+| Wi-Fi | Lokalita → Wi-Fi | rádia všech AP (i PtP), SSID, kanál, počet klientů, průměrný/nejslabší signál; u CAPsMAN controlleru připojené AP; varování (neběžící rádio, slabí klienti, 40 MHz ve 2,4 GHz, stejný pevný kanál) |
 | Alerty | karta Alerty nahoře | např. odpoj ethernet testovacího MikroTiku → do ~5 min „offline" (kritický); po připojení se sám uzavře; Potvrdit jen označí, že o něm víš |
 | Notifikace | `mtc-admin notify-test talk` | zpráva v konverzaci Talk (viz níže) |
 

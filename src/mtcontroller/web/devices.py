@@ -342,6 +342,23 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_wifi(request: Request, p: Principal, tid: str) -> Response:
+    from .. import wifi
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            devs = tx.fetchall("""SELECT id, serial, identity FROM device
+                                  WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
+            invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
+        return wifi.site_wifi(devs, invs)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
 async def alert_list(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     open_only = request.query_params.get("all") != "1"
@@ -394,6 +411,7 @@ def routes() -> list[Route]:
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
+        Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),
         Route(T + "/alerts/{alert_id}/ack", alert_ack, methods=["POST"]),

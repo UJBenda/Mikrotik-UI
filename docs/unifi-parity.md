@@ -31,12 +31,12 @@ viditelná odchylka zařízení, vědomé srovnání.
 | Backups | `/export` + `/file/read` po 32 KiB přes REST | zálohy | F1 – tato noc (experimentální) |
 | Update Manager | `/system/package/update`, `/system/routerboard` | verze a aktualizace | aktualizace RouterOS a RouterBOOT jedním tlačítkem (blokuje verze s kritickým známým problémem, alert když se nepovede); hromadný rollout F3 |
 | Topology | `/ip/neighbor` (MNDP/LLDP), bridge host | topologie | F2 (sousedé už v inventuře) |
-| Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | F2 |
+| Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | hotovo (seznam + poloha) |
 | Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan` | VLAN | analýza (observe) tato noc, správa F3 |
 | Networks (VLAN per lokalita) | bridge vlan-filtering, VLAN rozhraní | VLAN | F3 |
 | Blueprints + Drift Inspector | – | politiky lokality + plány | základ tato noc (NTP) |
 | NTP / čas (UniFi řeší implicitně) | `/system/ntp/client`, `/system/ntp/server` | NTP | tato noc (první zápisový modul) |
-| WiFi networks (SSID) | `/interface/wifi` + CAPsMAN | CAPsMAN | F4 |
+| WiFi networks (SSID) | `/interface/wifi`, `/interface/wireless` + CAPsMAN | CAPsMAN | přehled rádií/SSID/klientů/signálu a CAPsMAN AP hotový (jen čtení); správa SSID F4 |
 | Radio Manager, RF scan | `/interface/wifi/radio`, `/interface/wifi/scan` | CAPsMAN | F4 |
 | Alerty a notifikace | netwatch, log, polling | alerty | F1 (offline už je) |
 | ISP Viewer (latence, ztráty, uptime) | `/tool/netwatch`, ping z gatewaye | WAN monitor | F1 |

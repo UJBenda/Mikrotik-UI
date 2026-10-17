@@ -71,7 +71,17 @@
     <div class="card">
       <h2>Lokalita <select id="site-sel"></select>
         <button id="topo-btn" type="button" class="small secondary">Topologie</button>
-        <button id="clients-btn" type="button" class="small secondary">Klienti</button></h2>
+        <button id="clients-btn" type="button" class="small secondary">Klienti</button>
+        <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button></h2>
+      <div id="wifi-wrap" hidden>
+        <p id="wifi-summary" class="muted"></p>
+        <ul id="wifi-warn"></ul>
+        <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>SSID</th><th>Režim</th><th>Pásmo</th><th>Kanál</th><th>Šířka</th><th>Klienti</th><th>Signál prům./min</th></tr></thead>
+        <tbody id="wifi-radios"></tbody></table>
+        <h3 id="wifi-caps-h" hidden>CAPsMAN – připojené AP</h3>
+        <table id="wifi-caps-t" hidden><thead><tr><th>Controller</th><th>AP</th><th>Adresa</th><th>Model</th><th>Verze</th><th>Stav</th></tr></thead>
+        <tbody id="wifi-caps"></tbody></table>
+      </div>
       <div id="clients-wrap" hidden>
         <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
         <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th></tr></thead>

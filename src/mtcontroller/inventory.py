@@ -62,13 +62,22 @@ SECTIONS: list[Section] = [
             "interface,mac-address,ssid,signal,tx-rate,rx-rate,uptime,bytes,last-ip"),
     Section("wireless_clients", "/interface/wireless/registration-table",
             "interface,mac-address,signal-strength,tx-rate,rx-rate,uptime,bytes,last-ip"),
+    # wifi rádia a CAPsMAN (bez .proplist – ploché klíče "configuration.ssid" apod.;
+    # tajemství odstraní _scrub)
+    Section("wifi", "/interface/wifi"),
+    Section("wireless", "/interface/wireless",
+            "name,mac-address,ssid,mode,band,frequency,channel-width,running,disabled,master-interface,"
+            "interface-type,comment"),
+    Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
+    Section("capsman_caps_legacy", "/caps-man/remote-cap"),
 ]
 
 # rozhraní, pro která má smysl ukládat čítače (dynamická PPP serverová rozhraní ne)
 _SKIP_TYPES = {"pppoe-in", "sstp-in", "l2tp-in", "ovpn-in", "pptp-in", "loopback"}
 
 # klíče, které nikdy nesmí do DB (pojistka, kdyby je RouterOS přidal do výpisu)
-_FORBIDDEN_KEYS = {"password", "passphrase", "secret", "private-key", "psk", "authentication-key"}
+_FORBIDDEN_KEYS = {"password", "passphrase", "secret", "private-key", "psk", "authentication-key",
+                   "pre-shared-key", "wps"}
 
 
 def _scrub(obj: Any) -> Any:

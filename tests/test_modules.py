@@ -306,3 +306,22 @@ def test_upgrade_and_firmware_commands():
         assert "device.command.upgrade" in acts and "device.command.firmware" in acts
     finally:
         drop_db(name)
+
+
+def test_site_wifi_endpoint():
+    from test_wifi import INVS
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        ap = _adopted(db, box, tid, sid, "AP1", "10.200.1.1", "ap-hala")
+        inv = modern()
+        inv.update(INVS["a1"])
+        inventory.store(db, tid, ap, inv, [])
+        c = _login(app)
+        w = c.get(f"/api/admin/tenants/{tid}/sites/{sid}/wifi").json()
+        assert w["summary"]["radios"] == 3 and w["summary"]["clients"] == 3
+        assert w["caps"][0]["identity"] == "cap-kancl"
+        # cizí tenant nevidí nic
+        other = services.create_tenant(db, settings, "Jina")
+        assert c.get(f"/api/admin/tenants/{other['id']}/sites/{sid}/wifi").json()["radios"] == []
+    finally:
+        drop_db(name)
