@@ -208,7 +208,7 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
-    from .. import inventory
+    from .. import alerts, inventory, notify
 
     last_reconcile = 0.0
     last_rollup = 0.0
@@ -220,7 +220,9 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                            ("verify", lambda: verify_provisioning(db, box)),
                            ("inventory", lambda: poll_inventory(db, box)),
                            ("backup", lambda: run_backups(db, box)),
-                           ("updates", lambda: check_updates(db, box))):
+                           ("updates", lambda: check_updates(db, box)),
+                           ("alerts", lambda: alerts.reconcile(db)),
+                           ("notify", lambda: notify.deliver(db, settings))):
             try:
                 step()
             except Exception:

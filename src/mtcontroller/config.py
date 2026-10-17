@@ -142,12 +142,48 @@ class TunnelConfig(BaseModel):
         return self
 
 
+class NotifyTarget(BaseModel):
+    name: str
+    # "nextcloud_talk" (bot Talk) nebo "json" (obecný webhook s HMAC podpisem)
+    kind: str = "json"
+    url: str
+    secret_file: Path
+    min_severity: str = "warning"
+    # prázdné = všichni tenanti; jinak seznam UUID tenantů
+    tenants: list[str] = Field(default_factory=list)
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in {"nextcloud_talk", "json"}:
+            raise ValueError("notify.kind: nextcloud_talk | json")
+        return v
+
+    @field_validator("min_severity")
+    @classmethod
+    def _sev(cls, v: str) -> str:
+        if v not in {"info", "warning", "critical"}:
+            raise ValueError("notify.min_severity: info | warning | critical")
+        return v
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        if not v.startswith("https://"):
+            raise ValueError("notify.url musí být https://")
+        return v
+
+    def secret(self) -> str:
+        return self.secret_file.read_text().strip()
+
+
 class Settings(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
+    notify: list[NotifyTarget] = Field(default_factory=list)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, dict[str, Any]]:

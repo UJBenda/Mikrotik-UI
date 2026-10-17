@@ -144,7 +144,7 @@ $("tenant-form").addEventListener("submit", async (ev) => {
 });
 
 async function loadTenant() {
-  await Promise.all([loadSites(), loadDevices(), loadAudit(), loadPlans()]);
+  await Promise.all([loadSites(), loadDevices(), loadAudit(), loadPlans(), loadAlerts()]);
   await loadSitePanel();
 }
 
@@ -291,6 +291,7 @@ async function loadSitePanel() {
   for (const s of sites) { const o = el("option", s.name); o.value = s.id; sel.appendChild(o); }
   if (prev && sites.some((s) => s.id === prev)) sel.value = prev;
   $("topo-wrap").hidden = true;
+  $("clients-wrap").hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
   const prim = $("ntp-primary");
@@ -420,6 +421,58 @@ function drawTopology(t) {
   }
 }
 
+const SEV_LABEL = { critical: "kritické", warning: "varování", info: "info" };
+
+async function loadAlerts() {
+  const list = await api("GET", `/tenants/${tenantId}/alerts`);
+  const tb = $("alerts");
+  tb.textContent = "";
+  const crit = list.filter((a) => a.severity === "critical").length;
+  $("alerts-count").textContent = list.length ? `${list.length}${crit ? ` (${crit} kritických)` : ""}` : "žádné";
+  for (const a of list) {
+    const tr = el("tr");
+    tr.append(el("td", SEV_LABEL[a.severity] || a.severity, "sev-" + (a.severity === "critical" ? "error" : a.severity)),
+              el("td", a.identity || a.serial), el("td", a.site || "–"), el("td", a.message), el("td", fmtTime(a.opened_at)));
+    const act = el("td");
+    if (a.acknowledged_at) act.appendChild(el("span", `potvrdil ${a.acknowledged_by || ""}`, "muted"));
+    else {
+      const b = el("button", "Potvrdit", "small secondary");
+      b.onclick = async () => { try { await api("POST", `/tenants/${tenantId}/alerts/${a.id}/ack`); loadAlerts(); } catch (e) { msg(e.message, true); } };
+      act.appendChild(b);
+    }
+    tr.appendChild(act);
+    tb.appendChild(tr);
+  }
+}
+$("alerts-refresh").addEventListener("click", () => loadAlerts());
+
+let clientsCache = [];
+
+$("clients-btn").addEventListener("click", async () => {
+  try {
+    clientsCache = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients`);
+    $("clients-wrap").hidden = false;
+    renderClients();
+  } catch (e) { msg(e.message, true); }
+});
+$("clients-filter").addEventListener("input", () => renderClients());
+
+function renderClients() {
+  const q = $("clients-filter").value.trim().toLowerCase();
+  const tb = $("clients");
+  tb.textContent = "";
+  const list = clientsCache.filter((c) => !q || [c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, c.wifi && c.wifi.ssid]
+    .some((v) => v && String(v).toLowerCase().includes(q)));
+  for (const c of list.slice(0, 1000)) {
+    const tr = el("tr");
+    const wifi = c.wifi ? `${c.wifi.ssid || ""} ${c.wifi.signal || ""} dBm` : "";
+    tr.append(el("td", c.hostname || ""), el("td", c.ip || ""), el("td", c.mac), el("td", c.device || "?"),
+              el("td", (c.port || "") + (c.uncertain ? " ?" : "")), el("td", c.vlan || ""), el("td", wifi));
+    tb.appendChild(tr);
+  }
+  if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr); }
+}
+
 // --- detail zařízení -----------------------------------------------------------------
 
 let detailId = null;
@@ -442,6 +495,8 @@ async function openDetail(id) {
   const w = $("d-warn"); w.textContent = "";
   for (const x of d.warnings) w.appendChild(el("p", (x.severity === "critical" ? "⚠ " : "ⓘ ") + x.text, "sev-" + (x.severity === "critical" ? "error" : "warning")));
   if (dev.inventory_error) w.appendChild(el("p", "Inventura: " + dev.inventory_error, "sev-warning"));
+  const da = $("d-alerts"); da.textContent = "";
+  for (const a of d.alerts || []) da.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : a.severity)));
   kv($("d-summary"), [
     ["Sériové číslo", dev.serial], ["RouterOS", dev.ros_version], ["Kanál / dostupná", sm.update_channel ? `${sm.update_channel} / ${sm.latest_version || "?"}` : null],
     ["RouterBOOT", sm.firmware ? `${sm.firmware}${sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware ? " → " + sm.firmware_upgrade : ""}` : null],
@@ -542,6 +597,6 @@ $("d-vlan-plan").addEventListener("click", async () => {
     $("d-vlan-preview").hidden = false;
   } catch (e) { msg(e.message, true); }
 });
-setInterval(() => { if (!$("app").hidden && tenantId) { loadDevices(); } }, 15000);
+setInterval(() => { if (!$("app").hidden && tenantId) { loadDevices(); loadAlerts(); } }, 15000);
 
 boot();

@@ -70,7 +70,13 @@
 
     <div class="card">
       <h2>Lokalita <select id="site-sel"></select>
-        <button id="topo-btn" type="button" class="small secondary">Topologie</button></h2>
+        <button id="topo-btn" type="button" class="small secondary">Topologie</button>
+        <button id="clients-btn" type="button" class="small secondary">Klienti</button></h2>
+      <div id="clients-wrap" hidden>
+        <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
+        <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th></tr></thead>
+        <tbody id="clients"></tbody></table>
+      </div>
       <div class="grid">
         <div>
           <h3>NTP politika</h3>
@@ -89,6 +95,13 @@
           <p class="muted">Plné uzly = spravovaná zařízení, prázdné = sousedé mimo správu.</p>
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Alerty <span id="alerts-count" class="badge"></span>
+        <button id="alerts-refresh" type="button" class="small secondary">Obnovit</button></h2>
+      <table><thead><tr><th>Závažnost</th><th>Zařízení</th><th>Lokalita</th><th>Zpráva</th><th>Od</th><th></th></tr></thead>
+      <tbody id="alerts"></tbody></table>
     </div>
 
     <div class="card">
@@ -118,6 +131,7 @@
       <h2><span id="d-title"></span> <button id="d-close" type="button" class="small secondary">Zpět</button>
         <button id="d-backup" type="button" class="small secondary">Zálohovat teď</button></h2>
       <div id="d-warn"></div>
+      <ul id="d-alerts"></ul>
       <div class="grid">
         <div><h3>Přehled</h3><table><tbody id="d-summary"></tbody></table></div>
         <div><h3>Moduly</h3><table><tbody id="d-modules"></tbody></table>

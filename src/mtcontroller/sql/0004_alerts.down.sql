@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS alert;
+DROP TYPE IF EXISTS alert_severity;

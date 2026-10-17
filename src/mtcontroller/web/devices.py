@@ -73,6 +73,9 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
                 """SELECT id, kind, status, attempts, created_at, finished_at FROM device_command
                    WHERE device_id = %(d)s ORDER BY id DESC LIMIT 20""", {"d": did})
             modes = plans.module_modes(tx, did)
+            dev_alerts = tx.fetchall(
+                """SELECT id, kind, subject, severity::text AS severity, message, opened_at, acknowledged_at
+                   FROM alert WHERE device_id = %(d)s AND resolved_at IS NULL ORDER BY opened_at DESC""", {"d": did})
         ifaces = [{
             "name": i.get("name"), "type": i.get("type"), "running": i.get("running") == "true",
             "disabled": i.get("disabled") == "true", "mac": i.get("mac-address"), "comment": i.get("comment"),
@@ -87,7 +90,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             "neighbors": inv.get("neighbors") or [],
             "vlan": analysis.analyze_vlan(inv).as_dict() if inv else None,
             "ntp": analysis.ntp_status(inv) if inv else None,
-            "backups": backups, "plans": pl, "commands": cmds,
+            "backups": backups, "plans": pl, "commands": cmds, "alerts": dev_alerts,
         }
 
     return json_response(await run_in_threadpool(q))
@@ -321,6 +324,61 @@ async def topology(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(READ)
+async def site_clients(request: Request, p: Principal, tid: str) -> Response:
+    from .. import clients
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            devs = tx.fetchall("""SELECT id, serial, identity FROM device
+                                  WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
+            invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
+        return clients.correlate(devs, invs)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def alert_list(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    open_only = request.query_params.get("all") != "1"
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return tx.fetchall(
+                f"""SELECT a.id, a.device_id, d.identity, d.serial, s.name AS site, a.kind, a.subject,
+                           a.severity::text AS severity, a.message, a.opened_at, a.last_seen_at, a.resolved_at,
+                           a.acknowledged_at, u.email AS acknowledged_by
+                    FROM alert a JOIN device d ON d.id = a.device_id LEFT JOIN site s ON s.id = d.site_id
+                    LEFT JOIN app_user u ON u.id = a.acknowledged_by
+                    {"WHERE a.resolved_at IS NULL" if open_only else ""}
+                    ORDER BY a.resolved_at IS NULL DESC,
+                             CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.opened_at DESC
+                    LIMIT 300""")
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def alert_ack(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    aid = _int(request.path_params["alert_id"], 0, 0, 2**62)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            n = tx.execute("""UPDATE alert SET acknowledged_by = %(u)s, acknowledged_at = now()
+                              WHERE id = %(i)s AND acknowledged_at IS NULL""", {"u": p.user_id, "i": aid})
+            if not n:
+                raise NotFound("alert neexistuje nebo je už potvrzený")
+            audit(tx, "alert.ack", tenant_id=tid, user_id=p.user_id, target=f"alert:{aid}", ip=client_ip(request))
+
+    await run_in_threadpool(q)
+    return json_response({"ok": True})
+
+
 def routes() -> list[Route]:
     d = T + "/devices/{device_id}"
     s = T + "/sites/{site_id}"
@@ -335,7 +393,10 @@ def routes() -> list[Route]:
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
+        Route(s + "/clients", site_clients, methods=["GET"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
+        Route(T + "/alerts", alert_list, methods=["GET"]),
+        Route(T + "/alerts/{alert_id}/ack", alert_ack, methods=["POST"]),
         Route(T + "/plans/{plan_id}/approve", plan_approve, methods=["POST"]),
         Route(T + "/plans/{plan_id}/discard", plan_discard, methods=["POST"]),
     ]

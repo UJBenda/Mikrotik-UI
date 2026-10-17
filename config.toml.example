@@ -51,3 +51,20 @@ api_fingerprint = "0000000000000000000000000000000000000000000000000000000000000
 # api_user = "mtc-controller"
 # api_password_file = "/etc/mtcontroller/vpn2.password"
 # api_fingerprint = "..."
+
+# Notifikace alertů (volitelné). Tajemství v samostatném souboru (0640 root:mtcontroller).
+# Nextcloud Talk bot: occ talk:bot:install "MikroTik" "<tajemství>" "https://mtc-admin.example.cz" ;
+# pak bota povol v konverzaci a url = .../ocs/v2.php/apps/spreed/api/v1/bot/<token konverzace>/message
+# [[notify]]
+# name = "talk"
+# kind = "nextcloud_talk"
+# url = "https://cloud.example.cz/ocs/v2.php/apps/spreed/api/v1/bot/abcd1234/message"
+# secret_file = "/etc/mtcontroller/talk.secret"
+# min_severity = "warning"
+#
+# [[notify]]
+# name = "webhook"
+# kind = "json"
+# url = "https://hooks.example.cz/mtc"
+# secret_file = "/etc/mtcontroller/webhook.secret"
+# min_severity = "critical"

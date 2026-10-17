@@ -11,6 +11,7 @@
   approve TENANT DEVICE SITE    schválí zařízení
   concentrator-script NAME      vypíše .rsc pro nastavení koncentrátoru
   concentrator-check            ověří REST spojení na všechny koncentrátory
+  notify-test NAME              pošle zkušební notifikaci na cíl z [[notify]]
 """
 
 from __future__ import annotations
@@ -179,6 +180,13 @@ def cmd_concentrator_check(a) -> int:
     return 0 if ok else 1
 
 
+def cmd_notify_test(a) -> int:
+    from .notify import test_message
+    test_message(get_settings(), a.name)
+    print("Zkušební notifikace odeslána.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="mtc-admin", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -196,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--role", default="unknown"); x.set_defaults(fn=cmd_approve)
     x = sub.add_parser("concentrator-script"); x.add_argument("name"); x.set_defaults(fn=cmd_concentrator_script)
     sub.add_parser("concentrator-check").set_defaults(fn=cmd_concentrator_check)
+    x = sub.add_parser("notify-test"); x.add_argument("name"); x.set_defaults(fn=cmd_notify_test)
     a = p.parse_args(argv)
     try:
         return a.fn(a)

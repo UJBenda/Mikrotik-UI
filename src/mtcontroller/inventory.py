@@ -53,6 +53,15 @@ SECTIONS: list[Section] = [
     Section("ntp_client", "/system/ntp/client"),
     Section("ntp_server", "/system/ntp/server"),
     Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled"),
+    # klienti
+    Section("dhcp_leases", "/ip/dhcp-server/lease",
+            "address,active-address,mac-address,active-mac-address,host-name,server,status,last-seen,dynamic"),
+    Section("arp", "/ip/arp", "address,mac-address,interface,dynamic,complete"),
+    Section("bridge_hosts", "/interface/bridge/host", "mac-address,on-interface,vid,bridge,local,external,dynamic"),
+    Section("wifi_clients", "/interface/wifi/registration-table",
+            "interface,mac-address,ssid,signal,tx-rate,rx-rate,uptime,bytes,last-ip"),
+    Section("wireless_clients", "/interface/wireless/registration-table",
+            "interface,mac-address,signal-strength,tx-rate,rx-rate,uptime,bytes,last-ip"),
 ]
 
 # rozhraní, pro která má smysl ukládat čítače (dynamická PPP serverová rozhraní ne)

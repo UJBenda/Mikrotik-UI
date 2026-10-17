@@ -221,6 +221,29 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 14) alerty: izolace tenantů, jeden otevřený alert na klíč
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO alert (tenant_id, device_id, kind, severity, message)
+SELECT tenant_id, id, 'offline', 'critical', 'x' FROM device WHERE serial = 'SER-B1';
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO alert (tenant_id, device_id, kind, severity, message)
+    SELECT tenant_id, id, 'offline', 'critical', 'y' FROM device WHERE serial = 'SER-B1';
+    RAISE EXCEPTION 'FAIL: dva otevřené alerty se stejným klíčem';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'OK 14a jeden otevřený alert na klíč';
+  END;
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM alert) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí alerty tenanta B'; END IF;
+  RAISE NOTICE 'OK 14b alerty izolované';
+END $$;
+COMMIT;
+
 -- 11) superadmin role musí být globální
 BEGIN;
 DO $$ BEGIN

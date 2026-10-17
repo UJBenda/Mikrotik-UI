@@ -221,3 +221,21 @@ def test_update_check_and_indicator():
         assert d["update_available"] and d["latest_version"] == "7.24.5" and d["update_channel"] == "stable"
     finally:
         drop_db(name)
+
+
+def test_site_clients_endpoint():
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        inventory.store(db, tid, gw, {
+            "interfaces": [{"name": "ether1", "type": "ether", "mac-address": "AA:00:00:00:00:01"}],
+            "bridge_hosts": [{"mac-address": "11:11:11:11:11:11", "on-interface": "ether3", "vid": "10", "local": "false"}],
+            "dhcp_leases": [{"mac-address": "11:11:11:11:11:11", "address": "10.0.10.5", "host-name": "pc-ucetni"}]}, [])
+        c = _login(app)
+        r = c.get(f"/api/admin/tenants/{tid}/sites/{sid}/clients")
+        assert r.status_code == 200
+        assert r.json() == [{"mac": "11:11:11:11:11:11", "ip": "10.0.10.5", "hostname": "pc-ucetni", "device_id": gw,
+                             "device": "gw", "port": "ether3", "vlan": "10", "wifi": None, "dhcp_status": None,
+                             "candidates": 1}]
+    finally:
+        drop_db(name)
