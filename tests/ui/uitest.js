@@ -109,6 +109,19 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
     if (byId["d-security"].children.length < 5) errors.push("bezpečnostní nálezy se nezobrazily");
+    // firewall: matice zón (WAN, LAN, GUEST + Router), klik na buňku, přepnutí na pravidla
+    const fwT = byId["d-fw"].children[0];
+    if (!fwT || fwT.className !== "fw-matrix" || fwT.children.length !== 4) errors.push("firewall: matice zón");
+    else {
+      const wanLan = fwT.children[1].children[2];
+      if (!/fw-block/.test(wanLan.className)) errors.push("firewall: WAN→LAN musí být blokováno");
+      await wanLan.fire("click");
+      if (byId["d-fw-detail"].hidden || !byId["d-fw-detail-h"].textContent.includes("dstnat")) errors.push("firewall: detail buňky");
+    }
+    await byId["d-fw-views"].children[1].fire("click");
+    if (byId["d-fw"].children[0].className !== "fw-rules" || byId["d-fw"].children[0].children.length !== 14)
+      errors.push("firewall: tabulka pravidel");
+    await byId["d-fw-views"].children[0].fire("click");
     const prow = byId["d-ports"].children[0];
     const pg = prow && prow.children[0];
     if (!pg || !/^port-group/.test(pg.className) || !pg.children.some((c) => /^port( |$)/.test(c.className)))

@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import analysis, backup, inventory, plans, ports, ros_versions
+from .. import analysis, backup, firewall, inventory, plans, ports, ros_versions
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
 from ..services import NotFound, ServiceError, audit
@@ -94,6 +94,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             "vlan": analysis.analyze_vlan(inv).as_dict() if inv else None,
             "ntp": analysis.ntp_status(inv) if inv else None,
             "security": inv.get("hardening") if isinstance(inv.get("hardening"), list) else None,
+            "firewall": firewall.analyze(inv) if inv else None,
             "backups": backups, "plans": pl, "commands": cmds, "alerts": dev_alerts,
         }
 

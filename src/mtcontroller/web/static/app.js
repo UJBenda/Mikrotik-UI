@@ -1472,6 +1472,7 @@ async function openDetail(id) {
     if (f.fix) { li.appendChild(document.createTextNode(" → ")); li.appendChild(el("code", f.fix)); }
     sec.appendChild(li);
   }
+  renderFirewall(d.firewall);
   const da = $("d-alerts"); da.textContent = "";
   for (const a of d.alerts || []) da.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : a.severity)));
   kv($("d-summary"), [
@@ -1601,3 +1602,103 @@ setInterval(() => {
 }, 15000);
 
 boot();
+
+// --- firewall jako zóny (UniFi zone-based firewall), zatím jen čtení ----------------------------
+
+const FW_VIEWS = [["matrix", "Matice zón"], ["filter", "Pravidla filtru"], ["nat", "NAT"]];
+let fwData = null;
+
+function fmtCount(n) {
+  if (n == null) return "";
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + " G";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + " M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + " k";
+  return String(n);
+}
+
+function renderFirewall(fw) {
+  fwData = fw;
+  const box = $("d-fw"); box.textContent = "";
+  const notes = $("d-fw-notes"); notes.textContent = "";
+  $("d-fw-detail").hidden = true;
+  if (!fw) {
+    $("d-fw-views").textContent = "";
+    box.appendChild(el("p", "Zatím bez inventury firewallu", "muted"));
+    return;
+  }
+  const view = FW_VIEWS.some(([v]) => v === prefs.fw) ? prefs.fw : "matrix";
+  segmented($("d-fw-views"), FW_VIEWS, view, (v) => { prefs.fw = v; savePrefs(); renderFirewall(fwData); });
+  for (const n of fw.notes || []) notes.appendChild(el("li", "⚠ " + n, "sev-warning"));
+  if (view === "matrix") fwMatrix(box, fw);
+  else fwRules(box, view === "nat" ? fw.nat : fw.rules, view === "nat");
+}
+
+function fwCell(c, src, dst, fw) {
+  const td = el("td", "", "fw-cell fw-" + c.decision);
+  td.appendChild(el("span", c.decision === "allow" ? "Povoleno" : "Blokováno", "fw-dec"));
+  if (c.exceptions.length) td.appendChild(el("small", ` +${c.exceptions.length} výj.`));
+  td.title = c.note || (c.rule != null ? `pravidlo #${c.rule}` : "");
+  td.addEventListener("click", () => fwShow(fw, src, dst, c));
+  return td;
+}
+
+function fwMatrix(box, fw) {
+  if (!fw.zones.length) { box.appendChild(el("p", "Žádné zóny (seznamy rozhraní)", "muted")); return; }
+  const t = el("table", "", "fw-matrix");
+  const head = el("tr"); head.appendChild(el("th", "z \\ do", "muted"));
+  for (const z of fw.zones) head.appendChild(el("th", z));
+  head.appendChild(el("th", "Router"));
+  t.appendChild(head);
+  for (const src of fw.zones) {
+    const tr = el("tr");
+    const th = el("th", src);
+    th.title = (fw.members[src] || []).join(", ") || "bez členů";
+    tr.appendChild(th);
+    for (const dst of fw.zones) tr.appendChild(fwCell(fw.matrix[src][dst], src, dst, fw));
+    tr.appendChild(fwCell(fw.router[src], src, null, fw));
+    t.appendChild(tr);
+  }
+  box.appendChild(t);
+  const rt = fw.return_traffic || {};
+  box.appendChild(el("p", `Návratový provoz (established/related): forward ${rt.forward ? "povolen ✓" : "chybí"}, ` +
+    `vstup do routeru ${rt.input ? "povolen ✓" : "chybí"}. Invalid: ${fw.drop_invalid && fw.drop_invalid.forward ? "zahazuje se ✓" : "nezahazuje se"}.`, "muted"));
+  box.appendChild(el("p", "Úpravy pravidel budou následovat s automatickým návratem (commit-confirm). Klikněte na buňku pro pravidla.", "muted"));
+}
+
+function fwShow(fw, src, dst, c) {
+  $("d-fw-detail").hidden = false;
+  $("d-fw-detail-h").textContent = `${src} → ${dst || "Router"}: ${c.decision === "allow" ? "povoleno" : "blokováno"}` +
+    (c.note ? ` (${c.note})` : "");
+  const ol = $("d-fw-detail-list"); ol.textContent = "";
+  const byIdx = {};
+  for (const r of fw.rules) byIdx[r.index] = r;
+  for (const i of c.exceptions) {
+    const r = byIdx[i];
+    if (r) ol.appendChild(el("li", `výjimka #${i}: ${r.action} – ${r.summary}${r.comment ? " (" + r.comment + ")" : ""}`));
+  }
+  const r = c.rule != null ? byIdx[c.rule] : null;
+  ol.appendChild(el("li", r ? `rozhoduje #${r.index}: ${r.action} – ${r.summary}${r.comment ? " (" + r.comment + ")" : ""}`
+    : "rozhoduje výchozí accept RouterOS (žádné pravidlo)", "fw-" + c.decision));
+}
+
+function fwRules(box, rows, nat) {
+  if (!rows || !rows.length) { box.appendChild(el("p", "Žádná pravidla", "muted")); return; }
+  const t = el("table", "", "fw-rules");
+  const head = el("tr");
+  for (const h of ["#", "Chain", "Akce", "Podmínky", "Paketů", "Komentář"]) head.appendChild(el("th", h));
+  t.appendChild(head);
+  for (const r of rows) {
+    const tr = el("tr", "", r.disabled ? "fw-disabled" : "");
+    tr.appendChild(el("td", String(r.index) + (r.dynamic ? " D" : "")));
+    tr.appendChild(el("td", r.chain || ""));
+    const act = String(r.action || "");
+    const cls = /^(drop|reject|tarpit)$/.test(act) ? "block" : /^(accept|fasttrack-connection)$/.test(act) ? "allow" : "other";
+    const td = el("td"); td.appendChild(el("span", act, "pill fw-" + cls)); tr.appendChild(td);
+    tr.appendChild(el("td", r.summary + (r.invalid ? " (neplatné)" : "")));
+    tr.appendChild(el("td", fmtCount(r.packets), "num"));
+    tr.appendChild(el("td", r.comment || "", "muted"));
+    t.appendChild(tr);
+  }
+  box.appendChild(t);
+  if (!nat) box.appendChild(el("p", "D = dynamické pravidlo (vytvořené RouterOS), přeškrtnuté = vypnuté.", "muted"));
+}

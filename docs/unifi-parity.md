@@ -117,8 +117,8 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 
 | UniFi | Co dělá | RouterOS / náš návrh | Stav |
 | --- | --- | --- | --- |
-| Zone-Based Firewall (9.0) | zóny (Internal, External, Gateway, VPN, Hotspot, DMZ), matice zón, politiky Allow/Block, „auto allow return traffic“ | zóna = `/interface list`; politika = pravidlo ve `forward` (mezi zónami) nebo `input` (zóna → Gateway) s `in-/out-interface-list`; návratový provoz = `established,related` na začátku; objekty = `address-list`; plán = `time=` | ⏳ modul firewall (nejdřív jen zobrazení matice ze stávajících pravidel) |
-| Master Policy Table (9.4) | firewall, NAT, routy, QoS na jedné stránce | jedna tabulka z `/ip firewall filter`, `nat`, `mangle`, `/ip route`, `/queue` | ⏳ (jen čtení snadné) |
+| Zone-Based Firewall (9.0) | zóny (Internal, External, Gateway, VPN, Hotspot, DMZ), matice zón, politiky Allow/Block, „auto allow return traffic“ | zóna = `/interface list`; politika = pravidlo ve `forward` (mezi zónami) nebo `input` (zóna → Gateway) s `in-/out-interface-list`; návratový provoz = `established,related` na začátku; objekty = `address-list`; plán = `time=` | ◐ matice zón, pravidla filtru a NAT jen pro čtení (`firewall.py`); úpravy s commit-confirm zbývají |
+| Master Policy Table (9.4) | firewall, NAT, routy, QoS na jedné stránce | jedna tabulka z `/ip firewall filter`, `nat`, `mangle`, `/ip route`, `/queue` | ◐ filtr + NAT v detailu zařízení (jen čtení) |
 | Object Oriented Networking (9.4) | pravidla pro skupiny klientů | address-listy plněné z DHCP (`address-lists=` na lease / síti) | ⏳ |
 | High Availability Readiness (10.6) | skóre: ISP, napájení, gateway jako SPOF | víc WAN (výchozí routy s `distance`/`check-gateway`) ✅ v Infrastruktuře; ⏳ skóre (2 WAN, 2 koncentrátory, VRRP, záložní napájení PSU z `/system health`) | 🟡 |
 

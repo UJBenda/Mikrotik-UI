@@ -248,3 +248,20 @@ label.check { display: inline-flex; gap: 6px; align-items: center; margin: 0; co
 .pe-field input[type=checkbox] { width: 18px; height: 18px; }
 .pe-tags { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; color: var(--text); font-size: 13px; }
 .pe-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+/* firewall – matice zón */
+.fw table { width: auto; }
+.fw-matrix th, .fw-matrix td { text-align: center; padding: 6px 10px; }
+.fw-cell { cursor: pointer; border-radius: 6px; }
+.fw-cell small { color: var(--muted); }
+.fw-allow .fw-dec, li.fw-allow { color: #1a8f4c; }
+.fw-block .fw-dec, li.fw-block { color: #d0342c; }
+td.fw-allow { background: rgba(26, 143, 76, .10); }
+td.fw-block { background: rgba(208, 52, 44, .10); }
+.fw-cell:hover { outline: 2px solid var(--accent); }
+.pill.fw-allow { background: rgba(26, 143, 76, .15); color: #1a8f4c; }
+.pill.fw-block { background: rgba(208, 52, 44, .15); color: #d0342c; }
+.pill.fw-other { background: var(--hover); color: var(--muted); }
+tr.fw-disabled td { opacity: .5; text-decoration: line-through; }
+.fw-rules td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.fw .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .85em; font-weight: 600; }

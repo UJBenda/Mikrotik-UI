@@ -88,8 +88,17 @@ SECTIONS: list[Section] = [
     Section("bw_server", "/tool/bandwidth-server", "enabled,authenticate"),
     Section("romon", "/tool/romon", "enabled"),
     Section("fw_filter", "/ip/firewall/filter",
-            "chain,action,disabled,dynamic,in-interface,in-interface-list,src-address,src-address-list,"
-            "connection-state,protocol,dst-port,comment"),
+            "chain,action,disabled,dynamic,in-interface,in-interface-list,out-interface,out-interface-list,"
+            "src-address,src-address-list,dst-address,dst-address-list,connection-state,connection-nat-state,"
+            "protocol,src-port,dst-port,port,jump-target,log,time,comment,bytes,packets,invalid,ipsec-policy,"
+            "connection-mark,packet-mark,routing-mark,src-mac-address,layer7-protocol,content,icmp-options,"
+            "tcp-flags,limit,connection-limit,dst-address-type,src-address-type,hotspot,in-bridge-port,out-bridge-port"),
+    Section("fw_nat", "/ip/firewall/nat",
+            "chain,action,disabled,dynamic,in-interface,in-interface-list,out-interface,out-interface-list,"
+            "src-address,src-address-list,dst-address,dst-address-list,protocol,dst-port,to-addresses,to-ports,"
+            "comment,bytes,packets,invalid"),
+    Section("if_lists", "/interface/list", "name,builtin,include,exclude,comment"),
+    Section("if_list_members", "/interface/list/member", "list,interface,disabled,dynamic"),
     # WAN: výchozí routy (jen 0.0.0.0/0) a DHCP klient – pro pohled Infrastruktura
     Section("routes_default", "/ip/route", "dst-address,gateway,immediate-gw,distance,active,disabled,comment,routing-table",
             (("dst-address", "0.0.0.0/0"),)),

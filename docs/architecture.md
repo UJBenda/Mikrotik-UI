@@ -396,7 +396,18 @@ a běží jako NTP server), ostatní zařízení berou čas z primárního (adre
 s prvním upstreamem jako zálohou, všude stejná časová zóna. U klientů se NTP server
 nemění. NTP je první zápisový modul – ověřujeme na něm celý mechanismus plánů.
 
-### Firewall (plán)
+### Firewall
+
+Zobrazení jako zone-based firewall UniFi (`firewall.py`, jen čtení): zóna = vlastní
+`/interface list`, buňka matice zdroj → cíl = chain `forward`, zdroj → Router =
+`input`. Rozhoduje první pravidlo platné pro celou dvojici zón bez dalších podmínek
+(port, protokol, adresa, čas, ipsec…); podmíněná pravidla před ním jsou výjimky,
+bez pravidla platí výchozí accept. `established,related` a `invalid` se ukazují zvlášť.
+Členem zóny může být rozhraní nebo jiný seznam (rozvine se o jednu úroveň);
+`!LAN` = všechny zóny kromě LAN. Pravidla s `in-interface` mimo zóny se ukazují
+jen v seznamu pravidel.
+
+Plán správy:
 
 1. address-listy spravované controllerem (např. management sítě),
 2. vlastní chainy `mtc-*` + jump pravidla, zbytek firewallu ruční,
