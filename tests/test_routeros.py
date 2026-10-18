@@ -96,6 +96,21 @@ def test_provision_restricts_to_controller():
     assert "ssh" not in routeros.MTC_GROUP_POLICY and "winbox" not in routeros.MTC_GROUP_POLICY
 
 
+def test_https_certs_signed_by_local_ca(tmp_path):
+    """RouterOS v7: tls-server certifikát bez CA nepodepíše („CA not found“) – podpis lokální CA."""
+    from helpers import make_settings
+    from mtcontroller.concentrator import concentrator_script
+
+    st = make_settings(tmp_path)
+    for s in (routeros.provision_body(P, OPTS), concentrator_script(st, st.tunnel.concentrators[0], "pw")):
+        assert 'key-usage=key-cert-sign,crl-sign' in s and 'ca="mtc-ca"' in s
+        assert s.index('/certificate sign "mtc-ca"') < s.index('ca="mtc-ca"')
+        assert "private-key=yes" in s  # nedokončená šablona po chybě se nahradí
+        assert _balanced(s)
+    one = routeros.signed_cert("x", "cn")
+    assert one.count("/certificate sign") == 2 and one.isascii()
+
+
 def test_lab_mode_disables_verification_everywhere():
     lab = FetchOpts("no")
     assert "verify-server-certificate=no" in routeros.provision_body(P, lab)

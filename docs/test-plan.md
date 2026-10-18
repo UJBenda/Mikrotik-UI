@@ -65,11 +65,16 @@ curl -sk https://mtc-checkin.lab/healthz      # {"status": "ok", ...}  (díky /e
 
 ## 2. Koncentrátor (MikroTik vpn1)
 
-V laboratoři self-signed certifikát pro SSTP (v produkci Let's Encrypt, viz sekce 9):
+V laboratoři certifikát pro SSTP z lokální CA (v produkci Let's Encrypt, viz sekce 9).
+RouterOS v7 certifikát s `key-usage=tls-server` sám sebou nepodepíše („failure: CA not
+found“), proto nejdřív CA. `common-name` musí být přesně `connect_host` z config.toml:
 
 ```
-/certificate add name=mtc-sstp common-name=vpn1.lab key-size=prime256v1 days-valid=825 key-usage=tls-server
-/certificate sign mtc-sstp
+/certificate add name=mtc-ca common-name=mtc-ca key-size=prime256v1 days-valid=3650 key-usage=key-cert-sign,crl-sign
+/certificate sign mtc-ca
+/certificate add name=mtc-sstp common-name=vpn1.lab subject-alt-name=DNS:vpn1.lab key-size=prime256v1 days-valid=825 key-usage=tls-server
+/certificate sign mtc-sstp ca=mtc-ca
+/certificate print where name~"mtc"        # oba s příznakem K (privátní klíč)
 ```
 
 Na controlleru vygeneruj konfigurační skript a vlož ho do terminálu koncentrátoru

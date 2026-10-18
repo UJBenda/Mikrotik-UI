@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 from . import ipam
 from .config import ConcentratorConfig, Settings
-from .routeros import q
+from .routeros import q, signed_cert
 from .tunnel.mikrotik import PPP_PROFILE
 
 
@@ -45,12 +45,7 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 /ppp profile set [find name="{PPP_PROFILE}"] local-address={q(local)} interface-list="TUNNELS" only-one=yes change-tcp-mss=yes use-encryption=required use-compression=no comment="mtc"
 
 # --- REST API pro controller (self-signed, controller ho pinuje otiskem) ---
-:if ([:len [/certificate find name="mtc-api"]] = 0) do={{
-  /certificate add name="mtc-api" common-name={q(c.name)} key-size=prime256v1 days-valid=3650 key-usage=tls-server
-  /certificate sign "mtc-api"
-  :delay 5s
-}}
-/ip service set www-ssl certificate="mtc-api" port={api_port} address=($ctrl . "/32") disabled=no
+{signed_cert("mtc-api", c.name)}/ip service set www-ssl certificate="mtc-api" port={api_port} address=($ctrl . "/32") disabled=no
 :if ([:len [/user group find name="mtc-controller"]] = 0) do={{
   :do {{ /user group add name="mtc-controller" policy=read,write,api,rest-api comment="mtc" }} on-error={{ /user group add name="mtc-controller" policy=read,write,api,web comment="mtc" }}
 }}

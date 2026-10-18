@@ -35,6 +35,33 @@ def q(value: str) -> str:
     return f'"{out}"'
 
 
+LOCAL_CA = "mtc-ca"
+
+
+def signed_cert(name: str, common_name: str) -> str:
+    """Skript: certifikát pro HTTPS podepsaný lokální CA na zařízení.
+
+    RouterOS v7 odmítne podepsat certifikát s key-usage=tls-server bez CA
+    („failure: CA not found“) – self-signed smí být jen certifikát s key-cert-sign.
+    Proto se nejdřív vytvoří lokální CA `mtc-ca` a jí se podepíše serverový
+    certifikát. Controller certifikát stejně pinuje otiskem. Nedokončené šablony
+    (bez privátního klíče, např. po neúspěšném podpisu) se nahradí."""
+    n, ca = q(name), q(LOCAL_CA)
+    return f""":if ([:len [/certificate find name={ca} private-key=yes]] = 0) do={{
+  /certificate remove [find name={ca}]
+  /certificate add name={ca} common-name={ca} key-size=prime256v1 days-valid=3650 key-usage=key-cert-sign,crl-sign
+  /certificate sign {ca}
+  :delay 5s
+}}
+:if ([:len [/certificate find name={n} private-key=yes]] = 0) do={{
+  /certificate remove [find name={n}]
+  /certificate add name={n} common-name={q(common_name)} key-size=prime256v1 days-valid=3650 key-usage=tls-server
+  /certificate sign {n} ca={ca}
+  :delay 5s
+}}
+"""
+
+
 def q_source(source: str) -> str:
     """Literál pro `source=` skriptu – víceřádkový text."""
     lines = source.strip("\n").split("\n")
@@ -181,12 +208,7 @@ def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
 /interface sstp-client remove [find name="{SSTP_IFACE}"]
 /interface sstp-client add name="{SSTP_IFACE}" connect-to={q(p.connect_host)} port=443 user={q(p.sstp_user)} password={q(p.sstp_password)} verify-server-certificate={opts.verify_sstp} add-sni=yes add-default-route=no dial-on-demand=no profile=default-encryption authentication=mschap2 comment="mtc" disabled=no
 /ip route remove [find comment="mtc"]
-:if ([:len [/certificate find name="{REST_CERT}"]] = 0) do={{
-  /certificate add name="{REST_CERT}" common-name={q(p.sstp_user)} key-size=prime256v1 days-valid=3650 key-usage=tls-server
-  /certificate sign "{REST_CERT}"
-  :delay 5s
-}}
-:local wasOff [/ip service get www-ssl disabled]
+{signed_cert(REST_CERT, p.sstp_user)}:local wasOff [/ip service get www-ssl disabled]
 /ip service set www-ssl certificate="{REST_CERT}" disabled=no
 # www-ssl dosud vypnute = nikdo ho nepouzival: povolit jen ze spravy (neotevrit WebFig do sveta)
 :if ($wasOff) do={{ /ip service set www-ssl address={q(ctrl + "/32")} }}
