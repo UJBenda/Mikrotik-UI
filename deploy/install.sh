@@ -37,7 +37,7 @@ say "Balíčky (apt)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q python3 python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
-  python3-cryptography postgresql nginx openssl ca-certificates
+  python3-cryptography postgresql nginx openssl ca-certificates ieee-data
 [ -n "$CERTBOT" ] && apt-get install -y -q certbot python3-certbot-nginx
 python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python >= 3.11"'
 

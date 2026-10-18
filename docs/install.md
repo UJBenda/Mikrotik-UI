@@ -20,7 +20,7 @@ aplikují se nové migrace, služby se restartují).
 
 | Krok | Výsledek |
 | --- | --- |
-| Balíčky | `python3-starlette`, `python3-uvicorn`, `python3-psycopg`, `python3-pydantic`, `python3-cryptography`, `postgresql`, `nginx` |
+| Balíčky | `python3-starlette`, `python3-uvicorn`, `python3-psycopg`, `python3-pydantic`, `python3-cryptography`, `postgresql`, `nginx`, `ieee-data` (výrobci podle MAC) |
 | Uživatel | systémový `mtcontroller`, bez shellu |
 | Aplikace | `/opt/mtcontroller/app` (root-owned, jen ke čtení), wrapper `/usr/local/sbin/mtc-admin` |
 | Konfigurace | `/etc/mtcontroller/config.toml`, `master.key`, `vpn1.password`, `vpn2.password` (0640 root:mtcontroller) |

@@ -337,6 +337,12 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
    - Připoj na access port druhý MikroTik s DHCP serverem: klienti od něj adresu nedostanou a
      `/ip dhcp-server alert print` na routeru ukáže `unknown-server` → v UI kritický alert.
    - `/interface bridge port print` – porty mají dál příznak H (HW offload)?
+10. **DHCP rezervace** (Sítě a DHCP → klik na počet leases): povol modul DHCP leases na routeru,
+    u dynamického klienta „Vytvořit rezervaci“ s jinou IP a DHCP option (např. 42 NTP).
+    Pak `/ip dhcp-server lease print detail where mac-address=…` – statický lease s novou IP,
+    `dhcp-option` a komentářem; `/ip dhcp-server option print` – nová option s `comment=mtc`.
+    Klient po `ipconfig /release` + `/renew` dostane novou IP. Pošli výpis, kdyby `make-static`
+    ze skriptu hlásil chybu.
 
 ## 10. Řešení problémů
 

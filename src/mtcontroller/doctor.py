@@ -219,6 +219,14 @@ def check_files(s: Settings) -> list[Check]:
     return [Check(WARN, "config.toml", problem)] if problem else []
 
 
+def check_oui() -> list[Check]:
+    from . import oui
+
+    if oui.available():
+        return [Check(OK, "výrobci MAC", "registr IEEE (ieee-data) načten")]
+    return [Check(WARN, "výrobci MAC", "chybí /usr/share/ieee-data/oui.csv – apt install ieee-data")]
+
+
 def check_worker(s: Settings) -> list[Check]:
     from . import heartbeat
 
@@ -237,7 +245,7 @@ def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     checks: list[Check] = []
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
                lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s), lambda: check_worker(s),
-               lambda: check_concentrators(s, providers), lambda: check_notify(s)):
+               check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s)):
         try:
             checks.extend(fn())
         except Exception as e:  # noqa: BLE001 – jedna rozbitá kontrola nesmí shodit ostatní

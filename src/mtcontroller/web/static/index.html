@@ -114,6 +114,22 @@
         <ul id="net-warn"></ul>
         <table class="nets"><thead><tr><th>Název</th><th>VLAN ID</th><th>Router</th><th>Podsíť</th><th>DHCP</th><th>IP leases</th><th>Volné</th><th>VLAN na zařízeních</th></tr></thead>
         <tbody id="net-rows"></tbody></table>
+        <div id="lease-wrap" class="lease-wrap" hidden>
+          <div class="lease-head"><h4 id="lease-title"></h4>
+            <button id="lease-close" type="button" class="small secondary">Zavřít</button></div>
+          <div id="lease-sum" class="lease-sum"></div>
+          <div id="lease-banner"></div>
+          <div id="lease-map" class="ipmap"></div>
+          <div id="lease-map-legend" class="ports-legend"></div>
+          <div class="traffic-bar">
+            <input id="lease-q" placeholder="Hledat IP, MAC, jméno, výrobce, poznámku…" size="34">
+            <div id="lease-filter"></div>
+            <button id="lease-new" type="button" class="small">+ Nová rezervace</button>
+            <button id="lease-csv" type="button" class="small secondary">Export CSV</button>
+          </div>
+          <table class="ptable leases"><thead><tr><th>IP</th><th>MAC</th><th>Výrobce</th><th>Hostname</th><th>Typ</th><th>Kde</th><th>Poznámka</th><th>DHCP options</th><th></th></tr></thead>
+          <tbody id="lease-rows"></tbody></table>
+        </div>
         <h3>Nastavení bridgů</h3>
         <table><thead><tr><th>Zařízení</th><th>Bridge</th><th>Porty</th><th>STP</th><th>VLAN filtering</th><th>IGMP snooping</th><th>DHCP snooping</th><th>Trusted porty</th></tr></thead>
         <tbody id="net-bridges"></tbody></table>

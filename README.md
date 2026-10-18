@@ -34,6 +34,7 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP, historie 90 dní, hledání napříč lokalitami
 - [x] Bezpečnostní audit konfigurace zařízení (hardening podle doporučení MikroTiku, kritické nálezy → alert)
 - [x] Sítě lokality (VLAN, podsítě, DHCP server/relay, leases) a nastavení bridgů
+- [x] DHCP leases a statické IP: rezervace, DHCP options per klient, výrobce podle MAC, poznámky, mapa adres, konflikty
 - [x] Ochrana proti cizím DHCP: DHCP snooping s trusted porty podle cesty k DHCP serveru, DHCP alert
 - [x] Plán kanálů Wi-Fi lokality (obdoba Channel AI, bez RF skenu) se skutečným kanálem rádií
 - [x] Loop protect: smyčky na portech (alert, skóre, editor portu)
@@ -74,7 +75,7 @@ tests/             pytest (i end-to-end proti Postgresu) + tests/db (kontroly sc
 
 ```sh
 apt install python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
-            python3-cryptography python3-pytest postgresql
+            python3-cryptography python3-pytest postgresql ieee-data
 # testy s DB potřebují trust autentizaci na unix socketu (jen vývojový stroj!)
 sudo -u postgres tests/db/run.sh   # kontroly schématu (RLS, audit, tokeny)
 python3 -m pytest                  # unit + end-to-end testy (bez DB se přeskočí)

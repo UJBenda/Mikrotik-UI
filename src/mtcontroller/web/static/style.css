@@ -334,3 +334,34 @@ td.dg-warn { color: var(--warn); font-weight: 600; } td.dg-ok { color: var(--ok)
 td.dg-muted { color: var(--muted); }
 #dg-manual { margin: 6px 0 10px; }
 #dg-generate { margin-top: 10px; }
+/* leases a statické IP */
+button.linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline dotted; }
+button.linkbtn:hover { filter: none; text-decoration: underline; }
+.lease-wrap { margin: 12px 0 18px; border: 1px solid var(--accent); border-radius: 10px; padding: 12px 14px; background: var(--card); }
+.lease-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lease-head h4 { margin: 0; }
+.lease-sum { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.sumchip { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); }
+.sumchip.static { border-color: #8b5cf6; color: #7c4ddb; } .sumchip.dynamic { border-color: var(--port-gbe); color: var(--ok); }
+.sumchip.manual { border-color: #e59a2c; color: #b86e00; } .sumchip.conflict { border-color: var(--bad); color: var(--bad); font-weight: 600; }
+.sumchip.muted { color: var(--muted); }
+.ipmap { display: grid; grid-template-columns: repeat(auto-fill, 15px); gap: 3px; margin: 10px 0 4px; max-width: 100%; }
+.ipc { width: 15px; height: 15px; padding: 0; border: 0; border-radius: 3px; background: var(--port-down); cursor: pointer; }
+.ipc:hover { outline: 2px solid var(--accent); filter: none; }
+.ipc.gateway { background: var(--accent); } .ipc.static { background: #8b5cf6; } .ipc.dynamic { background: var(--port-gbe); }
+.ipc.manual { background: #f0a43a; } .ipc.conflict { background: var(--bad); }
+.ipc.pool { background: repeating-linear-gradient(45deg, var(--accent-weak), var(--accent-weak) 2px, var(--port-down) 2px, var(--port-down) 4px); }
+.ipc.free { background: var(--port-down); opacity: .55; }
+.ports-legend .sw.ipc { width: 11px; height: 11px; cursor: default; }
+table.leases td { vertical-align: top; }
+table.leases td.note { white-space: pre-wrap; max-width: 260px; }
+.kchip { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; margin-right: 4px; border: 1px solid var(--line); }
+.kchip.static { color: #7c4ddb; border-color: #8b5cf6; } .kchip.dynamic { color: var(--ok); border-color: var(--port-gbe); }
+.kchip.manual { color: #b86e00; border-color: #e59a2c; } .kchip.conflict { color: var(--bad); border-color: var(--bad); }
+tr.lease-warn td { padding-top: 0; font-size: 12px; border-bottom: 1px solid var(--line); }
+tr.lease.haswarn td { border-bottom: 0; }
+tr.lease-edit-row > td { background: var(--bg); padding: 12px; }
+.pe-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.newopt select, .newopt input { margin-right: 4px; }
+div.small, .muted.small { font-size: 12px; }
+.ipbox { display: flex; gap: 6px; } .ipbox input { min-width: 0; flex: 1; } .ipbox button { white-space: nowrap; }

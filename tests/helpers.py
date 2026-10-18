@@ -183,6 +183,9 @@ class AsgiClient:
     def patch(self, path, **kw):
         return self.request("PATCH", path, **kw)
 
+    def put(self, path, **kw):
+        return self.request("PUT", path, **kw)
+
 
 def uid() -> str:
     return str(uuid.uuid4())

@@ -55,7 +55,8 @@ SECTIONS: list[Section] = [
             "interface,address,mac-address,identity,platform,board,version,interface-name"),
     Section("ntp_client", "/system/ntp/client"),
     Section("ntp_server", "/system/ntp/server"),
-    Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled,address-pool"),
+    Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled,address-pool,lease-time"),
+    Section("dhcp_options", "/ip/dhcp-server/option", "name,code,value,comment"),
     Section("ip_pools", "/ip/pool", "name,ranges,next-pool"),
     Section("dhcp_relays", "/ip/dhcp-relay", "name,interface,dhcp-server,local-address,disabled"),
     # DHCP alert = detekce cizích DHCP serverů (unknown-server)
@@ -63,7 +64,8 @@ SECTIONS: list[Section] = [
             "interface,valid-server,unknown-server,alert-timeout,disabled,comment"),
     # klienti
     Section("dhcp_leases", "/ip/dhcp-server/lease",
-            "address,active-address,mac-address,active-mac-address,host-name,server,status,last-seen,dynamic"),
+            "address,active-address,mac-address,active-mac-address,host-name,server,status,last-seen,dynamic,"
+            "comment,dhcp-option,address-lists,block-access,expires-after,disabled"),
     Section("arp", "/ip/arp", "address,mac-address,interface,dynamic,complete"),
     Section("bridge_hosts", "/interface/bridge/host", "mac-address,on-interface,vid,bridge,local,external,dynamic"),
     Section("wifi_clients", "/interface/wifi/registration-table",

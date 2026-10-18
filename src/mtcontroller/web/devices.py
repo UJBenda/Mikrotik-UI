@@ -7,8 +7,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import (analysis, backup, firewall, inventory, plans, portcfg, porthistory, ports, portview, profiles,
-               ros_versions)
+from .. import (analysis, backup, firewall, inventory, oui, plans, portcfg, porthistory, ports, portview,
+               profiles, ros_versions)
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
 from ..services import NotFound, ServiceError, audit
@@ -207,6 +207,70 @@ async def port_history(request: Request, p: Principal, tid: str) -> Response:
                     "events": porthistory.history(tx, did, port[:100] if port else None, days=days, limit=500)}
 
     return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def dhcp_server_view(request: Request, p: Principal, tid: str) -> Response:
+    """Leases a statické IP jednoho DHCP serveru: výrobce, poloha, poznámky, mapa adres, konflikty."""
+    from .. import leases
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    server = str(request.path_params["server"])[:64]
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            d = tx.fetchone("SELECT id, site_id, identity, serial FROM device WHERE id = %(d)s", {"d": did})
+            if not d:
+                raise NotFound("zařízení neexistuje")
+            inv = inventory.load(tx, did)
+            clients = {r["mac"]: r for r in tx.fetchall(
+                """SELECT mac, hostname, device, port, ssid, signal, last_seen FROM client
+                   WHERE site_id = %(s)s""", {"s": str(d["site_id"])})} if d["site_id"] else {}
+            notes = {r["mac"]: r["note"] for r in tx.fetchall("SELECT mac, note FROM client_note")}
+            pending = tx.fetchall(
+                """SELECT id, status::text AS status, summary, changes->>'mac' AS mac, created_at FROM config_plan
+                   WHERE device_id = %(d)s AND module = 'dhcp' AND changes->>'server' = %(s)s
+                     AND status IN ('draft', 'queued', 'confirming') ORDER BY id DESC""", {"d": did, "s": server})
+            mode = plans.module_modes(tx, did).get("dhcp")
+        try:
+            view = leases.server_view(inv, server, clients, notes)
+        except leases.LeaseError as e:
+            raise NotFound(str(e)) from e
+        return {**view, "device_id": str(did), "device": d["identity"] or d["serial"], "module_mode": mode,
+                "pending": pending, "oui": oui.available()}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def dhcp_lease_plan(request: Request, p: Principal, tid: str) -> Response:
+    """Plán změny leasu; s "apply": true ho rovnou schválí (správce tenanta) – aplikace s návratem."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    server = str(request.path_params["server"])[:64]
+    data = await _json(request)
+    desired = data.get("desired") if isinstance(data.get("desired"), dict) else {}
+    ip = client_ip(request)
+
+    def run():
+        res = plans.create_lease_plan(st.db, tid, did, server, str(data.get("mac") or ""), desired, p.user_id, ip)
+        if data.get("apply"):
+            if not p.can(tid, MANAGE):
+                raise ServiceError("plán je uložený – schválit ho musí správce tenanta")
+            res["command_id"] = plans.approve_plan(st.db, st.settings, tid, res["plan_id"], p.user_id, ip)
+        return res
+
+    return json_response(await run_in_threadpool(run), 201)
+
+
+@endpoint(OPERATE)
+async def client_note(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    data = await _json(request)
+    res = await run_in_threadpool(plans.set_client_note, st.db, tid, request.path_params["mac"],
+                                  str(data.get("note") or ""), p.user_id, client_ip(request))
+    return json_response(res)
 
 
 @endpoint(READ)
@@ -588,8 +652,11 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
             invs = {str(d["id"]): inventory.load(tx, d["id"], clients.SECTIONS) for d in devs}
             seen = {r["mac"]: r for r in tx.fetchall(
                 "SELECT mac, first_seen, last_seen FROM client WHERE site_id = %(s)s", {"s": sid})}
+            notes = {r["mac"]: r["note"] for r in tx.fetchall("SELECT mac, note FROM client_note")}
         out = clients.correlate(devs, invs)
         for c in out:
+            c["vendor"] = oui.vendor(c["mac"])
+            c["note"] = notes.get(c["mac"], "")
             h = seen.get(c["mac"])
             c["first_seen"] = h["first_seen"] if h else None
             c["last_seen"] = h["last_seen"] if h else None
@@ -759,6 +826,8 @@ def routes() -> list[Route]:
         Route(d + "/port-history", port_history, methods=["GET"]),
         Route(d + "/ports/{port}", port_get, methods=["GET"]),
         Route(d + "/ports/{port}/plan", port_plan, methods=["POST"]),
+        Route(d + "/dhcp/{server}", dhcp_server_view, methods=["GET"]),
+        Route(d + "/dhcp/{server}/lease", dhcp_lease_plan, methods=["POST"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/policy/{module}", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/networks", site_networks, methods=["GET"]),
@@ -771,6 +840,7 @@ def routes() -> list[Route]:
         Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/port-profiles", port_profiles, methods=["GET", "POST"]),
+        Route(T + "/client-notes/{mac}", client_note, methods=["PUT"]),
         Route(T + "/port-profiles/{profile_id}", port_profile_delete, methods=["DELETE"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),

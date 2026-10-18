@@ -364,6 +364,28 @@ dál), takže automatický návrat chybu v DHCP nezachytí – proto jen při zn
 cestě a s ověřením na labu (test-plan 9b, bod 9). HW podpora snoopingu je
 dokumentovaná pro CRS3xx/CRS5xx/CCR2116/CCR2216, u ostatních plán varuje.
 
+## DHCP leases a statické IP
+
+Statické IP = rezervace v DHCP serveru MikroTiku (statický lease). Přehled serveru
+(`leases.py`, Lokalita → Sítě a DHCP → klik na počet leases) spojuje:
+
+- leases daného serveru (rezervace, dynamické) s popisem, DHCP options,
+  address-listy a blokováním,
+- zařízení s **ručně nastavenou IP** – jsou v ARP v podsíti, ale ne v leases,
+- výrobce podle MAC z registru IEEE (Debian balík `ieee-data`, `oui.py`;
+  náhodné „soukromé“ MAC se poznají podle lokálně administrovaného bitu),
+- polohu z korelace klientů (switch + port, AP + SSID + signál),
+- **poznámku** z controlleru (`client_note`, per tenant a MAC – na zařízení se nepíše),
+- mapu adres podsítě (do /22), konflikty (stejná IP na více MAC) a ruční IP v poolu,
+- návrh volné adresy mimo pool.
+
+Změny jsou plán modulu `dhcp` (observe/manage) s návratovým skriptem a
+commit-confirm: dynamický lease → `make-static` + `set`, nová rezervace → `add`,
+zrušení → `remove` (návrat ho vrátí se všemi hodnotami), nová DHCP option
+`/ip dhcp-server option add … comment="mtc"` (hodnoty: IP `'a.b.c.d'`, text `s'…'`, hex `0x…`).
+Kontroly: IP v podsíti, ne brána/síť/broadcast, nepoužitá jiným leasem ani v ARP.
+Otisk plánu počítá jen statické leases a options (dynamické se mění pořád).
+
 ## Postupná aktualizace lokality
 
 `upgrades.py`, tabulka `upgrade_job` (migrace 0007, RLS, kontrola 16). Kroky v jsonb,

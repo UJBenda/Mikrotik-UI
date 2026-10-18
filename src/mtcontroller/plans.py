@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import dhcpguard, inventory, ntp, portcfg
+from . import dhcpguard, inventory, leases, ntp, portcfg
 from .config import Settings
 from .db import Database, Tx, tenant_scope
 from .services import NotFound, ServiceError, _s, audit, enqueue
 
-MODULES = {"ntp", "ports", "vlan", "firewall", "capsman", "dhcp_snooping"}
-MANAGEABLE = {"ntp", "ports", "dhcp_snooping"}
+MODULES = {"ntp", "ports", "vlan", "firewall", "capsman", "dhcp_snooping", "dhcp"}
+MANAGEABLE = {"ntp", "ports", "dhcp_snooping", "dhcp"}
 CONFIRM_MINUTES = 5  # výchozí okno pro potvrzení změny s automatickým návratem
 
 
@@ -28,6 +28,8 @@ def basis_for(module: str, inv: dict) -> str:
         return portcfg.config_basis(inv)
     if module == "dhcp_snooping":
         return dhcpguard.basis(inv)
+    if module == "dhcp":
+        return leases.config_basis(inv)
     return inventory.basis_sha(inv, ntp.SECTIONS if module == "ntp" else [])
 
 
@@ -299,3 +301,59 @@ def rolled_back(tx: Tx, command_id: int) -> dict | None:
            WHERE command_id = %(c)s AND status IN ('confirming', 'queued', 'applied', 'failed')
            RETURNING id, device_id, summary""",
         {"c": command_id})
+
+
+def create_lease_plan(db: Database, tenant_id: Any, device_id: Any, server: str, mac: str, desired: dict,
+                      user_id: Any = None, ip: str | None = None) -> dict:
+    """Plán změny DHCP leasu (rezervace/statická IP, options, …) s návratovým skriptem."""
+    with tenant_scope(db, tenant_id) as tx:
+        if not tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND state IN ('adopted', 'offline')",
+                           {"d": str(device_id)}):
+            raise NotFound("zařízení neexistuje nebo není adoptované")
+        inv = inventory.load(tx, device_id)
+        if not inv:
+            raise ServiceError("inventura zařízení zatím neproběhla")
+        try:
+            p = leases.plan(inv, server, mac, desired)
+        except ValueError as e:
+            raise ServiceError(str(e)) from e
+        if not p["changes"]:
+            raise ServiceError("žádná změna oproti aktuálnímu stavu")
+        m = leases.norm_mac(mac)
+        tx.execute("""UPDATE config_plan SET status = 'superseded' WHERE device_id = %(d)s AND module = 'dhcp'
+                      AND status = 'draft' AND changes->>'mac' = %(m)s AND changes->>'server' = %(s)s""",
+                   {"d": str(device_id), "m": m, "s": server})
+        row = tx.fetchone(
+            """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, revert_script,
+                                        confirm_minutes, basis_sha, created_by)
+               VALUES (%(t)s, %(d)s, 'dhcp', %(sum)s, %(chg)s, %(sc)s, %(rv)s, %(cm)s, %(b)s, %(u)s) RETURNING id""",
+            {"t": str(tenant_id), "d": str(device_id), "sum": p["summary"],
+             "chg": {"server": server, "mac": m, "changes": p["changes"], "warnings": p["warnings"]},
+             "sc": p["apply"], "rv": p["revert"], "cm": CONFIRM_MINUTES, "b": leases.config_basis(inv),
+             "u": _s(user_id)})
+        audit(tx, "plan.create", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+              after={"plan_id": row["id"], "module": "dhcp", "server": server, "mac": m, "summary": p["summary"]}, ip=ip)
+    return {"plan_id": row["id"], "summary": p["summary"], "changes": p["changes"], "warnings": p["warnings"],
+            "script": p["apply"]}
+
+
+def set_client_note(db: Database, tenant_id: Any, mac: str, note: str, user_id: Any = None,
+                    ip: str | None = None) -> dict:
+    m = leases.norm_mac(mac)
+    if not m:
+        raise ServiceError("neplatná MAC adresa")
+    note = str(note or "").strip()
+    if len(note) > 500 or any(ord(ch) < 32 and ch not in "\n\t" for ch in note):
+        raise ServiceError("poznámka: max. 500 znaků bez řídicích znaků")
+    with tenant_scope(db, tenant_id) as tx:
+        old = tx.fetchone("SELECT note FROM client_note WHERE mac = %(m)s", {"m": m})
+        if note:
+            tx.execute(
+                """INSERT INTO client_note (tenant_id, mac, note, updated_by) VALUES (%(t)s, %(m)s, %(n)s, %(u)s)
+                   ON CONFLICT (tenant_id, mac) DO UPDATE SET note = EXCLUDED.note, updated_by = EXCLUDED.updated_by,
+                       updated_at = now()""", {"t": str(tenant_id), "m": m, "n": note, "u": _s(user_id)})
+        else:
+            tx.execute("DELETE FROM client_note WHERE mac = %(m)s", {"m": m})
+        audit(tx, "client.note", tenant_id=tenant_id, user_id=user_id, target=f"mac:{m}",
+              before={"note": old["note"]} if old else None, after={"note": note}, ip=ip)
+    return {"mac": m, "note": note}

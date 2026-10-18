@@ -367,5 +367,30 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20) poznámky ke klientům izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO client_note (tenant_id, mac, note) VALUES ('00000000-0000-0000-0000-0000000000b1', 'AA:BB:CC:00:00:01', 'B');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM client_note) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí poznámky tenanta B'; END IF;
+  UPDATE client_note SET note = 'x';
+  BEGIN
+    INSERT INTO client_note (tenant_id, mac, note) VALUES ('00000000-0000-0000-0000-0000000000b1', 'AA:BB:CC:00:00:02', 'A do B');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal poznámku tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RAISE NOTICE 'OK 20 poznámky ke klientům izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT note FROM client_note WHERE mac = 'AA:BB:CC:00:00:01') <> 'B' THEN RAISE EXCEPTION 'FAIL: tenant A změnil poznámku B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

@@ -20,6 +20,7 @@ class El {
   appendChild(c) { this.children.push(c); return c; }
   insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); return c; }
   append(...cs) { for (const c of cs) this.children.push(typeof c === "string" ? c : c); }
+  prepend(...cs) { this.children.unshift(...cs); }
   remove() {}
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); }
@@ -102,6 +103,37 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["dg-manual"].fire("submit");
     if (!requests.slice(before).some((r) => r.startsWith("POST") && r.endsWith("/policy/dhcp_snooping"))) errors.push("DHCP: uložení ručního zdroje");
     await byId["dg-generate"].fire("click");
+    // leases: klik na počet → přehled, mapa, filtr, editace
+    const leaseBtn = byId["net-rows"].children[0].children[5].children[0];
+    if (!leaseBtn || leaseBtn.className !== "linkbtn") errors.push("sítě: leases nejsou klikací");
+    else {
+      await leaseBtn.fire("click");
+      if (byId["lease-wrap"].hidden) errors.push("leases: panel");
+      const lr = byId["lease-rows"].children.filter((r) => /^lease /.test(r.className));
+      if (lr.length !== 6) errors.push("leases: řádky " + lr.length);
+      if (!byId["lease-rows"].textContent.includes("Synology Incorporated") || !byId["lease-rows"].textContent.includes("zálohy"))
+        errors.push("leases: výrobce/poznámka");
+      if (byId["lease-map"].children.length !== 254) errors.push("leases: mapa " + byId["lease-map"].children.length);
+      if (!byId["lease-sum"].textContent.includes("1 konflikt")) errors.push("leases: souhrn " + byId["lease-sum"].textContent);
+      await byId["lease-filter"].children[3].fire("click");
+      if (byId["lease-rows"].children.filter((r) => /^lease /.test(r.className)).length !== 3) errors.push("leases: filtr ruční IP");
+      await byId["lease-filter"].children[0].fire("click");
+      // úprava dynamického klienta → rezervace
+      const dyn = byId["lease-rows"].children.find((r) => r.className.startsWith("lease dynamic"));
+      await dyn.children[8].children[0].fire("click");
+      const ed = byId["lease-rows"].children.find((r) => r.className === "lease-edit-row");
+      if (!ed || !ed.textContent.includes("Vytvořit rezervaci a použít") || !ed.textContent.includes("Uložit jen poznámku"))
+        errors.push("leases: editor " + (ed ? ed.textContent.slice(0, 120) : "chybí"));
+      else {
+        const n0 = requests.length;
+        const findB = (n, t) => n.tagName === "BUTTON" && n.textContent === t ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? findB(x, t) : null), null);
+        await findB(ed, "Vytvořit rezervaci a použít").fire("click");
+        if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/dhcp/dhcp10/lease"))) errors.push("leases: odeslání plánu");
+      }
+      // klik na volnou adresu v mapě = nová rezervace s předvyplněnou IP
+      await byId["lease-map"].children[200].fire("click");
+      if (!byId["lease-rows"].children[0] || byId["lease-rows"].children[0].className !== "lease-edit-row") errors.push("leases: nová rezervace z mapy");
+    }
     if (!requests.some((r) => r.startsWith("POST") && r.endsWith("/plans/dhcp_snooping"))) errors.push("DHCP: generování plánů");
     await byId["upg-btn"].fire("click");
     await byId["infra-btn"].fire("click");

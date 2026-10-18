@@ -99,3 +99,14 @@ def test_routes_check(tmp_path):
     one = tmp_path / "one"
     one.mkdir()
     assert doctor.check_routes(make_settings(one)) == []  # jeden koncentrátor: nic k hlášení
+
+
+def test_oui_check(tmp_path):
+    from pathlib import Path
+
+    from mtcontroller import oui
+
+    oui.configure(tmp_path)
+    assert doctor.check_oui()[0].status == doctor.WARN
+    oui.configure(Path(__file__).parent / "data")
+    assert doctor.check_oui()[0].status == doctor.OK
