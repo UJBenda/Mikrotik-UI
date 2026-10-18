@@ -284,7 +284,7 @@ async function loadDevices() {
     tr.appendChild(el("td", (d.last_status && d.last_status.sstp) || "–"));
     tr.appendChild(el("td", fmtTime(d.last_checkin_at)));
     const act = el("td");
-    if (d.state === "pending") act.appendChild(approveControls(d));
+    if (d.state === "pending") act.append(approveControls(d), " ");
     else {
       if (d.update_available && d.state === "adopted") {
         const b = el("button", `Aktualizovat → ${d.latest_version}`, "small");
@@ -300,6 +300,7 @@ async function loadDevices() {
         act.appendChild(document.createTextNode(" "));
       }
     }
+    if (d.state !== "removed") act.appendChild(forgetButton(d));
     tr.appendChild(act);
     tb.appendChild(tr);
   }
@@ -307,6 +308,24 @@ async function loadDevices() {
     const tr = el("tr"); const td = el("td", "Žádná zařízení", "muted"); td.colSpan = 9;
     tr.appendChild(td); tb.appendChild(tr);
   }
+}
+
+// odebrání jen v controlleru – když zařízení „Odebrat“ neprovede (nedostupné, zaseknuté)
+function forgetButton(d) {
+  const b = el("button", d.state === "pending" ? "Zahodit" : "Zapomenout", "small danger");
+  b.title = "Odebrat jen z controlleru, bez úklidu na zařízení";
+  b.onclick = async () => {
+    const name = d.identity || d.serial;
+    const text = d.state === "pending"
+      ? `Zahodit čekající zařízení ${name}? Lze ho kdykoli adoptovat znovu.`
+      : `Zapomenout zařízení ${name}?\n\nOdebere ho jen z controlleru – zařízení nic nedostane. Použij, když „Odebrat“ nejde, ` +
+        "protože zařízení neodpovídá. Klíče se zneplatní, fronta příkazů a plány se zruší, účet na koncentrátoru se vypne. " +
+        "Zařízení pak jde znovu adoptovat (adopce stávající objekty mtc přepíše).";
+    if (!(await ask(text, d.state === "pending" ? "Zahodit" : "Zapomenout"))) return;
+    try { await api("POST", `/tenants/${tenantId}/devices/${d.id}/forget`, {}); msg(`${name}: odebráno z controlleru`); loadDevices(); }
+    catch (e) { msg(e.message, true); }
+  };
+  return b;
 }
 
 function approveControls(d) {

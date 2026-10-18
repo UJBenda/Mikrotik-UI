@@ -357,6 +357,14 @@ async def command(request: Request, p: Principal, tid: str) -> Response:
     return json_response({"command_id": cid}, 201)
 
 
+@endpoint(MANAGE)
+async def forget(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    out = await run_in_threadpool(services.forget_device, st.db, tid, did, p.user_id, client_ip(request))
+    return json_response(out)
+
+
 @endpoint(READ)
 async def device_commands(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
@@ -416,6 +424,7 @@ def routes() -> list[Route]:
         Route(t + "/adoption-tokens", adoption_tokens, methods=["POST"]),
         Route(t + "/devices", devices, methods=["GET"]),
         Route(t + "/devices/{device_id}/approve", approve, methods=["POST"]),
+        Route(t + "/devices/{device_id}/forget", forget, methods=["POST"]),
         Route(t + "/devices/{device_id}/commands", command, methods=["POST"]),
         Route(t + "/devices/{device_id}/commands", device_commands, methods=["GET"]),
         Route(t + "/audit", audit_log, methods=["GET"]),

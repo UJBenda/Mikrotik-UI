@@ -372,6 +372,33 @@ def update_device(db: Database, tenant_id: Any, device_id: Any, changes: dict,
         return new
 
 
+def forget_device(db: Database, tenant_id: Any, device_id: Any, user_id: Any = None, ip: str | None = None) -> dict:
+    """Odebrání jen v controlleru – pro zařízení, které nemůže provést úklid samo
+    (nedostupné, zaseknuté v provisioningu, rozbité). Zneplatní klíče, zruší frontu
+    a plány; účet na koncentrátoru vypne worker. Zařízení pak jde adoptovat znovu.
+    Na zařízení zůstanou objekty mtc – adopce je přepíše, nebo je smaž ručně."""
+    with tenant_scope(db, tenant_id) as tx:
+        dev = tx.fetchone("SELECT serial, state FROM device WHERE id = %(d)s FOR UPDATE", {"d": str(device_id)})
+        if not dev:
+            raise NotFound("zařízení neexistuje")
+        if dev["state"] == "removed":
+            raise ServiceError("zařízení už je odebrané")
+        d = str(device_id)
+        n_cmd = tx.execute("""UPDATE device_command SET status = 'cancelled', finished_at = now()
+                              WHERE device_id = %(d)s AND status IN ('queued', 'sent')""", {"d": d})
+        tx.execute("""UPDATE config_plan SET status = 'discarded'
+                      WHERE device_id = %(d)s AND status IN ('draft', 'queued', 'confirming')""", {"d": d})
+        tx.execute("UPDATE alert SET resolved_at = now() WHERE device_id = %(d)s AND resolved_at IS NULL", {"d": d})
+        tx.execute("DELETE FROM device_secret WHERE device_id = %(d)s", {"d": d})
+        tx.execute("DELETE FROM device_intent WHERE device_id = %(d)s", {"d": d})
+        tx.execute(
+            """UPDATE device SET state = 'removed', checkin_key_hash = NULL, tunnel_ip = NULL,
+                   api_cert_fingerprint = NULL, managed_at = NULL WHERE id = %(d)s""", {"d": d})
+        audit(tx, "device.forgotten", tenant_id=tenant_id, user_id=user_id, target=f"device:{d}",
+              before={"state": dev["state"]}, after={"serial": dev["serial"], "cancelled_commands": n_cmd}, ip=ip)
+    return {"serial": dev["serial"], "previous_state": dev["state"]}
+
+
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
