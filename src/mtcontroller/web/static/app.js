@@ -16,14 +16,30 @@ function msg(text, error = false) {
   setTimeout(() => d.remove(), error ? 8000 : 4000);
 }
 
-// potvrzení akce; když prohlížeč dialogy pro web potlačil, confirm vrátí false okamžitě – řekneme to
-function ask(text) {
-  const t0 = Date.now();
-  const ok = confirm(text);
-  if (!ok && Date.now() - t0 < 80) {
-    msg("Prohlížeč potlačil potvrzovací dialog, akce neproběhla. Zavři a znovu otevři kartu (nebo povol dialogy pro tento web).", true);
-  }
-  return ok;
+// potvrzení akce vlastním dialogem ve stránce: systémový confirm() prohlížeč umí potlačit
+// (Firefox „nepovolit další dialogy“) a pak tlačítka tiše nic nedělají
+let askDone = null;
+function ask(text, okLabel = "Potvrdit") {
+  if (askDone) askDone(false);
+  return new Promise((resolve) => {
+    const box = $("ask");
+    $("ask-text").textContent = text;
+    $("ask-ok").textContent = okLabel;
+    const done = (v) => { box.hidden = true; askDone = null; resolve(v); };
+    askDone = done;
+    $("ask-ok").onclick = () => done(true);
+    $("ask-cancel").onclick = () => done(false);
+    box.hidden = false;
+    try { $("ask-ok").focus(); } catch (_e) { /* fokus není podstatný */ }
+  });
+}
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("keydown", (e) => { if (askDone && e.key === "Escape") askDone(false); });
+}
+// chyba ve skriptu se ukáže v UI, ne jen v konzoli (jinak tlačítko „nic nedělá“)
+if (typeof window.addEventListener === "function") {
+  window.addEventListener("error", (e) => msg("Chyba v UI: " + (e.message || e), true));
+  window.addEventListener("unhandledrejection", (e) => msg("Chyba v UI: " + ((e.reason && e.reason.message) || e.reason), true));
 }
 
 async function api(method, path, body) {
@@ -302,7 +318,7 @@ function approveControls(d) {
   for (const r of ["unknown", "gateway", "switch", "ap", "ptp"]) { const o = el("option", r); o.value = r; role.appendChild(o); }
   const b = el("button", "Schválit", "small");
   b.onclick = async () => {
-    if (!ask(`Schválit zařízení ${d.serial} (${d.model})?`)) return;
+    if (!(await ask(`Schválit zařízení ${d.serial} (${d.model})?`))) return;
     try {
       const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/approve`, { site_id: site.value, role: role.value });
       if (r.concentrator_errors.length) msg("Schváleno, ale koncentrátor: " + r.concentrator_errors.join("; "), true);
@@ -315,19 +331,19 @@ function approveControls(d) {
 }
 
 async function sendCommand(d, kind, label, extra) {
-  if (!ask(`${label}: ${d.serial}?`)) return;
+  if (!(await ask(`${label}: ${d.serial}?`))) return;
   try {
     await api("POST", `/tenants/${tenantId}/devices/${d.id}/commands`, Object.assign({ kind }, extra || {}));
     msg(`${label} naplánováno – provede se při dalším check-inu`);
   } catch (e) { msg(e.message, true); }
 }
 
-function upgradeDevice(d) {
+async function upgradeDevice(d) {
   const warn = (d.warnings || []).filter((x) => x.severity !== "info").map((x) => "• " + x.text);
   const text = `Aktualizovat RouterOS na ${d.serial} z ${d.ros_version} na ${d.latest_version}?\n` +
     "Zařízení si verzi stáhne a restartuje se (výpadek ~2–5 min). Předtím se doporučuje záloha." +
     (warn.length ? "\n\nZnámé problémy současné verze:\n" + warn.join("\n") : "");
-  if (!ask(text)) return;
+  if (!(await ask(text))) return;
   api("POST", `/tenants/${tenantId}/devices/${d.id}/commands`, { kind: "upgrade", version: d.latest_version })
     .then(() => msg(`Aktualizace ${d.serial} na ${d.latest_version} naplánována – provede se při dalším check-inu`))
     .catch((e) => msg(e.message, true));
@@ -424,7 +440,7 @@ async function loadPlans() {
     div.appendChild(el("pre", p.script));
     const ok = el("button", "Schválit a aplikovat", "small");
     ok.onclick = async () => {
-      if (!ask("Aplikovat plán na zařízení? Provede se při dalším check-inu.")) return;
+      if (!(await ask("Aplikovat plán na zařízení? Provede se při dalším check-inu."))) return;
       try { await api("POST", `/tenants/${tenantId}/plans/${p.id}/approve`); msg("Plán schválen"); loadPlans(); }
       catch (e) { msg(e.message, true); }
     };
@@ -716,7 +732,7 @@ async function loadUsers() {
     if (!self) {
       const b = el("button", "Odebrat", "small danger");
       b.onclick = async () => {
-        if (!ask(`Odebrat ${u.email} z tenanta?`)) return;
+        if (!(await ask(`Odebrat ${u.email} z tenanta?`))) return;
         try { await api("DELETE", `/tenants/${tenantId}/users/${u.id}`); loadUsers(); } catch (e) { msg(e.message, true); }
       };
       act.appendChild(b);
@@ -724,7 +740,7 @@ async function loadUsers() {
     if (me.superadmin && u.mfa) {
       const b = el("button", "Reset MFA", "small secondary");
       b.onclick = async () => {
-        if (!ask(`Resetovat MFA pro ${u.email}? Při dalším přihlášení si ho nastaví znovu.`)) return;
+        if (!(await ask(`Resetovat MFA pro ${u.email}? Při dalším přihlášení si ho nastaví znovu.`))) return;
         try { await api("POST", `/users/${u.id}/reset-mfa`); loadUsers(); } catch (e) { msg(e.message, true); }
       };
       act.append(" ", b);
@@ -1233,7 +1249,7 @@ async function loadPortEditor(port) {
     b.appendChild(document.createTextNode("Správa portů je na tomto zařízení vypnutá (jen sleduje). "));
     const en = el("button", "Povolit správu portů", "small"); en.type = "button";
     en.onclick = async () => {
-      if (!ask("Povolit controlleru měnit porty tohoto zařízení? Každá změna se aplikuje s automatickým návratem.")) return;
+      if (!(await ask("Povolit controlleru měnit porty tohoto zařízení? Každá změna se aplikuje s automatickým návratem."))) return;
       try { await api("POST", `/tenants/${tenantId}/devices/${detailId}/modules`, { module: "ports", mode: "manage" }); loadPortEditor(port); }
       catch (e) { msg(e.message, true); }
     };
@@ -1310,7 +1326,7 @@ async function loadPortEditor(port) {
     });
     del.onclick = async () => {
       const pf = (st.profiles || []).find((x) => String(x.id) === sel.value);
-      if (!pf || !ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`)) return;
+      if (!pf || !(await ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`))) return;
       try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadPortEditor(port); }
       catch (e) { msg(e.message, true); }
     };
@@ -1341,7 +1357,7 @@ async function loadPortEditor(port) {
   };
   const acts = el("div", null, "pe-acts");
   const go = el("button", "Použít (s automatickým návratem)", "small"); go.type = "button";
-  go.onclick = () => { if (ask("Použít změnu portu? Když se zařízení po změně do 5 minut neozve, vrátí ji samo.")) send(true); };
+  go.onclick = async () => { if ((await ask("Použít změnu portu? Když se zařízení po změně do 5 minut neozve, vrátí ji samo."))) send(true); };
   const save = el("button", "Uložit jako plán", "small secondary"); save.type = "button"; save.onclick = () => send(false);
   acts.append(go, save);
   if (st.bridge || poe) {
@@ -1360,7 +1376,7 @@ async function loadPortEditor(port) {
   if (st.poe && st.poe !== "off") {
     const pc = el("button", "Restart PoE (power-cycle)", "small secondary"); pc.type = "button";
     pc.onclick = async () => {
-      if (!ask(`Vypnout a zapnout napájení na ${port} (zařízení na portu se restartuje)?`)) return;
+      if (!(await ask(`Vypnout a zapnout napájení na ${port} (zařízení na portu se restartuje)?`))) return;
       try { await api("POST", `/tenants/${tenantId}/devices/${detailId}/commands`, { kind: "poe_cycle", port }); msg("Power-cycle naplánován"); }
       catch (e) { msg(e.message, true); }
     };
@@ -1542,7 +1558,7 @@ async function loadUpgrade() {
     if (j.status === "running") {
       const b = el("button", "Zastavit", "small danger");
       b.onclick = async () => {
-        if (!ask("Zastavit další kroky? Právě probíhající aktualizace zařízení doběhne.")) return;
+        if (!(await ask("Zastavit další kroky? Právě probíhající aktualizace zařízení doběhne."))) return;
         try { await api("POST", `/tenants/${tenantId}/upgrade-jobs/${j.id}/cancel`); loadUpgrade(); } catch (e) { msg(e.message, true); }
       };
       li.append(" ", b);
@@ -1560,7 +1576,7 @@ async function loadUpgrade() {
 $("upg-btn").addEventListener("click", () => loadUpgrade());
 $("upg-start").addEventListener("click", async () => {
   const n = $("upg-cands").children.length;
-  if (!ask(`Spustit postupnou aktualizaci ${n} zařízení? Každé se restartuje (výpadek ~2–5 min na zařízení).`)) return;
+  if (!(await ask(`Spustit postupnou aktualizaci ${n} zařízení? Každé se restartuje (výpadek ~2–5 min na zařízení).`))) return;
   try { await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); msg("Postupná aktualizace spuštěna"); loadUpgrade(); }
   catch (e) { msg(e.message, true); }
 });
@@ -1833,7 +1849,7 @@ function renderLeases() {
     if (canManage()) {
       const en = el("button", "Povolit správu DHCP", "small"); en.type = "button";
       en.onclick = async () => {
-        if (!ask(`Povolit controlleru měnit DHCP leases na ${v.device}? Každá změna se aplikuje s automatickým návratem.`)) return;
+        if (!(await ask(`Povolit controlleru měnit DHCP leases na ${v.device}? Každá změna se aplikuje s automatickým návratem.`))) return;
         try { await api("POST", `/tenants/${tenantId}/devices/${c.devId}/modules`, { module: "dhcp", mode: "manage" }); loadLeases(c.devId, c.server); }
         catch (e) { msg(e.message, true); }
       };
@@ -2002,7 +2018,7 @@ function leaseEditRow(r) {
   bar.appendChild(cancel);
   if (r && r.kind === "static") {
     const rm = el("button", "Zrušit rezervaci", "small danger"); rm.type = "button";
-    rm.addEventListener("click", () => { if (ask(`Zrušit rezervaci ${r.ip} pro ${r.mac}?`)) send({ remove: true }, r.mac); });
+    rm.addEventListener("click", async () => { if ((await ask(`Zrušit rezervaci ${r.ip} pro ${r.mac}?`))) send({ remove: true }, r.mac); });
     bar.appendChild(rm);
   }
   td.append(bar, res);
@@ -2061,7 +2077,7 @@ function dgModeCell(d) {
   if (d.module_mode !== "manage" && d.status === "plan" && canManage()) {
     const b = el("button", "Povolit správu", "small secondary"); b.type = "button";
     b.addEventListener("click", async () => {
-      if (!ask(`Povolit controlleru měnit DHCP snooping na ${d.device}? Každá změna jde přes schválení plánu s automatickým návratem.`)) return;
+      if (!(await ask(`Povolit controlleru měnit DHCP snooping na ${d.device}? Každá změna jde přes schválení plánu s automatickým návratem.`))) return;
       try { await api("POST", `/tenants/${tenantId}/devices/${d.device_id}/modules`, { module: "dhcp_snooping", mode: "manage" }); loadNetworks(); }
       catch (e) { msg(e.message, true); }
     });
@@ -2151,8 +2167,8 @@ async function openDetail(id) {
   fw.hidden = !(dev.state === "adopted" && sm.firmware && sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware);
   if (!fw.hidden) {
     fw.textContent = `RouterBOOT → ${sm.firmware_upgrade}`;
-    fw.onclick = () => {
-      if (!ask(`Aktualizovat RouterBOOT ${sm.firmware} → ${sm.firmware_upgrade}? Zařízení se restartuje.`)) return;
+    fw.onclick = async () => {
+      if (!(await ask(`Aktualizovat RouterBOOT ${sm.firmware} → ${sm.firmware_upgrade}? Zařízení se restartuje.`))) return;
       api("POST", `/tenants/${tenantId}/devices/${id}/commands`, { kind: "firmware" })
         .then(() => msg("Aktualizace RouterBOOT naplánována")).catch((e) => msg(e.message, true));
     };
@@ -2194,7 +2210,7 @@ async function openDetail(id) {
       const b = el("button", mode === "manage" ? "Přepnout na sledování" : "Povolit správu", "small secondary");
       b.onclick = async () => {
         const to = mode === "manage" ? "observe" : "manage";
-        if (to === "manage" && !ask(`Povolit controlleru měnit ${MOD_LABEL[mod]} na tomto zařízení (vždy až po schválení plánu)?`)) return;
+        if (to === "manage" && !(await ask(`Povolit controlleru měnit ${MOD_LABEL[mod]} na tomto zařízení (vždy až po schválení plánu)?`))) return;
         try { await api("POST", `/tenants/${tenantId}/devices/${id}/modules`, { module: mod, mode: to }); openDetail(id); }
         catch (e) { msg(e.message, true); }
       };

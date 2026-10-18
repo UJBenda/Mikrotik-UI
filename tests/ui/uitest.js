@@ -176,6 +176,26 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
     if (byId["d-security"].children.length < 5) errors.push("bezpečnostní nálezy se nezobrazily");
+    // povolení správy modulu: vlastní dialog (ne confirm), Zrušit nic nepošle, Potvrdit pošle POST
+    {
+      const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+      const findB = (n, re) => n.tagName === "BUTTON" && re.test(n.textContent) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? findB(x, re) : null), null);
+      const mb = findB(byId["d-modules"], /^Povolit správu$/);
+      if (!mb) errors.push("moduly: chybí tlačítko Povolit správu");
+      else {
+        ctx.confirm = () => { errors.push("použit systémový confirm()"); return false; };
+        const n0 = requests.length;
+        let p = mb.onclick({});
+        await tick();
+        if (byId["ask"].hidden || !byId["ask-text"].textContent.includes("Povolit controlleru")) errors.push("dialog: neotevřel se");
+        byId["ask-cancel"].onclick(); await p;
+        if (!byId["ask"].hidden || requests.slice(n0).some((r) => r.startsWith("POST"))) errors.push("dialog: zrušení");
+        p = mb.onclick({}); await tick();
+        byId["ask-ok"].onclick(); await p;
+        if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/modules"))) errors.push("dialog: potvrzení neposlalo POST");
+        await tick();
+      }
+    }
     // historie portů: dva dny, výběr portu filtruje
     const ph = byId["d-ph"].children;
     if (ph.length !== 4 || ph[0].tagName !== "H4" || ph[1].children.length !== 2) errors.push("historie portů: " + ph.length);
