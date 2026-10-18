@@ -1,8 +1,10 @@
 """Generátor konfigurace koncentrátoru (RouterOS v7) – `mtc-admin concentrator-script NAME`.
 
 Předpoklady na koncentrátoru (ručně, jednou):
-1. veřejný certifikát pro SSTP: `/certificate enable-ssl-certificate dns-name=<connect_host>`
-   (Let's Encrypt; potřebuje dočasně dostupný port 80 z internetu),
+1. certifikát pro SSTP s **RSA** klíčem (SSTP server RouterOS nabízí jen RSA šifry –
+   s ECDSA certifikátem spojení skončí „no common ciphers“): v produkci
+   `/certificate enable-ssl-certificate dns-name=<connect_host>` (Let's Encrypt,
+   potřebuje dočasně port 80 z internetu), v labu RSA 2048 podepsaný lokální CA,
 2. soubor api_password_file na controlleru (vytvoří install.sh); heslo se vloží do skriptu.
 
 Skript je idempotentní: lze ho pustit znovu po změně konfigurace.
@@ -34,10 +36,15 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 # heslo uctu controlleru (z {c.api_password_file})
 :local apiPassword {q(api_password)}
 
-# --- certifikat SSTP (Let's Encrypt pro $sstpHost) ---
+# --- certifikat SSTP pro $sstpHost: musi byt RSA (SSTP server nabizi jen RSA sifry,
+# s ECDSA klient hlasi "no common ciphers") ---
 :local sstpCert ""
-:do {{ :set sstpCert [/certificate get ([/certificate find common-name=$sstpHost private-key=yes]->0) name] }} on-error={{}}
-:if ($sstpCert = "") do={{ :error ("mtc: chybi certifikat pro " . $sstpHost . " - spust /certificate enable-ssl-certificate dns-name=" . $sstpHost) }}
+:foreach c in=[/certificate find common-name=$sstpHost private-key=yes] do={{
+  :local kt "rsa"
+  :do {{ :set kt [/certificate get $c key-type] }} on-error={{}}
+  :if ($sstpCert = "" && $kt ~ "[Rr][Ss][Aa]") do={{ :set sstpCert [/certificate get $c name] }}
+}}
+:if ($sstpCert = "") do={{ :error ("mtc: chybi RSA certifikat pro " . $sstpHost . " (SSTP neumi ECDSA) - Let's Encrypt: /certificate enable-ssl-certificate dns-name=" . $sstpHost . " nebo lab: key-size=2048 podepsany lokalni CA") }}
 
 # --- seznam rozhrani tunelu a PPP profil ---
 :if ([:len [/interface list find name="TUNNELS"]] = 0) do={{ /interface list add name="TUNNELS" comment="mtc" }}

@@ -137,6 +137,7 @@ def test_concentrator_script_is_ascii_and_balanced(tmp_path):
     s.encode("ascii")
     assert 'local-address="10.200.0.1"' in s and "port=8443" in s
     assert 'address=($ctrl . "/32")' in s
+    assert 'key-type' in s and '[Rr][Ss][Aa]' in s  # SSTP jen s RSA certifikátem
     assert 'action=src-nat to-addresses="10.200.0.1"' in s
 
 

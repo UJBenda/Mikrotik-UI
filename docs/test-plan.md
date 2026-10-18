@@ -66,15 +66,18 @@ curl -sk https://mtc-checkin.lab/healthz      # {"status": "ok", ...}  (díky /e
 ## 2. Koncentrátor (MikroTik vpn1)
 
 V laboratoři certifikát pro SSTP z lokální CA (v produkci Let's Encrypt, viz sekce 9).
-RouterOS v7 certifikát s `key-usage=tls-server` sám sebou nepodepíše („failure: CA not
-found“), proto nejdřív CA. `common-name` musí být přesně `connect_host` z config.toml:
+- RouterOS v7 certifikát s `key-usage=tls-server` sám sebou nepodepíše („failure: CA not
+  found“), proto nejdřív CA.
+- **SSTP potřebuje RSA klíč** – server nabízí jen RSA šifry, s ECDSA (`prime256v1`) klient
+  hlásí „no common ciphers“. Skript koncentrátoru ECDSA certifikát odmítne.
+- `common-name` musí být přesně `connect_host` z config.toml.
 
 ```
-/certificate add name=mtc-ca common-name=mtc-ca key-size=prime256v1 days-valid=3650 key-usage=key-cert-sign,crl-sign
-/certificate sign mtc-ca
-/certificate add name=mtc-sstp common-name=vpn1.lab subject-alt-name=DNS:vpn1.lab key-size=prime256v1 days-valid=825 key-usage=tls-server
-/certificate sign mtc-sstp ca=mtc-ca
-/certificate print where name~"mtc"        # oba s příznakem K (privátní klíč)
+/certificate add name=mtc-sstp-ca common-name=mtc-sstp-ca key-size=2048 days-valid=3650 key-usage=key-cert-sign,crl-sign
+/certificate sign mtc-sstp-ca
+/certificate add name=mtc-sstp common-name=vpn1.lab subject-alt-name=DNS:vpn1.lab key-size=2048 days-valid=825 key-usage=digital-signature,key-encipherment,tls-server
+/certificate sign mtc-sstp ca=mtc-sstp-ca
+/certificate print detail where name~"mtc-sstp"   # příznak K (privátní klíč), key-type=rsa
 ```
 
 Na controlleru vygeneruj konfigurační skript a vlož ho do terminálu koncentrátoru
@@ -357,6 +360,7 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
 | Fetch hlásí 404 | token prošlý (60 min) nebo už použitý – vygeneruj nový |
 | Registrace vrátí 400 „spravovane" | zařízení je už v jiném tenantovi nebo adoptované – nejdřív Odebrat |
 | Zařízení zůstává **provisioning** | `/log print where message~"mtc"` na MikroTiku; `journalctl -u mtc-worker -f` na controlleru |
+| SSTP: `ssl: no common ciphers` | certifikát SSTP na koncentrátoru je ECDSA – vystav RSA 2048 (sekce 2) a `/interface sstp-server server set certificate=mtc-sstp` |
 | `mtc-sstp` neběží | `/ppp active print` a `/log print where topics~"sstp"` na koncentrátoru; jméno `connect-to` musí sedět s certifikátem (mimo lab režim) |
 | Worker hlásí „otisk certifikátu nesouhlasí" u zařízení | porovnej `/certificate print detail where name=mtc-rest` se sloupcem `api_cert_fingerprint` v DB |
 | `nginx -t` hlásí „Address family not supported“ | server má vypnuté IPv6 – v `/etc/nginx/sites-available/mtcontroller.conf` smaž řádky `listen [::]:…` |
