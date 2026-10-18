@@ -581,13 +581,15 @@ function renderWifi(w) {
     tr.append(el("td", r.device || "?"),
               el("td", r.interface + (r.master ? ` (virt. na ${r.master})` : "") + (r.capsman ? " · CAPsMAN" : "") +
                        (r.disabled ? " · vypnuté" : !r.running ? " · neběží" : "")),
-              el("td", r.ssid || ""), el("td", r.mode || ""), el("td", r.band || ""), el("td", r.frequency || ""),
-              el("td", r.width || ""), el("td", String(r.clients)),
+              el("td", r.ssid || ""), el("td", r.mode || ""), el("td", r.band || ""),
+              el("td", r.freq_now ? `${chanNum(r.freq_now)} · ${r.freq_now} MHz${r.frequency === "auto" ? " (auto)" : ""}` : r.frequency || ""),
+              el("td", r.width_now ? `${r.width_now} MHz` : r.width || ""), el("td", String(r.clients)),
               el("td", sig + (r.weak_clients ? ` (${r.weak_clients} slabých)` : ""),
                  r.signal_min != null && r.signal_min < -75 ? "warn" : ""));
     tb.appendChild(tr);
   }
   if (!w.radios.length) { const tr = el("tr"); const td = el("td", "Žádná Wi-Fi rádia (inventura běží každých 5 min)", "muted"); td.colSpan = 9; tr.appendChild(td); tb.appendChild(tr); }
+  renderChannelPlan(w.channel_plan);
   const ct = $("wifi-caps"); ct.textContent = "";
   $("wifi-caps-h").hidden = $("wifi-caps-t").hidden = !w.caps.length;
   for (const c of w.caps) {
@@ -596,6 +598,36 @@ function renderWifi(w) {
               el("td", c.board || ""), el("td", c.version || ""), el("td", c.state || ""));
     ct.appendChild(tr);
   }
+}
+
+function chanNum(f) { return f < 3000 ? (f - 2407) / 5 : (f - 5000) / 5; }
+
+function renderChannelPlan(p) {
+  $("wifi-plan-wrap").hidden = !p || !p.items.length;
+  if (!p || !p.items.length) return;
+  const zm = p.changes === 1 ? "změna" : p.changes < 5 ? "změny" : "změn";
+  $("wifi-plan-sum").textContent = `· ${p.changes ? `${p.changes} ${zm}` : "beze změn"}` +
+    (p.before != null ? ` · překryvy kanálů ${p.before} → ${p.after}` : "");
+  const tb = $("wifi-plan"); tb.textContent = "";
+  for (const i of p.items) {
+    const tr = el("tr", null, i.change ? "" : "muted");
+    const now = i.now.freq ? `${i.now.channel} / ${i.now.width} MHz${i.now.auto ? " (auto)" : ""}` : "?";
+    const nw = el("td", `${i.new.channel} / ${i.new.width} MHz${i.new.dfs ? " · DFS" : ""}`, i.change ? "plan-new" : "");
+    const cmd = el("td");
+    if (i.change && i.command) {
+      const b = el("button", "Kopírovat", "small secondary"); b.type = "button";
+      b.title = i.command;
+      b.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(i.command); msg("Příkaz zkopírován"); } catch (e) { msg(i.command); }
+      });
+      cmd.appendChild(b);
+    }
+    tr.append(el("td", i.device || "?"), el("td", i.interface), el("td", i.band === "5" ? "5 GHz" : "2,4 GHz"),
+              el("td", now), nw, el("td", i.change ? i.reasons.join("; ") : "ponechat"), cmd);
+    tb.appendChild(tr);
+  }
+  const ul = $("wifi-plan-notes"); ul.textContent = "";
+  for (const n of p.notes) ul.appendChild(el("li", n));
 }
 
 // --- stav systému (superadmin) -------------------------------------------------------------

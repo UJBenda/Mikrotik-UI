@@ -121,6 +121,14 @@
         <ul id="wifi-warn"></ul>
         <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>SSID</th><th>Režim</th><th>Pásmo</th><th>Kanál</th><th>Šířka</th><th>Klienti</th><th>Signál prům./min</th></tr></thead>
         <tbody id="wifi-radios"></tbody></table>
+        <div id="wifi-plan-wrap" hidden>
+          <h3>Plán kanálů <span id="wifi-plan-sum" class="muted"></span></h3>
+          <p class="muted">Doporučení bez RF skenu (sken by přerušil provoz): AP jedné lokality se mohou slyšet,
+            cílem je co nejméně AP na stejném kanálu. Nic se nemění – příkaz lze použít ručně.</p>
+          <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>Pásmo</th><th>Teď</th><th>Doporučeno</th><th>Proč</th><th>Příkaz</th></tr></thead>
+          <tbody id="wifi-plan"></tbody></table>
+          <ul id="wifi-plan-notes" class="muted"></ul>
+        </div>
         <h3 id="wifi-caps-h" hidden>CAPsMAN – připojené AP</h3>
         <table id="wifi-caps-t" hidden><thead><tr><th>Controller</th><th>AP</th><th>Adresa</th><th>Model</th><th>Verze</th><th>Stav</th></tr></thead>
         <tbody id="wifi-caps"></tbody></table>

@@ -12,6 +12,10 @@ import re
 from collections import defaultdict
 from typing import Any
 
+from .channels import parse_channel
+from .channels import plan as channel_plan
+from .channels import width_mhz
+
 WEAK_SIGNAL = -75  # dBm; slabší klienti zpomalují celé rádio
 
 
@@ -35,7 +39,7 @@ def _first_freq(v: Any) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _radio(d: dict, w: dict, driver: str, regs: list[dict]) -> dict:
+def _radio(d: dict, w: dict, driver: str, regs: list[dict], mon: dict | None = None) -> dict:
     name = str(w.get("name") or "")
     if driver == "wifi":
         ssid = w.get("configuration.ssid") or w.get("ssid")
@@ -48,6 +52,11 @@ def _radio(d: dict, w: dict, driver: str, regs: list[dict]) -> dict:
         ssid, mode, band = w.get("ssid"), w.get("mode"), w.get("band")
         freq, width = w.get("frequency"), w.get("channel-width")
         capsman = False
+    # skutečný kanál: monitor (wifi), jinak pevně nastavená frekvence
+    f_now, w_now = parse_channel((mon or {}).get("channel"))
+    if not f_now:
+        f_now = _first_freq(freq)
+        w_now = width_mhz(width) if f_now else None
     signals = [s for s in (_dbm(r.get("signal") if driver == "wifi" else r.get("signal-strength")) for r in regs)
                if s is not None]
     return {
@@ -55,6 +64,7 @@ def _radio(d: dict, w: dict, driver: str, regs: list[dict]) -> dict:
         "interface": name, "driver": driver, "master": w.get("master-interface") or None,
         "ssid": ssid, "mode": mode or None, "band": band or None,
         "frequency": str(freq) if freq not in (None, "") else "auto", "width": width or None,
+        "freq_now": f_now, "width_now": w_now, "channel_now": (mon or {}).get("channel"),
         "running": _true(w.get("running")), "disabled": _true(w.get("disabled")), "capsman": capsman,
         "clients": len(regs), "signal_avg": round(sum(signals) / len(signals)) if signals else None,
         "signal_min": min(signals) if signals else None,
@@ -70,8 +80,9 @@ def site_wifi(devices: list[dict], invs: dict[str, dict]) -> dict:
         by_iface: dict[str, list[dict]] = defaultdict(list)
         for r in _rows(inv, "wifi_clients") + _rows(inv, "wireless_clients"):
             by_iface[str(r.get("interface") or "")].append(r)
+        mons = {str(m.get("name")): m for m in _rows(inv, "wifi_monitor")}
         for w in _rows(inv, "wifi"):
-            radios.append(_radio(d, w, "wifi", by_iface.get(str(w.get("name")), [])))
+            radios.append(_radio(d, w, "wifi", by_iface.get(str(w.get("name")), []), mons.get(str(w.get("name")))))
         for w in _rows(inv, "wireless"):
             radios.append(_radio(d, w, "wireless", by_iface.get(str(w.get("name")), [])))
         for section, legacy in (("capsman_caps", False), ("capsman_caps_legacy", True)):
@@ -110,6 +121,7 @@ def site_wifi(devices: list[dict], invs: dict[str, dict]) -> dict:
         "radios": sorted(radios, key=lambda r: (r["device"] or "", r["interface"])),
         "caps": caps,
         "warnings": warnings,
+        "channel_plan": channel_plan(radios),
         "summary": {"radios": len(radios), "aps": len({r["device_id"] for r in radios}),
                     "clients": sum(r["clients"] for r in radios), "ssids": ssids},
     }

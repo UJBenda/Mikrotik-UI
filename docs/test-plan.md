@@ -325,6 +325,9 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
    `/interface ethernet print detail where name=ether5` – čekám `loop-protect-status=disable`
    (port dočasně vypnutý). Controller z toho dělá kritický alert „smyčka“, ↻ na portu a skóre anomálie.
    Pošli mi přesný výpis, ať sedí název a hodnota pole.
+8. **Skutečný kanál Wi-Fi** (plán kanálů) – na AP s balíkem `wifi`:
+   `/interface wifi monitor [find] once` – čekám pole `channel` ve tvaru `5180/ax/Ceee`
+   (frekvence / standard / pozice řídicího kanálu). Pošli výpis, hlavně u rádia s kanálem „auto“.
 
 ## 10. Řešení problémů
 

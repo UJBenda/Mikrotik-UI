@@ -197,6 +197,19 @@ def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
             for name, r in zip(stp, rows):
                 if isinstance(r, dict):
                     r.setdefault("name", name)
+    # skutečný kanál rádií (konfigurace bývá „auto“): /interface/wifi/monitor once
+    radios = [str(w["name"]) for w in data.get("wifi") or []
+              if isinstance(w, dict) and w.get("name") and w.get("disabled") != "true"]
+    if radios:
+        _fetch(api, data, errors, "wifi_monitor", "POST", "/interface/wifi/monitor",
+               body={"numbers": ",".join(radios), "once": "true"})
+        rows = data.get("wifi_monitor")
+        if isinstance(rows, dict):
+            rows = data["wifi_monitor"] = [rows]
+        if isinstance(rows, list) and len(rows) == len(radios):
+            for name, r in zip(radios, rows):
+                if isinstance(r, dict):
+                    r.setdefault("name", name)
     poe = [str(e["name"]) for e in eth if e.get("poe-out") not in (None, "", "off")]
     if poe:
         _fetch(api, data, errors, "poe_monitor", "POST", "/interface/ethernet/poe/monitor",

@@ -98,6 +98,10 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const clientRows = byId["clients"].children.length;
     const wifiRows = byId["wifi-radios"].children.length;
     if (wifiRows !== 5) errors.push("wifi: čekáno 5 rádií, je " + wifiRows);
+    if (byId["wifi-plan-wrap"].hidden || byId["wifi-plan"].children.length !== 3) errors.push("wifi: plán kanálů");
+    if (!byId["wifi-plan-sum"].textContent.includes("2 změny") || !byId["wifi-plan"].textContent.includes("52 / 20 MHz · DFS"))
+      errors.push("wifi: plán kanálů obsah " + byId["wifi-plan-sum"].textContent);
+    if (!byId["wifi-radios"].textContent.includes("36 · 5180 MHz")) errors.push("wifi: skutečný kanál v tabulce rádií");
     if (byId["wifi-caps-t"].hidden) errors.push("wifi: tabulka CAPsMAN skrytá");
     if (byId["upg-wrap"].hidden || byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");
     if (!byId["upg-start"].hidden) errors.push("aktualizace lokality: spuštění musí být skryté, když úloha běží");

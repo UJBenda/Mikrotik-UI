@@ -109,7 +109,7 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 | UniFi | Co dělá | RouterOS / náš návrh | Stav |
 | --- | --- | --- | --- |
 | Radio Manager, Radios Overview + Time Machine | rádia, kanály, klienti, historie | přehled Wi-Fi (rádia, SSID, kanály, signál, CAPsMAN) | 🟡 bez historie |
-| Channel AI (9.5) | noční plán kanálů pro celou lokalitu | `/interface wifi scan` / frequency-scan na AP → návrh plánu kanálů → plán změn | ⏳ |
+| Channel AI (9.5) | noční plán kanálů pro celou lokalitu | skutečný kanál z `/interface/wifi/monitor once`; plán kanálů lokality bez RF skenu (sken přeruší provoz): vyrovnané rozložení AP na EU kanály, bez meteoradarů 120–128, přednost non-DFS a současnému kanálu běžících AP s klienty, šířka podle hustoty (jen zúžení), počet překryvů teď → po; příkaz ke zkopírování ✅; ⏳ aplikace přes plán s návratem, RF sken v noci | 🟡 |
 | Multicast Suppressor | méně broadcastů ve vzduchu | `multicast-enhance`, IGMP snooping na bridge, filtrace mDNS | ⏳ |
 | OWE (Enhanced Open) | šifrované otevřené SSID | `security.authentication-types=owe` (wifi balík) | ⏳ |
 

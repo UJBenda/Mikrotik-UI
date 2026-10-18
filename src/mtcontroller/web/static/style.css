@@ -322,3 +322,4 @@ tr.fw-disabled td { opacity: .5; text-decoration: line-through; }
 td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .port.loop { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad-weak); }
 .ports-legend .sw.loop { background: transparent; border: 2px solid var(--bad); }
+td.plan-new { color: var(--accent); font-weight: 600; }

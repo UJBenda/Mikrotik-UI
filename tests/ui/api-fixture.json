@@ -1367,7 +1367,10 @@
      "clients": 0,
      "signal_avg": null,
      "signal_min": null,
-     "weak_clients": 0
+     "weak_clients": 0,
+     "freq_now": 5180,
+     "width_now": null,
+     "channel_now": null
     },
     {
      "device_id": "a1",
@@ -1386,7 +1389,10 @@
      "clients": 2,
      "signal_avg": -68,
      "signal_min": -81,
-     "weak_clients": 1
+     "weak_clients": 1,
+     "freq_now": 5180,
+     "width_now": 80,
+     "channel_now": null
     },
     {
      "device_id": "a1",
@@ -1405,7 +1411,10 @@
      "clients": 0,
      "signal_avg": null,
      "signal_min": null,
-     "weak_clients": 0
+     "weak_clients": 0,
+     "freq_now": 2412,
+     "width_now": 40,
+     "channel_now": null
     },
     {
      "device_id": "a1",
@@ -1424,7 +1433,10 @@
      "clients": 1,
      "signal_avg": -60,
      "signal_min": -60,
-     "weak_clients": 0
+     "weak_clients": 0,
+     "freq_now": null,
+     "width_now": null,
+     "channel_now": null
     },
     {
      "device_id": "p1",
@@ -1443,7 +1455,10 @@
      "clients": 1,
      "signal_avg": -63,
      "signal_min": -63,
-     "weak_clients": 0
+     "weak_clients": 0,
+     "freq_now": 5500,
+     "width_now": 80,
+     "channel_now": null
     }
    ],
    "caps": [
@@ -1485,6 +1500,83 @@
      "Firma",
      "Host",
      "ptp"
+    ]
+   },
+   "channel_plan": {
+    "items": [
+     {
+      "device_id": "a1",
+      "device": "ap-hala",
+      "interface": "wifi2",
+      "band": "2.4",
+      "now": {
+       "freq": 2412,
+       "channel": 1,
+       "width": 40,
+       "auto": false
+      },
+      "new": {
+       "freq": 2412,
+       "channel": 1,
+       "width": 20,
+       "dfs": false
+      },
+      "change": true,
+      "reasons": [
+       "v 2,4 GHz jen 20 MHz"
+      ],
+      "command": "/interface wifi set [find name=\"wifi2\"] channel.frequency=2412 channel.width=20mhz"
+     },
+     {
+      "device_id": "a2",
+      "device": "ap sklad",
+      "interface": "wifi1",
+      "band": "5",
+      "now": {
+       "freq": 5180,
+       "channel": 36,
+       "width": 20,
+       "auto": false
+      },
+      "new": {
+       "freq": 5260,
+       "channel": 52,
+       "width": 20,
+       "dfs": true
+      },
+      "change": true,
+      "reasons": [
+       "rozložení AP na různé kanály"
+      ],
+      "command": "/interface wifi set [find name=\"wifi1\"] channel.frequency=5260 channel.width=20mhz"
+     },
+     {
+      "device_id": "a1",
+      "device": "ap-hala",
+      "interface": "wifi1",
+      "band": "5",
+      "now": {
+       "freq": 5180,
+       "channel": 36,
+       "width": 80,
+       "auto": false
+      },
+      "new": {
+       "freq": 5180,
+       "channel": 36,
+       "width": 80,
+       "dfs": false
+      },
+      "change": false,
+      "reasons": [],
+      "command": "/interface wifi set [find name=\"wifi1\"] channel.frequency=5180 channel.width=20/40/80mhz"
+     }
+    ],
+    "before": 1,
+    "after": 0,
+    "changes": 2,
+    "notes": [
+     "DFS kanály (52–64, 100+): při detekci radaru rádio na chvíli přejde jinam – pro kritické AP preferuj 36–48."
     ]
    }
   },
