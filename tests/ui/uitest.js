@@ -137,10 +137,27 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["d-traffic"].hidden) errors.push("graf celého zařízení se po otevření detailu nezobrazil");
     // přepínání pohledů portů
     const views = byId["d-ports-views"].children;
-    if (views.length !== 5) errors.push("přepínač pohledů portů: " + views.length);
+    if (views.length !== 6) errors.push("přepínač pohledů portů: " + views.length);
+    // připojená zařízení: ikona + jméno nad portem 1 (kamera), tooltip s IP
+    const lbl = pg.children.find((c) => /^port-label above/.test(c.className));
+    const dev = lbl && lbl.children.find((c) => /^dev/.test(c.className || ""));
+    if (!dev || !/camera/.test(dev.children[0].attrs.class || "") || !lbl.title.includes("192.168.10.50"))
+      errors.push("panel portů: chybí ikona připojeného zařízení");
+    // tabulka portů: 2 fyzické porty, řazení podle anomálie, profil, jméno VLAN
+    if (byId["d-ptable-wrap"].hidden || byId["d-ptable-b"].children.length !== 2) errors.push("tabulka portů");
+    const ptxt = byId["d-ptable-b"].textContent;
+    if (!ptxt.includes("AP trunk") || !ptxt.includes("vlan10-lan (10)") || !ptxt.includes("GW-centrala")) errors.push("tabulka portů: obsah " + ptxt);
+    await byId["d-ptable-h"].children[2].fire("click");
+    if (!byId["d-ptable-b"].children[0].textContent.includes("45")) errors.push("tabulka portů: řazení podle anomálie");
+    await byId["d-ports-opts"].children[1].fire("click");
+    if (!byId["d-ptable-wrap"].hidden) errors.push("přepínač tabulky portů");
+    await byId["d-ports-opts"].children[1].fire("click");
+    await views[5].fire("click");
+    if (!byId["d-ports-legend"].textContent.includes("nejhorší port 45")) errors.push("pohled anomálií");
     await views[2].fire("click");
     if (!byId["d-ports"].children.some((c) => c.className === "vlan-row")) errors.push("pohled VLAN: chybí matice");
     if (byId["d-vlan-filter"].hidden) errors.push("pohled VLAN: chybí filtr");
+    if (!byId["d-ports"].textContent.includes("192.168.10.0/24")) errors.push("pohled VLAN: chybí podsíť");
     await byId["d-ports-views"].children[3].fire("click");
     if (byId["d-ports"].children[0].className !== "port-row") errors.push("pohled PoE");
     await byId["d-ports-views"].children[0].fire("click");

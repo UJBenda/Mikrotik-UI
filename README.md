@@ -33,6 +33,7 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
 - [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP, historie 90 dní, hledání napříč lokalitami
 - [x] Bezpečnostní audit konfigurace zařízení (hardening podle doporučení MikroTiku, kritické nálezy → alert)
+- [x] Panel portů jako UniFi: připojená zařízení s ikonou, tabulka portů, skóre anomálie za 24 h, jména a podsítě VLAN
 - [x] Změny portů jako Port Manager (PVID, tagované VLAN, PoE, edge, zapnutí, restart PoE) s automatickým návratem (commit-confirm) a profily portů
 - [x] Historie portů (Time Machine): linka, výpadky, rychlost, PoE, VLAN, STP, sousedé – 90 dní
 - [x] Porty (rychlost, duplex, SFP, PoE, VLAN, STP role) a STP lokality (root, blokované porty, rizika smyček)

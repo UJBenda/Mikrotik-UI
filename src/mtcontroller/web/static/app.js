@@ -726,7 +726,9 @@ function segmented(box, options, value, onChange) {
 // --- panel portů s pohledy (linka, native VLAN, VLAN, PoE, chyby) ----------------------------
 
 const PORT_RE = /^(ether|sfp|combo|qsfp)/;
-const PORT_VIEWS = [["link", "Linka"], ["pvid", "Native VLAN"], ["vlan", "VLAN tagování"], ["poe", "PoE"], ["err", "Chyby"]];
+const PORT_VIEWS = [["link", "Linka"], ["pvid", "Native VLAN"], ["vlan", "VLAN tagování"], ["poe", "PoE"],
+  ["err", "Chyby"], ["anom", "Anomálie"]];
+const PORT_OPTS = [["portDev", "Připojená zařízení"], ["portTable", "Tabulka portů"]];
 let portCtx = null;
 
 function portNum(name) {
@@ -745,30 +747,47 @@ function vlanSet(list) {
   return out;
 }
 
+function portOpt(key) { return prefs[key] !== false; }
+
 function renderPorts(devId, d) {
   const phys = (d.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
-  const neigh = {};
-  for (const n of d.neighbors || []) {
-    for (const part of String(n.interface || "").split(/[,/]/)) if (part && !neigh[part]) neigh[part] = n;
-  }
-  const managed = new Set((devicesCache || []).map((x) => x.identity).filter(Boolean));
   const bySfp = (sfp) => phys.filter((i) => /^(sfp|qsfp)/.test(i.name) === sfp).sort((a, b) => portNum(a.name) - portNum(b.name));
-  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), neigh, managed };
+  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), vnames: d.vlan_names || {} };
   drawPorts();
+}
+
+function drawPortOpts() {
+  const box = $("d-ports-opts"); box.textContent = "";
+  for (const [key, label] of PORT_OPTS) {
+    const b = el("button", label, "toggle" + (portOpt(key) ? " on" : ""));
+    b.type = "button";
+    b.setAttribute("aria-pressed", portOpt(key) ? "true" : "false");
+    b.addEventListener("click", () => { prefs[key] = !portOpt(key); savePrefs(); drawPorts(); });
+    box.appendChild(b);
+  }
 }
 
 function drawPorts() {
   const c = portCtx;
   const view = PORT_VIEWS.some(([v]) => v === prefs.portView) ? prefs.portView : "link";
   segmented($("d-ports-views"), PORT_VIEWS, view, (v) => { prefs.portView = v; savePrefs(); drawPorts(); });
+  drawPortOpts();
   const box = $("d-ports"); box.textContent = "";
   $("d-vlan-filter").hidden = view !== "vlan";
   portLegend(view);
+  drawPortTable();
   if (!c.phys.length) { box.appendChild(el("p", "Žádné fyzické porty v inventuře", "muted")); return; }
   if (view === "vlan") return drawVlanMatrix(box);
   const row = el("div", null, "port-row");
-  for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => portTile(i, view), true));
+  const labels = portOpt("portDev");
+  const two = c.cu.length > 8;
+  for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => portTile(i, view), labels, two));
   box.appendChild(row);
+}
+
+function vlanTitle(vid) {
+  const v = portCtx.vnames[vid];
+  return v && v.name ? `${v.name} (${vid})` : `VLAN ${vid}`;
 }
 
 function drawVlanMatrix(box) {
@@ -779,18 +798,23 @@ function drawVlanMatrix(box) {
     for (const v of [...vlanSet(p.tagged), ...vlanSet(p.untagged)]) vids.add(v);
     if (p.pvid) vids.add(String(p.pvid));
   }
-  const q = $("d-vlan-filter").value.trim();
-  const list = [...vids].filter((v) => !q || v.includes(q))
-    .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
+  const q = $("d-vlan-filter").value.trim().toLowerCase();
+  const hit = (v) => !q || v.includes(q) || vlanTitle(v).toLowerCase().includes(q)
+    || String((c.vnames[v] || {}).subnet || "").includes(q);
+  const list = [...vids].filter(hit).sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0));
   if (!list.length) { box.appendChild(el("p", vids.size ? "Žádná VLAN neodpovídá filtru" : "Porty nejsou v bridgi s VLAN", "muted")); return; }
   for (const vid of list) {
     const members = c.phys.filter((i) => vlanMember(i, vid)).length;
     const r = el("div", null, "vlan-row");
-    const name = el("div", `VLAN ${vid}`, "vlan-name");
+    const head = el("div", null, "vlan-head");
+    const name = el("div", vlanTitle(vid), "vlan-name");
     name.appendChild(el("span", ` · ${members} port${members === 1 ? "" : members < 5 && members ? "y" : "ů"}`, "muted"));
-    r.appendChild(name);
+    head.appendChild(name);
+    const sub = (c.vnames[vid] || {}).subnet;
+    if (sub) head.appendChild(el("span", sub, "vlan-subnet"));
+    r.appendChild(head);
     const row = el("div", null, "port-row");
-    for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => vlanTile(i, vid), false));
+    for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => vlanTile(i, vid), false, c.cu.length > 8));
     r.appendChild(row);
     box.appendChild(r);
   }
@@ -803,9 +827,10 @@ function vlanMember(i, vid) {
   return null;
 }
 
-function portGroup(ports, tileFn, withLabels) {
-  // víc než 8 portů: liché nahoře, sudé dole (jako na switchi); jinak jedna řada
-  const twoRows = ports.length > 8;
+function portGroup(ports, tileFn, withLabels, twoRowPanel = false) {
+  // víc než 8 portů: liché nahoře, sudé dole (jako na switchi); jinak jedna řada.
+  // SFP vedle dvouřadého panelu jdou taky do dvou řad (25 nahoře, 26 dole).
+  const twoRows = ports.length > 8 || (twoRowPanel && ports.length > 1);
   const top = twoRows ? ports.filter((_, k) => k % 2 === 0) : ports;
   const bottom = twoRows ? ports.filter((_, k) => k % 2 === 1) : [];
   const g = el("div", null, "port-group" + (withLabels ? "" : " compact"));
@@ -828,14 +853,43 @@ function tileWrap(i, tileFn) {
   return t;
 }
 
+// --- ikony připojených zařízení (jednoduché SVG, barva z CSS) ---
+const DEV_ICONS = {
+  router: [["rect", { x: 3, y: 9, width: 18, height: 8, rx: 2 }], ["circle", { cx: 7, cy: 13, r: 1 }], ["circle", { cx: 11, cy: 13, r: 1 }],
+    ["path", { d: "M8 9 6 4M16 9l2-5" }]],
+  switch: [["rect", { x: 2, y: 8, width: 20, height: 8, rx: 1.5 }], ["path", { d: "M5 12h2M9 12h2M13 12h2M17 12h2" }]],
+  ap: [["circle", { cx: 12, cy: 12, r: 8.5 }], ["circle", { cx: 12, cy: 12, r: 2.5 }]],
+  camera: [["rect", { x: 3, y: 6, width: 13, height: 8, rx: 2 }], ["circle", { cx: 9.5, cy: 10, r: 2 }],
+    ["path", { d: "M16 9l5-2v7l-5-2M8 14v5h6" }]],
+  pc: [["rect", { x: 3, y: 4, width: 18, height: 12, rx: 1.5 }], ["path", { d: "M9 20h6M12 16v4" }]],
+  server: [["rect", { x: 4, y: 3, width: 16, height: 5, rx: 1 }], ["rect", { x: 4, y: 10, width: 16, height: 5, rx: 1 }],
+    ["rect", { x: 4, y: 17, width: 16, height: 4, rx: 1 }], ["path", { d: "M7 5.5h1M7 12.5h1" }]],
+  nas: [["rect", { x: 6, y: 2.5, width: 12, height: 19, rx: 2 }], ["path", { d: "M9 7h6M9 11h6M9 15h6" }]],
+  printer: [["rect", { x: 3, y: 9, width: 18, height: 8, rx: 1.5 }], ["path", { d: "M7 9V3h10v6M7 14h10v7H7z" }]],
+  phone: [["rect", { x: 4, y: 4, width: 16, height: 16, rx: 2 }], ["path", { d: "M8 8h8M8 12h2M12 12h2M16 12h0M8 16h2M12 16h2" }]],
+  tv: [["rect", { x: 2, y: 5, width: 20, height: 12, rx: 1.5 }], ["path", { d: "M8 21h8" }]],
+  unknown: [["circle", { cx: 12, cy: 12, r: 8.5 }], ["path", { d: "M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 16.5v.5" }]],
+};
+const KIND_LABEL = { router: "router", switch: "switch", ap: "AP", camera: "kamera", pc: "počítač", server: "server",
+  nas: "NAS", printer: "tiskárna", phone: "telefon", tv: "TV", unknown: "zařízení" };
+
+function devIcon(kind, cls = "") {
+  const s = svgEl("svg", { viewBox: "0 0 24 24", class: "dev-ico " + (kind || "unknown") + " " + cls, "aria-hidden": "true" });
+  for (const [tag, attrs] of DEV_ICONS[kind] || DEV_ICONS.unknown) s.appendChild(svgEl(tag, attrs));
+  return s;
+}
+
 function portLabel(i, pos) {
-  const n = portCtx.neigh[i.name], p = i.port || {};
+  const n = i.connected, p = i.port || {};
   const c = el("div", null, "port-label " + pos);
-  const who = n ? (n.identity || n["mac-address"] || "") : "";
-  const w = p.poe_power && Number(p.poe_power) > 0 ? `${Number(p.poe_power).toFixed(1)} W` : "";
-  const name = el("span", shortName(who), portCtx.managed.has(who) ? "managed" : "");
-  if (pos === "above") c.append(el("span", w, "poe-w"), name); else c.append(name, el("span", w, "poe-w"));
-  if (n) c.title = `${n.identity || ""} ${n["mac-address"] || ""} ${n.board || n.platform || ""}`.trim();
+  const w = p.poe_power && Number(p.poe_power) > 0 ? `${Number(p.poe_power).toFixed(2)} W` : "";
+  if (!n) { c.appendChild(el("span", w, "poe-w")); return c; }
+  const name = el("span", shortName(n.name), n.managed ? "managed" : "");
+  const ico = el("span", null, "dev" + (n.managed ? " managed" : "") + (i.running ? "" : " gone"));
+  ico.appendChild(devIcon(n.kind));
+  if (pos === "above") c.append(el("span", w, "poe-w"), name, ico); else c.append(ico, name, el("span", w, "poe-w"));
+  c.title = [n.name, KIND_LABEL[n.kind] || "", n.model || "", n.ip || "", n.mac || "",
+    n.count > 1 ? `${n.count} MAC adres za portem` : ""].filter(Boolean).join("\n");
   return c;
 }
 
@@ -846,6 +900,11 @@ function linkClass(i) {
   return p.rate && !/G/.test(p.rate) ? "fe" : "gbe";
 }
 
+function isUplink(i) {
+  const p = i.port || {}, n = i.connected;
+  return p.stp_role === "root-port" || (!p.stp_role && !!n && n.managed && n.kind === "router");
+}
+
 function portTile(i, view) {
   const p = i.port || {};
   const lc = linkClass(i);
@@ -853,11 +912,8 @@ function portTile(i, view) {
   if (view === "link") {
     t.className += " " + lc;
     if (p.full_duplex === false || p.stp_forwarding === false) t.className += " blk";
-    const n = portCtx.neigh[i.name];
-    const gw = n && (devicesCache || []).some((x) => x.identity === n.identity && x.role === "gateway");
-    const uplink = p.stp_role === "root-port" || (!p.stp_role && gw);
     const poeOn = p.poe && /powered-on|on/.test(p.poe);
-    t.appendChild(el("span", (poeOn ? "⚡" : "") + (uplink ? "↑" : ""), "ico"));
+    t.appendChild(el("span", (poeOn ? "⚡" : "") + (isUplink(i) ? "↑" : ""), "ico"));
   } else if (view === "pvid") {
     t.className += " plain" + (lc === "down" || lc === "off" ? " dim" : "");
     t.appendChild(el("span", p.pvid ? String(p.pvid) : "–", "big"));
@@ -873,6 +929,10 @@ function portTile(i, view) {
     if (e) t.appendChild(el("span", e > 999 ? Math.round(e / 1000) + "k" : String(e), "big small"));
     // 1–2 výpadky od startu jsou běžné (zapojení), víc už stojí za pozornost
     if (ld >= 3) t.appendChild(el("span", `↯${ld}`, "ico br"));
+  } else if (view === "anom") {
+    const a = i.anomaly ? i.anomaly.score : 0;
+    t.className += a >= 50 ? " err2" : a >= 20 ? " err1" : a > 0 ? " poe1" : lc === "down" || lc === "off" ? " down" : " plain";
+    t.appendChild(el("span", a ? String(a) : "0", "big small"));
   }
   return t;
 }
@@ -883,7 +943,7 @@ function vlanTile(i, vid) {
 }
 
 function portTooltip(i) {
-  const p = i.port || {}, n = portCtx.neigh[i.name];
+  const p = i.port || {}, n = i.connected, a = i.anomaly;
   return [
     i.name + (i.comment ? ` – ${i.comment}` : ""),
     i.disabled ? "vypnutý" : (i.running ? `linka ${p.rate || "ok"}${p.full_duplex === false ? " half-duplex" : ""}` : "bez linky"),
@@ -891,7 +951,8 @@ function portTooltip(i) {
     p.stp_role ? `STP ${p.stp_role}${p.stp_forwarding === false ? " (blokuje)" : ""}` : "",
     p.poe ? `PoE ${p.poe}${p.poe_power ? " " + p.poe_power + " W" : ""}` : "",
     p.sfp_rx_power ? `SFP RX ${p.sfp_rx_power} dBm` : "",
-    n ? `soused: ${n.identity || n["mac-address"]}` : "",
+    n ? `připojeno: ${n.name}${n.ip ? " " + n.ip : ""}` : "",
+    a ? `anomálie ${a.score}: ${a.reasons.join(", ")}` : "",
     `chyby RX/TX ${i.rx_error || 0}/${i.tx_error || 0}, výpadky linky ${i.link_downs || 0}`,
   ].filter(Boolean).join("\n");
 }
@@ -902,6 +963,7 @@ const LEGENDS = {
   vlan: [["vt", "tagovaná"], ["vn", "native (netagovaná)"], ["down", "není členem"]],
   poe: [["poe1", "< 5 W"], ["poe2", "5–15 W"], ["poe3", "≥ 15 W"], ["plain", "PoE bez odběru"], ["down", "bez PoE"]],
   err: [["plain", "bez chyb"], ["err1", "chyby"], ["err2", "> 100 chyb"], [null, "↯ výpadky linky (od 3)"]],
+  anom: [["plain", "0 = v pořádku"], ["poe1", "1–19"], ["err1", "20–49"], ["err2", "50–100"], [null, "skóre za 24 h: výpadky, chyby, duplex"]],
 };
 
 function portLegend(view) {
@@ -916,7 +978,92 @@ function portLegend(view) {
     const total = portCtx.phys.reduce((a, i) => a + (Number((i.port || {}).poe_power) || 0), 0);
     lg.appendChild(el("b", `celkem ${total.toFixed(1)} W`));
   }
-  lg.appendChild(el("span", "klik na port = jeho graf", "muted"));
+  if (view === "anom") {
+    const worst = portCtx.phys.reduce((a, i) => Math.max(a, i.anomaly ? i.anomaly.score : 0), 0);
+    lg.appendChild(el("b", `nejhorší port ${worst}`));
+  }
+  lg.appendChild(el("span", "klik na port = graf a nastavení", "muted"));
+}
+
+// --- tabulka portů (jako UniFi) ---
+const PT_COLS = [
+  ["port", "Port", (i) => portNum(i.name) + (/^(sfp|qsfp)/.test(i.name) ? 1000 : 0)],
+  ["name", "Název", (i) => i.comment || ""],
+  ["anom", "Anomálie", (i) => (i.anomaly ? i.anomaly.score : 0)],
+  ["stp", "STP", (i) => (i.port || {}).stp_role || ""],
+  ["conn", "Připojeno", (i) => (i.connected ? i.connected.name : "")],
+  ["poe", "PoE", (i) => Number((i.port || {}).poe_power) || ((i.port || {}).poe ? 0.001 : -1)],
+  ["speed", "Rychlost", (i) => (i.running ? rateNum((i.port || {}).rate) : -1)],
+  ["mac", "MAC", (i) => (i.connected ? i.connected.mac || "" : "")],
+  ["ip", "IP", (i) => ipNum(i.connected && i.connected.ip)],
+  ["prof", "Profil", (i) => i.profile || ""],
+  ["pvid", "Native VLAN", (i) => Number((i.port || {}).pvid) || 0],
+  ["tag", "Tagované", (i) => ((i.port || {}).tagged || []).join(",")],
+];
+const STP_LABEL = { "root-port": "root port", "designated-port": "designated", "alternate-port": "alternate",
+  "backup-port": "backup", disabled: "vypnuto" };
+
+function rateNum(r) {
+  const m = String(r || "").match(/^([\d.]+)([MG])/);
+  return m ? Number(m[1]) * (m[2] === "G" ? 1000 : 1) : 0;
+}
+
+function ipNum(ip) {
+  const p = String(ip || "").split(".");
+  return p.length === 4 ? p.reduce((a, x) => a * 256 + (Number(x) || 0), 0) : 0;
+}
+
+function drawPortTable() {
+  const wrap = $("d-ptable-wrap");
+  wrap.hidden = !portOpt("portTable") || !portCtx.phys.length;
+  if (wrap.hidden) return;
+  const sort = PT_COLS.some(([k]) => k === prefs.ptSort) ? prefs.ptSort : "port";
+  const desc = !!prefs.ptDesc;
+  const h = $("d-ptable-h"); h.textContent = "";
+  for (const [key, label] of PT_COLS) {
+    const th = el("th", label + (key === sort ? (desc ? " ▾" : " ▴") : ""), key === sort ? "sorted" : "");
+    th.addEventListener("click", () => {
+      if (prefs.ptSort === key) prefs.ptDesc = !desc; else { prefs.ptSort = key; prefs.ptDesc = key === "anom" || key === "poe"; }
+      savePrefs(); drawPortTable();
+    });
+    h.appendChild(th);
+  }
+  const fn = PT_COLS.find(([k]) => k === sort)[2];
+  const rows = [...portCtx.cu, ...portCtx.sfp].sort((a, b) => {
+    const x = fn(a), y = fn(b);
+    const r = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "cs");
+    return (desc ? -r : r) || portNum(a.name) - portNum(b.name);
+  });
+  const tb = $("d-ptable-b"); tb.textContent = "";
+  for (const i of rows) {
+    const p = i.port || {}, n = i.connected, a = i.anomaly;
+    const tr = el("tr", null, trafficState.iface === i.name ? "selected" : "");
+    const pc = el("td", null, "pt-port");
+    const sq = el("span", String(portNum(i.name)), "pt-sq " + linkClass(i));
+    pc.append(sq, el("span", i.name, "muted"));
+    tr.appendChild(pc);
+    tr.appendChild(el("td", i.comment || ""));
+    const ac = el("td", a ? String(a.score) : "0", "pt-anom " + (!a ? "ok" : a.score >= 50 ? "bad" : a.score >= 20 ? "warn" : "low"));
+    if (a) ac.title = a.reasons.join(", ");
+    tr.appendChild(ac);
+    tr.appendChild(el("td", p.stp_role ? (STP_LABEL[p.stp_role] || p.stp_role) + (p.edge ? " · edge" : "") : "–",
+      p.stp_forwarding === false ? "warn" : ""));
+    const cc = el("td", null, "pt-conn");
+    if (n) { cc.appendChild(devIcon(n.kind, "sm")); cc.appendChild(el("span", n.name, n.managed ? "managed" : "")); }
+    tr.appendChild(cc);
+    const w = Number(p.poe_power) || 0;
+    tr.appendChild(el("td", p.poe ? (w > 0 ? `${w.toFixed(1)} W` : (/off/.test(p.poe) ? "vyp." : "0 W")) : "–"));
+    const sp = el("td", i.disabled ? "vypnutý" : i.running ? (p.rate || "linka") + (p.full_duplex === false ? " HD" : "") : "–",
+      i.running ? (linkClass(i) === "fe" ? "fe" : "gbe") : "muted");
+    tr.appendChild(sp);
+    tr.appendChild(el("td", n && n.mac ? n.mac.toLowerCase() : "", "mono"));
+    tr.appendChild(el("td", n && n.ip ? n.ip : ""));
+    tr.appendChild(el("td", i.profile || "–", i.profile ? "" : "muted"));
+    tr.appendChild(el("td", p.pvid ? vlanTitle(String(p.pvid)) : "–"));
+    tr.appendChild(el("td", (p.tagged || []).join(", ") || "–", (p.tagged || []).length ? "" : "muted"));
+    tr.addEventListener("click", () => selectPortTraffic(i.name));
+    tb.appendChild(tr);
+  }
 }
 
 $("d-vlan-filter").addEventListener("input", () => { if (portCtx) drawPorts(); });

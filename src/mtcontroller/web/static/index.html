@@ -226,27 +226,18 @@
         <div><h3>Moduly</h3><table><tbody id="d-modules"></tbody></table>
              <h3>NTP</h3><table><tbody id="d-ntp"></tbody></table></div>
       </div>
-      <h3>Bezpečnost konfigurace</h3>
-      <ul id="d-security"></ul>
-      <div class="ports-head">
-        <h3>Firewall</h3>
-        <div id="d-fw-views"></div>
-      </div>
-      <ul id="d-fw-notes" class="muted"></ul>
-      <div id="d-fw" class="fw"></div>
-      <div id="d-fw-detail" hidden><h4 id="d-fw-detail-h"></h4><ol id="d-fw-detail-list"></ol></div>
-      <h3>VLAN a bridge <span id="d-vlan-status" class="badge"></span></h3>
-      <ul id="d-vlan"></ul>
-      <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
-      <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
       <div class="ports-head">
         <h3>Porty</h3>
         <div id="d-ports-views"></div>
-        <input id="d-vlan-filter" placeholder="Hledat VLAN…" size="14" hidden>
+        <input id="d-vlan-filter" placeholder="Hledat VLAN, jméno, podsíť…" size="22" hidden>
+        <div id="d-ports-opts" class="opts"></div>
       </div>
       <div id="d-ports" class="ports"></div>
       <div id="d-ports-legend" class="ports-legend"></div>
       <div id="port-edit" class="port-edit" hidden></div>
+      <div id="d-ptable-wrap" class="ptable-wrap" hidden>
+        <table id="d-ptable" class="ptable"><thead><tr id="d-ptable-h"></tr></thead><tbody id="d-ptable-b"></tbody></table>
+      </div>
 
       <div id="d-traffic" class="traffic" hidden>
         <div class="traffic-head">
@@ -266,6 +257,19 @@
         <div class="traffic-bar"><div id="d-ph-range"></div><select id="d-ph-port" aria-label="Port"></select></div>
         <div id="d-ph"></div>
       </details>
+      <h3>Bezpečnost konfigurace</h3>
+      <ul id="d-security"></ul>
+      <div class="ports-head">
+        <h3>Firewall</h3>
+        <div id="d-fw-views"></div>
+      </div>
+      <ul id="d-fw-notes" class="muted"></ul>
+      <div id="d-fw" class="fw"></div>
+      <div id="d-fw-detail" hidden><h4 id="d-fw-detail-h"></h4><ol id="d-fw-detail-list"></ol></div>
+      <h3>VLAN a bridge <span id="d-vlan-status" class="badge"></span></h3>
+      <ul id="d-vlan"></ul>
+      <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
+      <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
       <details class="fold"><summary>Všechna rozhraní <span id="d-ifaces-n" class="muted"></span></summary>
       <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>Linka</th><th>VLAN</th><th>STP</th><th>PoE</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
       </details>

@@ -276,3 +276,47 @@ tr.fw-disabled td { opacity: .5; text-decoration: line-through; }
 .ph-time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 10px; }
 .ph-day { margin: 10px 0 2px; color: var(--muted); font-size: .85em; text-transform: uppercase; }
 #d-ph-port { margin-left: 8px; }
+/* připojená zařízení nad/pod porty, přepínače, tabulka portů */
+.opts { display: inline-flex; gap: 6px; margin-left: auto; }
+.toggle { background: transparent; color: var(--muted); border: 0; padding: 3px 6px 3px 36px; font-size: 12px;
+          position: relative; }
+.toggle::before { content: ""; position: absolute; left: 4px; top: 50%; width: 26px; height: 14px; margin-top: -7px;
+                  border-radius: 7px; background: var(--port-down); transition: background .15s; }
+.toggle::after { content: ""; position: absolute; left: 6px; top: 50%; width: 10px; height: 10px; margin-top: -5px;
+                 border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.toggle.on { color: var(--text); }
+.toggle.on::before { background: var(--accent); }
+.toggle.on::after { left: 18px; }
+.toggle:hover { filter: none; color: var(--text); background: transparent; }
+.port-label { min-height: 58px; gap: 1px; }
+.port-label .dev { display: flex; justify-content: center; align-items: center; height: 26px; }
+.port-label.above .dev { margin-top: 1px; } .port-label.below .dev { margin-bottom: 1px; }
+.dev-ico { width: 24px; height: 24px; fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-linecap: round;
+           stroke-linejoin: round; }
+.port-label .dev.managed .dev-ico { stroke: var(--accent); }
+.port-label .dev.gone .dev-ico { opacity: .4; }
+.dev-ico.camera, .dev-ico.ap { stroke: #5a6a7a; }
+.dev-ico.sm { width: 17px; height: 17px; vertical-align: -4px; margin-right: 5px; }
+.vlan-head { flex: 0 0 190px; display: flex; flex-direction: column; }
+.vlan-name { flex: none; }
+.vlan-subnet { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ptable-wrap { margin-top: 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.ptable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ptable th { text-align: left; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer;
+             white-space: nowrap; user-select: none; color: var(--text); background: var(--card); }
+.ptable th.sorted { color: var(--accent); }
+.ptable td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.ptable tbody tr { cursor: pointer; }
+.ptable tbody tr:hover { background: var(--hover); }
+.ptable tbody tr.selected { background: var(--accent-weak); }
+.ptable td.gbe { color: var(--ok); font-weight: 600; } .ptable td.fe { color: var(--port-fe); font-weight: 600; }
+.ptable td.warn { color: var(--warn); }
+.pt-port { display: flex; align-items: center; gap: 8px; }
+.pt-sq { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 20px; border-radius: 4px;
+         font-size: 11px; font-weight: 700; color: #fff; background: var(--port-down); }
+.pt-sq.gbe { background: var(--port-gbe); } .pt-sq.fe { background: var(--port-fe); }
+.pt-sq.down, .pt-sq.off { color: var(--muted); }
+.pt-anom { font-variant-numeric: tabular-nums; font-weight: 600; }
+.pt-anom.ok { color: var(--ok); } .pt-anom.low { color: var(--warn); } .pt-anom.warn { color: #e07b00; } .pt-anom.bad { color: var(--bad); }
+.pt-conn .managed { font-weight: 600; }
+td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }

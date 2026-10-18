@@ -7,7 +7,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import analysis, backup, firewall, inventory, plans, porthistory, ports, profiles, ros_versions
+from .. import (analysis, backup, firewall, inventory, plans, portcfg, porthistory, ports, portview, profiles,
+               ros_versions)
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
 from ..services import NotFound, ServiceError, audit
@@ -76,6 +77,9 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             dev_alerts = tx.fetchall(
                 """SELECT id, kind, subject, severity::text AS severity, message, opened_at, acknowledged_at
                    FROM alert WHERE device_id = %(d)s AND resolved_at IS NULL ORDER BY opened_at DESC""", {"d": did})
+            conn = portview.connected(inv, portview.recent_clients(tx, did), portview.managed_roles(tx))
+            anomaly = portview.anomalies(tx, did, inv)
+            profs = profiles.list_profiles(tx)
         ifaces = [{
             "name": i.get("name"), "type": i.get("type"), "running": i.get("running") == "true",
             "disabled": i.get("disabled") == "true", "mac": i.get("mac-address"), "comment": i.get("comment"),
@@ -83,13 +87,23 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
         } for i in (inv.get("interfaces") or []) if isinstance(i, dict) and i.get("dynamic") != "true"]
         pinfo = ports.port_info(inv)
         for i in ifaces:
-            i["port"] = pinfo.get(str(i["name"]))
+            name = str(i["name"])
+            i["port"] = pinfo.get(name)
+            i["connected"] = conn.get(name)
+            i["anomaly"] = anomaly.get(name)
+            if i["port"] is not None and profs:
+                try:
+                    m = profiles.matching(profs, portcfg.port_state(inv, name))
+                except portcfg.PortError:
+                    m = None
+                i["profile"] = m["name"] if m else None
         return {
             "device": d, "summary": _summary(inv), "modules": modes,
             "warnings": [{"severity": i.severity, "text": i.text, "source": i.source}
                          for i in ros_versions.issues_for(d.get("ros_version") or "")],
             "interfaces": ifaces,
             "addresses": inv.get("addresses") or [],
+            "vlan_names": portview.vlan_names(inv),
             "neighbors": inv.get("neighbors") or [],
             "vlan": analysis.analyze_vlan(inv).as_dict() if inv else None,
             "ntp": analysis.ntp_status(inv) if inv else None,
