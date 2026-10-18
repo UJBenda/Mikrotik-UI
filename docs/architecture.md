@@ -1,6 +1,6 @@
 # MikroTik Controller – návrh architektury
 
-Stav k 2026-10-17. Živá verze dokumentu je v Claude Docs; tento soubor je verzovaná kopie u kódu.
+Stav k 2026-10-18. Živá verze dokumentu je v Claude Docs; tento soubor je verzovaná kopie u kódu.
 
 ## Cíl a přijatá rozhodnutí
 
@@ -473,3 +473,201 @@ Plán správy:
 Worker denně nechá zařízení zkontrolovat dostupnou verzi v jeho kanálu
 (`/system/package/update/check-for-updates`). Tabulka známých problémů verzí
 (`ros_versions.py`) se zobrazuje u zařízení. Hromadný rollout aktualizací je F3.
+
+## Řízený režim lokality (F5) – návrh k diskusi
+
+Stav: **návrh**, nic z toho zatím není implementované. Cíl: uživatel neřeší bridge, VLAN tabulky
+ani CAPsMAN. Nadefinuje sítě lokality, zařízením dá roli a controller z toho sám spočítá
+a nasadí celou konfiguraci. Vychází z UniFi, ale bez věcí, které na MikroTiku nejdou
+spolehlivě automatizovat.
+
+### Rozsah první verze
+
+| Téma | V první verzi | Později |
+| --- | --- | --- |
+| Zařízení | RouterOS v7 s ethernet/SFP porty; Wi-Fi jen balíček `wifi-qcom` / `wifi-qcom-ac` (nové `/interface/wifi`) | starý balíček `wireless` (`/caps-man`) – takové AP půjde jen jako switch |
+| Role | **switch**, **AP + switch**, **CAPsMAN** (příznak na jednom zařízení lokality) | **router + firewall** (VLAN rozhraní, DHCP servery, zóny) |
+| Brána lokality | cizí / stávající router; sítě (VLAN, podsíť, DHCP) poskytuje on | spravovaný MikroTik jako gateway ze stejné definice sítí |
+| Sítě na trunkách | všechny sítě lokality na všech trunkách | prořezávání (jen VLAN potřebné za portem) |
+
+Stávající režim „sledování + moduly“ zůstává pro zařízení, která převzít nechceme
+(cizí konfigurace, routery zákazníka). Zařízení je buď **sledované**, nebo **řízené**;
+řízené má celou konfiguraci od controlleru.
+
+### Záměr lokality (co zadává uživatel)
+
+1. **Sítě**: jméno, VLAN ID, účel (`mgmt`, `lan`, `hoste`, `iot`, `kamery`, `voip`),
+   podsíť a brána (informativně – pro DHCP snooping, kontrolu klientů a později router).
+   Právě jedna síť je `mgmt`.
+2. **Wi-Fi sítě (SSID)**: SSID, heslo (šifrovaně, SecretBox), síť (= VLAN), pásma
+   (výchozí 2,4 + 5 GHz pod jedním SSID; `iot` jen 2,4 GHz), hostovská izolace klientů
+   (výchozí pro `hoste`). Na rádio nejvýš 4 SSID (každé SSID = vlastní beacony).
+3. **Výchozí síť přístupových portů** (typicky `lan`) a případné výjimky na portech
+   (stávající profily portů – převedou se z čísel VLAN na odkazy na sítě).
+4. **Role zařízení**: switch / AP + switch; CAPsMAN lze zapnout na jednom zařízení
+   lokality. Role AP jde vybrat až když lokalita CAPsMAN má (a zařízení má podporovaná rádia).
+
+Pomocník „Načíst ze stávající sítě“ předvyplní sítě z inventury (VLAN rozhraní, adresy,
+DHCP servery na gatewayi – `dhcpguard.site_networks`), uživatel jen potvrdí a pojmenuje.
+
+### Převzetí zařízení
+
+Po adopci se zařízení klasifikuje podle inventury:
+
+| Třída | Poznávací znaky | Převzetí |
+| --- | --- | --- |
+| `factory` | defconf nebo prázdná konfigurace | rovnou |
+| `simple` | jeden bridge, žádné VLAN, žádné routování kromě DHCP klienta | rovnou |
+| `conforming` | jeden bridge s vlan-filtering odpovídající modelu | rovnou |
+| `custom` | firewall, NAT, PPPoE, víc bridgů, VPN, routovací protokoly, cizí wifi | jen po výslovném potvrzení se seznamem, co zanikne |
+
+Převzetí **nepřepisuje konfiguraci po kouscích**, ale nasadí ji celou načisto – výsledek je
+deterministický a nezáleží na tom, co na zařízení bylo:
+
+1. Záloha `.backup` (s heslem) a `export show-sensitive` do controlleru i na flash zařízení.
+2. Controller vygeneruje `mtc-bootstrap.rsc`: celá cílová konfigurace **včetně adopčních
+   objektů** (SSTP klient, `mtc-ctl`, certifikát REST, check-in, firewall `mtc:`).
+3. `/system reset-configuration no-defaults=yes skip-backup=yes run-after-reset=mtc-bootstrap.rsc`.
+4. Bootstrap nejdřív počká na rozhraní (jako defconf: smyčka s `:delay` dokud nejsou porty),
+   pak nastaví vše, naplánuje **návrat**: když do N minut (výchozí 10) nepřijde potvrzení
+   z controlleru, `/system backup load` původní zálohy. Na konci smaže sám sebe
+   (obsahuje tajemství).
+5. Zařízení se ozve přes tunel → controller ověří (REST, sousedé, porty) → potvrdí → hotovo.
+
+K ověření v labu: co reset dělá s certifikáty a soubory na flash (cert REST se v bootstrapu
+vytváří znovu, `.rsc` a `.backup` na flash zůstávají), časování `run-after-reset` na
+switchích CRS a chování `backup load` jako návratu.
+
+Po převzetí controller hlídá drift (export vs. vygenerovaná konfigurace). Ruční změna
+na zařízení → alert a plán „vrátit do záměru“ ke schválení, nic automaticky.
+
+### Cílová konfigurace switche
+
+- Jeden `bridge` se všemi ethernet a SFP porty, `vlan-filtering=yes`, `protocol-mode=rstp`,
+  `igmp-snooping=yes`, `dhcp-snooping=yes` (trusted jen uplink), HW offload zachován
+  (CRS3xx/5xx umí vlan-filtering v HW; u zařízení bez HW VLAN controller upozorní,
+  že provoz jde přes CPU).
+- **Management**: L3 jen v síti `mgmt` – `vlan-mgmt` na bridgi (nebo bridge sám, když
+  je mgmt nativní), DHCP klient nebo statická adresa z IPAM. Žádná jiná IP.
+- **Uplink**: port směrem k bráně. Před převzetím se určí z inventury: port, na kterém
+  bridge host tabulka vidí MAC výchozí brány (u RSTP root port). Bootstrap musí zachovat
+  přesně ten způsob, kterým zařízení dnes dosáhne internetu (nativní / tagovaná mgmt),
+  jinak se neozve – to kontroluje controller před vygenerováním.
+- **Trunky** = uplink + porty se sousedem, který je spravovaný MikroTik nebo hlásí
+  přes LLDP/MNDP schopnost `bridge`/`wlan-ap`: všechny sítě tagované, mgmt podle volby
+  lokality nativně (`pvid`) nebo tagovaná, `ingress-filtering=yes`.
+- **Přístupové porty** = vše ostatní: `pvid` výchozí sítě, `frame-types=admit-only-untagged-and-priority-tagged`,
+  edge port, loop protect.
+- Neznámý hloupý switch (víc MAC na portu, bez LLDP) zůstává přístupový – bezpečnější.
+
+### Automatická distribuce VLAN
+
+Topologie lokality (MNDP/LLDP, `dhcpguard.site_graph`) je strom od brány. Pro každé
+řízené zařízení se z ní spočítá role portů (výše) a z ní bridge VLAN tabulka:
+
+```
+pro každou síť v:
+  tagged   = trunky, na kterých v není nativní  (+ bridge, pokud v = mgmt a je tagovaná)
+  untagged = přístupové porty s pvid v + trunky s nativní v
+```
+
+Protože v první verzi jdou na trunky všechny sítě, přidání sítě = plán na všechna řízená
+zařízení lokality (od nejvzdálenějšího, s návratem). Nový spravovaný soused na přístupovém
+portu → plán „port → trunk“; jen **přidává tagované VLAN a zachovává pvid**, takže stávající
+provoz na portu nepřeruší. Tuhle třídu změn může lokalita povolit aplikovat automaticky
+(volba „automaticky rozšiřovat trunky“); vše ostatní jde přes schválení.
+
+Kontroly před aplikací: VLAN sítě musí existovat na uplinku brány (z inventury brány,
+pokud je sledovaná; jinak upozornění „ověř na routeru“), mgmt cesta k controlleru se
+nesmí změnit, mezi řízenými zařízeními nesmí být neřízený hop s neznámým VLAN chováním.
+
+### Wi-Fi: CAPsMAN, AP + switch
+
+Proč CAPsMAN a ne konfigurace každého AP zvlášť: podle dokumentace MikroTiku klient
+roamuje s 802.11r (FT) jen mezi AP řízenými **stejnou instancí RouterOS**. Bez CAPsMANu
+by FT fungovalo jen mezi rádii jednoho AP.
+
+- **CAPsMAN host**: doporučí se nejstabilnější zařízení (core switch / root bridge),
+  ne AP. Potřebuje IP v `mgmt`. Nová `wifi` CAPsMAN umí jen lokální forwarding, takže
+  provoz klientů jde přímo z AP do bridge – CAPsMAN není v datové cestě.
+- **Na CAPsMANu** (vše s komentářem `mtc`):
+  - `/interface wifi security` per SSID: `authentication-types=wpa2-psk,wpa3-psk`,
+    `ft=yes ft-over-ds=yes`, `ft-mobility-domain` odvozený z SSID, `management-protection=allowed`;
+  - `/interface wifi datapath` per síť: `bridge=bridge vlan-id=<VID>`, u hostů `client-isolation=yes`;
+  - `/interface wifi steering`: `rrm=yes wnm=yes` (802.11k/v), společná `neighbor-group` pro SSID;
+  - `/interface wifi channel` + `configuration` **per rádio** (kanál a šířka z plánu níže),
+    `country=Czech Republic`;
+  - `/interface wifi provisioning` per rádio podle `radio-mac`: master = první SSID,
+    slave = ostatní SSID pro dané pásmo;
+  - `/interface wifi capsman set enabled=yes` jen na `vlan-mgmt`, certifikáty `auto`,
+    `require-peer-certificate=yes` po prvním spárování (CAP se nedá podvrhnout).
+- **Na AP + switch**: konfigurace switche (výše) + `/interface wifi cap set enabled=yes
+  caps-man-addresses=<IP CAPsMANu v mgmt> discovery-interfaces=vlan-mgmt
+  slaves-datapath=... lock-to-caps-man=yes`. Uplink AP je trunk se všemi sítěmi, datapath
+  `vlan-id` z rádia udělá přístupový port dané sítě.
+- Rádia na samotném CAPsMAN hostu se řídí stejným CAPsMANem (CAP na `127.0.0.1` – ověřit v labu).
+
+K ověření v labu: dynamické položky bridge VLAN pro wifi rozhraní s `datapath.vlan-id`,
+chování CAP při výpadku CAPsMANu (jak dlouho drží SSID), FT s WPA3 a starými klienty
+(volba „FT vypnout“ per SSID jako únik).
+
+### Algoritmus přidělení pásem a kanálů
+
+Rozšíření současného `channels.py` (dnes: všechny AP lokality se slyší, šířka podle počtu AP).
+
+**Vstupy**
+
+- Rádia řízená CAPsMANem lokality, pásma, současný kanál, počet klientů a provoz.
+- **RF graf**: noční sken v okně údržby – AP po jednom, každé rádio krátce `/interface wifi scan`
+  (přeruší jen to jedno rádio na pár sekund). Z toho RSSI každé dvojice našich AP
+  a vytížení kanálů cizími sítěmi. Bez skenu se použije konzervativní předpoklad
+  „všechny AP lokality se slyší“ (dnešní chování).
+- Politika: povolené kanály EU (36–64, 100–116, 132–140; bez 120–128 meteoradarů),
+  DFS ano/ne, maximální šířka.
+
+**Postup (per lokalita a pásmo)**
+
+1. **Hrany**: dvojice AP s RSSI ≥ −82 dBm se ruší, váha roste se signálem
+   (−82 → 1, −65 a víc → 4).
+2. **Šířka 5 GHz**: nejširší z 80/40/20 MHz, pro kterou počet nepřekrývajících se kanálů
+   ≥ (nejvyšší počet silných sousedů jednoho AP + 1). Šířka se tak řídí hustotou,
+   ne celkovým počtem AP – 40 AP v rozlehlé budově může jet na 80 MHz.
+3. **Barvení grafu (DSatur)**: AP v pořadí „nejvíc už obarvených sousedů, pak nejvíc
+   klientů“; každý dostane kanál s nejnižší cenou:
+   `cena = Σ váha souseda na překrývajícím se kanálu + cizí vytížení kanálu
+   + penále DFS (vyšší u AP označených jako kritické a u AP s historií radaru)
+   + penále změny (setrvačnost – současný kanál má slevu)`.
+4. **Lokální zlepšení**: opakovaně zkusit pro každé AP lepší kanál; přijmout jen když
+   celková cena klesne o víc než práh (např. 15 %) – jinak nic neměnit. Žádné cyklení
+   kanálů noc co noc.
+5. **2,4 GHz**: jen 1/6/11 a 20 MHz, stejné barvení. Když AP má víc silných sousedů
+   na všech třech kanálech, doporučí se na části AP 2,4 GHz vypnout (ta, jejichž oblast
+   pokryjí sousedé) – jen doporučení.
+6. **Rozdělení klientů mezi pásma**: jedno SSID pro obě pásma, 802.11k/v steering,
+   vysílací výkon 2,4 GHz o ~6 dB nižší než 5 GHz (klient sám preferuje 5 GHz a pokrytí
+   obou pásem je podobné). Volitelně „odpojit slabé klienty“ (access-list pod −80 dBm)
+   proti přilepeným klientům – výchozí vypnuto.
+
+**Výstup a nasazení**: plán s porovnáním před/po (počet kolizí, vážená cena), změny jdou
+přes konfiguraci rádia na CAPsMANu, v okně údržby, nejvýš třetina AP najednou (změna kanálu
+na chvíli odpojí klienty). První výpočet při zapnutí CAPsMANu, pak jednou za noc jen
+když se graf změnil (nové AP, nový cizí silný soused).
+
+### Datový model (nové tabulky, vše s `tenant_id` a RLS)
+
+| Tabulka | Klíčové sloupce |
+| --- | --- |
+| `site_network` | site_id, name, vlan_id (unikátní na lokalitě), purpose, subnet, gateway |
+| `site_ssid` | site_id, network_id, ssid, psk (SecretBox, kontext id SSID), bands, isolation, ft, enabled |
+| `site_intent` | site_id, mgmt_native (bool), default_access_network, capsman_device_id, auto_trunk (bool), wifi policy (DFS, max šířka, kritická AP) |
+| `device` | + `managed` (sledované / řízené), role rozšířit o `ap_switch` |
+| `wifi_scan` | device_id, radio, seen_bssid, rssi, channel, scanned_at (retence pár dní) |
+
+### Fáze
+
+1. **F5a – switch**: sítě lokality, převzetí (bootstrap s návratem), automatické porty
+   a VLAN, drift. Lab: hEX + CRS3xx.
+2. **F5b – Wi-Fi**: CAPsMAN host, AP + switch, SSID ze sítí, FT/k/v, plán kanálů
+   bez skenu (dnešní předpoklad + šířka podle hustoty).
+3. **F5c – RF**: noční sken, RF graf, DSatur + lokální zlepšení, výkon 2,4 GHz.
+4. **F6 – router + firewall**: z téže definice sítí VLAN rozhraní, DHCP servery, zóny.
