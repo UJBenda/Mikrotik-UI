@@ -912,8 +912,9 @@ function portTile(i, view) {
   if (view === "link") {
     t.className += " " + lc;
     if (p.full_duplex === false || p.stp_forwarding === false) t.className += " blk";
+    if (p.loop) t.className += " loop";
     const poeOn = p.poe && /powered-on|on/.test(p.poe);
-    t.appendChild(el("span", (poeOn ? "⚡" : "") + (isUplink(i) ? "↑" : ""), "ico"));
+    t.appendChild(el("span", (p.loop ? "↻" : "") + (poeOn ? "⚡" : "") + (isUplink(i) ? "↑" : ""), "ico"));
   } else if (view === "pvid") {
     t.className += " plain" + (lc === "down" || lc === "off" ? " dim" : "");
     t.appendChild(el("span", p.pvid ? String(p.pvid) : "–", "big"));
@@ -950,6 +951,7 @@ function portTooltip(i) {
     p.pvid ? `PVID ${p.pvid}` + (p.tagged && p.tagged.length ? `, tagované ${p.tagged.join(",")}` : "") : "",
     p.stp_role ? `STP ${p.stp_role}${p.stp_forwarding === false ? " (blokuje)" : ""}` : "",
     p.poe ? `PoE ${p.poe}${p.poe_power ? " " + p.poe_power + " W" : ""}` : "",
+    p.loop ? "SMYČKA – loop protect port vypnul" : "",
     p.sfp_rx_power ? `SFP RX ${p.sfp_rx_power} dBm` : "",
     n ? `připojeno: ${n.name}${n.ip ? " " + n.ip : ""}` : "",
     a ? `anomálie ${a.score}: ${a.reasons.join(", ")}` : "",
@@ -958,7 +960,7 @@ function portTooltip(i) {
 }
 
 const LEGENDS = {
-  link: [["gbe", "GbE+"], ["fe", "FE"], ["down", "bez linky"], ["off", "vypnutý"], [null, "⚡ PoE"], [null, "↑ uplink"], ["blk", "blokuje STP / half-duplex"]],
+  link: [["gbe", "GbE+"], ["fe", "FE"], ["down", "bez linky"], ["off", "vypnutý"], [null, "⚡ PoE"], [null, "↑ uplink"], ["blk", "blokuje STP / half-duplex"], ["loop", "↻ smyčka"]],
   pvid: [["plain", "číslo = native VLAN (PVID)"], ["dim", "port bez linky"]],
   vlan: [["vt", "tagovaná"], ["vn", "native (netagovaná)"], ["down", "není členem"]],
   poe: [["poe1", "< 5 W"], ["poe2", "5–15 W"], ["poe3", "≥ 15 W"], ["plain", "PoE bez odběru"], ["down", "bez PoE"]],
@@ -1137,6 +1139,14 @@ async function loadPortEditor(port) {
     poe.value = st.poe;
     field("PoE", poe);
   }
+  let loop = null;
+  if (st.loop_protect) {
+    loop = el("select");
+    for (const [v, l] of [["default", "výchozí"], ["on", "zapnuto"], ["off", "vypnuto"]]) { const o = el("option", l); o.value = v; loop.appendChild(o); }
+    loop.value = st.loop_protect;
+    field("Loop protect", loop);
+    if (st.loop_status === "disable") f.appendChild(el("p", "Loop protect port právě vypnul – za portem je smyčka.", "sev-error"));
+  }
   let pvid = null, edge = null, tagBox = null, addVlan = null;
   const tagChecks = [];
   if (st.bridge) {
@@ -1196,6 +1206,7 @@ async function loadPortEditor(port) {
   const desired = () => {
     const d = { disabled: !enabled.checked, comment: comment.value };
     if (poe) d.poe = poe.value;
+    if (loop) d.loop_protect = loop.value;
     if (pvid) d.pvid = Number(pvid.value);
     if (edge) d.edge = edge.value;
     if (tagBox) {
@@ -1905,7 +1916,7 @@ function fwRules(box, rows, nat) {
 
 const phState = { days: 7, port: "" };
 const PH_CLS = { link: (e) => (e.new === "up" ? "ph-up" : "ph-down"), flaps: () => "ph-down", disabled: () => "ph-cfg",
-                 neighbor: (e) => (e.new ? "ph-up" : "ph-down") };
+                 neighbor: (e) => (e.new ? "ph-up" : "ph-down"), loop: (e) => (e.new === "ano" ? "ph-down" : "ph-up") };
 
 function phItem(e, withPort) {
   const li = el("li", null, (PH_CLS[e.field] ? PH_CLS[e.field](e) : "ph-cfg"));

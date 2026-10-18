@@ -19,6 +19,7 @@ from .routeros import q
 
 POE_MODES = ("auto-on", "off", "forced-on")
 EDGE_MODES = ("auto", "yes", "no", "no-discover", "yes-discover")
+LOOP_MODES = ("default", "on", "off")
 _COMMENT = re.compile(r"^[\x20-\x7e]{0,80}$")
 
 
@@ -46,7 +47,8 @@ def config_basis(inv: dict) -> str:
     data = {
         "if": sorted((str(i.get("name")), str(i.get("disabled")), str(i.get("comment") or ""))
                      for i in _rows(inv, "interfaces") if i.get("type") == "ether"),
-        "eth": sorted((str(e.get("name")), str(e.get("poe-out") or "")) for e in _rows(inv, "ethernet")),
+        "eth": sorted((str(e.get("name")), str(e.get("poe-out") or ""), str(e.get("loop-protect") or ""))
+                      for e in _rows(inv, "ethernet")),
         "bp": sorted((str(b.get("interface")), str(b.get("bridge")), str(b.get("pvid")), str(b.get("edge") or ""))
                      for b in _rows(inv, "bridge_ports") if not _true(b.get("dynamic"))),
         "bv": sorted((str(v.get("bridge")), str(v.get("vlan-ids")), ",".join(_members(v.get("tagged"))),
@@ -75,6 +77,7 @@ def port_state(inv: dict, port: str) -> dict:
     return {
         "port": port, "disabled": _true(iface.get("disabled")), "comment": iface.get("comment") or "",
         "poe": eth.get("poe-out") if eth.get("poe-out") not in (None, "") else None,
+        "loop_protect": eth.get("loop-protect") or None, "loop_status": eth.get("loop-protect-status") or None,
         "bridge": bp.get("bridge") if bp else None, "pvid": int(bp["pvid"]) if bp and str(bp.get("pvid", "")).isdigit() else None,
         "edge": bp.get("edge") if bp else None, "tagged": sorted(tagged, key=int), "tagged_locked": multi,
         "vlan_filtering": _true(br.get("vlan-filtering")),
@@ -120,6 +123,14 @@ def plan(inv: dict, port: str, desired: dict, uplinks: set[str] | None = None) -
         change("poe", cur["poe"], desired["poe"])
         apply.append(f"/interface ethernet set [find name={qp}] poe-out={desired['poe']}")
         revert.append(f"/interface ethernet set [find name={qp}] poe-out={cur['poe']}")
+    if desired.get("loop_protect") and desired["loop_protect"] != cur["loop_protect"]:
+        if desired["loop_protect"] not in LOOP_MODES:
+            raise PortError(f"loop protect: {' | '.join(LOOP_MODES)}")
+        if cur["loop_protect"] is None:
+            raise PortError("stav loop protect není v inventuře – počkej na další inventuru")
+        change("loop_protect", cur["loop_protect"], desired["loop_protect"])
+        apply.append(f"/interface ethernet set [find name={qp}] loop-protect={desired['loop_protect']}")
+        revert.append(f"/interface ethernet set [find name={qp}] loop-protect={cur['loop_protect']}")
     bridge_fields = [f for f in ("pvid", "tagged", "edge") if f in desired]
     if bridge_fields and not cur["bridge"]:
         raise PortError(f"port {port} není v bridgi – VLAN a STP nelze nastavit")
@@ -183,7 +194,8 @@ def plan(inv: dict, port: str, desired: dict, uplinks: set[str] | None = None) -
         warn.append("bridge nemá zapnuté vlan-filtering – PVID a tagování se projeví až po jeho zapnutí")
     if uplinks and port in uplinks:
         warn.append(f"{port} je uplink (cesta ke správě) – při chybě se zařízení odpojí a změna se sama vrátí")
-    labels = {"disabled": "vypnutí", "comment": "popis", "poe": "PoE", "pvid": "PVID", "edge": "STP edge", "tagged": "tagované VLAN"}
+    labels = {"disabled": "vypnutí", "comment": "popis", "poe": "PoE", "pvid": "PVID", "edge": "STP edge",
+              "tagged": "tagované VLAN", "loop_protect": "loop protect"}
     summary = f"{port}: " + ", ".join(f"{labels[c['field']]} {fmt(c['before'])} → {fmt(c['after'])}" for c in changes)
     # návrat v opačném pořadí
     return {"changes": changes, "apply": "\n".join(apply) + "\n", "revert": "\n".join(reversed(revert)) + "\n",

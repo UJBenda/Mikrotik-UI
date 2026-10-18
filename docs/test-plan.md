@@ -320,6 +320,11 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
    ```
    Restartuje se a obnoví bez potvrzování? (V terminálu se `backup load` ptá – jde o to,
    jestli se ptá i ze skriptu.) Po testu: `/system script remove mtc-restore`, `/file remove mtc-test.backup`.
+7. **Loop protect** (smyčka na portu) – na switchi zapni `/interface ethernet set ether5 loop-protect=on`
+   a propoj patch kabelem ether5 s jiným portem téhož bridge. Pak
+   `/interface ethernet print detail where name=ether5` – čekám `loop-protect-status=disable`
+   (port dočasně vypnutý). Controller z toho dělá kritický alert „smyčka“, ↻ na portu a skóre anomálie.
+   Pošli mi přesný výpis, ať sedí název a hodnota pole.
 
 ## 10. Řešení problémů
 

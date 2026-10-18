@@ -18,13 +18,13 @@ SOURCES = {
     "link": ("interfaces",), "disabled": ("interfaces",), "comment": ("interfaces",),
     "flaps": ("interfaces",),
     "rate": ("ethernet_monitor",), "duplex": ("ethernet_monitor",),
-    "poe": ("ethernet",), "poe_status": ("poe_monitor",),
+    "poe": ("ethernet",), "poe_status": ("poe_monitor",), "loop": ("ethernet",),
     "pvid": ("bridge_ports",), "tagged": ("bridge_vlans",), "stp_role": ("stp_ports",),
     "neighbor": ("neighbors",),
 }
 LABELS = {
     "link": "linka", "disabled": "vypnutý", "comment": "popis", "flaps": "výpadky linky",
-    "rate": "rychlost", "duplex": "duplex", "poe": "PoE režim", "poe_status": "PoE stav",
+    "rate": "rychlost", "duplex": "duplex", "poe": "PoE režim", "poe_status": "PoE stav", "loop": "smyčka",
     "pvid": "native VLAN", "tagged": "tagované VLAN", "stp_role": "STP role", "neighbor": "soused",
 }
 KEEP_SECTIONS = sorted({s for v in SOURCES.values() for s in v})
@@ -64,6 +64,8 @@ def snapshot(inv: dict) -> dict[str, dict[str, Any]]:
         p = out.get(str(e.get("name")))
         if p is not None:
             p["poe"] = str(e.get("poe-out") or "")
+            if e.get("loop-protect-status") is not None:
+                p["loop"] = "ano" if e.get("loop-protect-status") == "disable" else "ne"
     for m in _rows(inv, "poe_monitor"):
         p = out.get(str(m.get("name")))
         if p is not None:
@@ -135,6 +137,8 @@ def describe(e: dict) -> str:
         return f"linka {new}× spadla a obnovila se"
     if f == "disabled":
         return "port vypnut" if new == "ano" else "port zapnut"
+    if f == "loop":
+        return "smyčka – loop protect port vypnul" if new == "ano" else "smyčka pominula, port znovu zapnut"
     if f == "neighbor":
         if not new:
             return f"soused odpojen ({old})"

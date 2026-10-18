@@ -40,7 +40,7 @@ SECTIONS: list[Section] = [
     Section("interfaces", "/interface",
             "name,type,mac-address,running,disabled,mtu,comment,rx-byte,tx-byte,rx-error,tx-error,"
             "rx-drop,tx-drop,link-downs,last-link-up-time,slave,dynamic"),
-    Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out"),
+    Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out,loop-protect,loop-protect-status"),
     Section("switch", "/interface/ethernet/switch", "name,type"),
     Section("bridges", "/interface/bridge",
             "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority"),

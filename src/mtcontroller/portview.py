@@ -128,10 +128,14 @@ def managed_roles(tx) -> dict[str, str]:
 
 # --- anomálie portu (0–100) za posledních 24 h -----------------------------------------------
 
-def score(link_changes: int, flaps: int, errors: int, half_duplex: bool, fe_on_gbe: bool = False) -> dict:
-    """Skóre anomálie a důvody. Váhy: výpadky linky nejvíc (smyčka/kabel), chyby logaritmicky."""
+def score(link_changes: int, flaps: int, errors: int, half_duplex: bool, fe_on_gbe: bool = False,
+          loop: bool = False) -> dict:
+    """Skóre anomálie a důvody. Váhy: smyčka a výpadky linky nejvíc, chyby logaritmicky."""
     s = 0.0
     why = []
+    if loop:
+        s += 70
+        why.append("smyčka (loop protect port vypnul)")
     downs = link_changes // 2 + flaps
     if downs:
         s += min(60, 15 * downs)
@@ -178,13 +182,14 @@ def anomalies(tx, device_id: Any, inv: dict) -> dict[str, dict]:
         # FE linka na gigabitovém portu = typicky vadný kabel (2 páry)
         fe = rate.endswith("Mbps") and rate.startswith("100") and name.startswith("ether")
         duplex[name] = (half, fe)
+    loops = {str(e.get("name")) for e in _rows(inv, "ethernet") if e.get("loop-protect-status") == "disable"}
     out = {}
-    for port in set(changes) | set(errs) | set(duplex):
+    for port in set(changes) | set(errs) | set(duplex) | loops:
         if not PHYS_RE.match(port):
             continue
         lc, fl = changes.get(port, (0, 0))
         half, fe = duplex.get(port, (False, False))
-        res = score(lc, fl, errs.get(port, 0), half, fe)
+        res = score(lc, fl, errs.get(port, 0), half, fe, port in loops)
         if res["score"] > 0:
             out[port] = res
     return out

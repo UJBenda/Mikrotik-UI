@@ -33,7 +33,7 @@ def port_info(inv: dict) -> dict[str, dict]:
         return out.setdefault(name, {"link": None, "rate": None, "full_duplex": None, "sfp_rx_power": None,
                                      "poe": None, "poe_power": None, "bridge": None, "pvid": None,
                                      "tagged": [], "untagged": [], "stp_role": None, "stp_forwarding": None,
-                                     "edge": None})
+                                     "edge": None, "loop": False})
 
     for m in _rows(inv, "ethernet_monitor"):
         if not m.get("name"):
@@ -43,6 +43,9 @@ def port_info(inv: dict) -> dict[str, dict]:
         p["rate"] = m.get("rate")
         p["full_duplex"] = _true(m["full-duplex"]) if m.get("full-duplex") is not None else None
         p["sfp_rx_power"] = m.get("sfp-rx-power")
+    for e in _rows(inv, "ethernet"):
+        if e.get("name") and e.get("loop-protect-status") == "disable":
+            get(str(e["name"]))["loop"] = True
     for m in _rows(inv, "poe_monitor"):
         if m.get("name"):
             p = get(str(m["name"]))

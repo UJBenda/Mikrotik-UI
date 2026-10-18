@@ -168,6 +168,15 @@ def conditions(tx: Tx) -> list[Active]:
         out.append(Active(r["tenant_id"], r["device_id"], "port_half_duplex", r["name"], "warning",
                           f"{_label(r)}: port {r['name']} běží v half-duplexu ({r['rate'] or '?'}) – "
                           "nesoulad autonegociace s protistranou?"))
+    # loop protect zablokoval port = na portu je smyčka (RouterOS port dočasně vypne)
+    for r in tx.fetchall(
+            """SELECT i.tenant_id, i.device_id, e->>'name' AS name, d.identity, d.serial, d.id
+               FROM device_inventory i JOIN device d ON d.id = i.device_id,
+                    jsonb_array_elements(CASE WHEN jsonb_typeof(i.data) = 'array' THEN i.data ELSE '[]'::jsonb END) e
+               WHERE i.section = 'ethernet' AND d.state = 'adopted'
+                 AND e->>'loop-protect-status' = 'disable'"""):
+        out.append(Active(r["tenant_id"], r["device_id"], "port_loop", r["name"], "critical",
+                          f"{_label(r)}: loop protect vypnul port {r['name']} – v síti za portem je smyčka"))
     for r in tx.fetchall(
             """SELECT DISTINCT ON (c.device_id) c.tenant_id, c.device_id, c.status::text AS status,
                       c.params->>'version' AS target, c.finished_at < now() - interval '15 minutes' AS grace_over,

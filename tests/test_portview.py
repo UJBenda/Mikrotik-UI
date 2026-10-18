@@ -133,3 +133,50 @@ def test_device_detail_api():
         assert d["vlan_names"] == {"10": {"name": "vlan10", "subnet": "192.168.10.0/24"}}
     finally:
         drop_db(name)
+
+
+def test_loop_protect():
+    """Smyčka: skóre, panel portů, editor (plán s návratem), historie a alert."""
+    from mtcontroller import portcfg, porthistory, ports
+
+    inv = {"interfaces": [{"name": "ether1", "type": "ether", "running": "true"}],
+           "ethernet": [{"name": "ether1", "loop-protect": "default", "loop-protect-status": "disable"}]}
+    a = portview.anomalies(FakeTx([], []), "d", inv)
+    assert a["ether1"]["score"] == 70 and "smyčka" in a["ether1"]["reasons"][0]
+    assert ports.port_info(inv)["ether1"]["loop"] is True
+    st = portcfg.port_state(inv, "ether1")
+    assert st["loop_protect"] == "default" and st["loop_status"] == "disable"
+    p = portcfg.plan(inv, "ether1", {"loop_protect": "on"})
+    assert "loop-protect=on" in p["apply"] and "loop-protect=default" in p["revert"]
+    assert p["summary"] == "ether1: loop protect default → on"
+    try:
+        portcfg.plan(inv, "ether1", {"loop_protect": "maybe"})
+        raise AssertionError("neplatná hodnota prošla")
+    except portcfg.PortError:
+        pass
+    ok = {**inv, "ethernet": [{"name": "ether1", "loop-protect": "default", "loop-protect-status": "off"}]}
+    ev = porthistory.diff(ok, inv)
+    assert ev == [{"port": "ether1", "field": "loop", "old": "ne", "new": "ano"}]
+    assert porthistory.describe(ev[0]).startswith("smyčka")
+    # starší inventura bez stavu loop protect nevyrobí falešnou změnu
+    old = {**inv, "ethernet": [{"name": "ether1"}]}
+    assert porthistory.diff(old, inv) == []
+
+
+def test_loop_alert():
+    from helpers import drop_db
+    from test_portcfg import _setup
+
+    from mtcontroller import alerts, inventory
+    from mtcontroller.db import operator_scope
+
+    db, name, settings, box, app, tid, sw = _setup()
+    try:
+        from test_portcfg import INV as PINV
+        inv = dict(PINV, ethernet=[{"name": "ether2", "loop-protect": "on", "loop-protect-status": "disable"}])
+        inventory.store(db, tid, sw, inv, [])
+        with operator_scope(db) as tx:
+            found = [x for x in alerts.conditions(tx) if x.kind == "port_loop"]
+        assert len(found) == 1 and found[0].subject == "ether2" and found[0].severity == "critical"
+    finally:
+        drop_db(name)
