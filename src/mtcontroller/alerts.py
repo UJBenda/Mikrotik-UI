@@ -168,6 +168,17 @@ def conditions(tx: Tx) -> list[Active]:
         out.append(Active(r["tenant_id"], r["device_id"], "port_half_duplex", r["name"], "warning",
                           f"{_label(r)}: port {r['name']} běží v half-duplexu ({r['rate'] or '?'}) – "
                           "nesoulad autonegociace s protistranou?"))
+    # cizí DHCP server: /ip dhcp-server alert hlásí unknown-server
+    for r in tx.fetchall(
+            """SELECT i.tenant_id, i.device_id, e->>'interface' AS iface, e->>'unknown-server' AS srv,
+                      d.identity, d.serial, d.id
+               FROM device_inventory i JOIN device d ON d.id = i.device_id,
+                    jsonb_array_elements(CASE WHEN jsonb_typeof(i.data) = 'array' THEN i.data ELSE '[]'::jsonb END) e
+               WHERE i.section = 'dhcp_alerts' AND d.state = 'adopted'
+                 AND coalesce(e->>'unknown-server', '') <> ''"""):
+        out.append(Active(r["tenant_id"], r["device_id"], "rogue_dhcp", r["iface"] or "", "critical",
+                          f"{_label(r)}: na {r['iface']} odpovídá cizí DHCP server {r['srv']} – "
+                          "najdi ho v Klientech podle MAC a zapni DHCP snooping"))
     # loop protect zablokoval port = na portu je smyčka (RouterOS port dočasně vypne)
     for r in tx.fetchall(
             """SELECT i.tenant_id, i.device_id, e->>'name' AS name, d.identity, d.serial, d.id

@@ -431,17 +431,20 @@ async def traffic(request: Request, p: Principal, tid: str) -> Response:
 async def site_ntp_policy(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
+    module = request.path_params.get("module", "ntp")
+    if module not in ("ntp", "dhcp_snooping"):
+        return _err(404, "neznámá politika")
     if request.method == "POST":
         if not p.can(tid, MANAGE):
             return _err(403, "nedostatečná oprávnění")
         data = await _json(request)
-        pol = await run_in_threadpool(plans.set_site_policy, st.db, tid, sid, "ntp", data, p.user_id,
+        pol = await run_in_threadpool(plans.set_site_policy, st.db, tid, sid, module, data, p.user_id,
                                       client_ip(request))
         return json_response(pol)
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            return plans.get_site_policy(tx, sid, "ntp")
+            return plans.get_site_policy(tx, sid, module)
 
     return json_response({"policy": await run_in_threadpool(q)})
 
@@ -451,10 +454,34 @@ async def generate_plans(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
     module = request.path_params["module"]
+    if module == "dhcp_snooping":
+        out = await run_in_threadpool(plans.generate_snooping_plans, st.db, tid, sid, p.user_id, client_ip(request))
+        return json_response(out)
     if module != "ntp":
-        return _err(400, "plány lokality jsou zatím jen pro NTP")
+        return _err(400, "plány lokality jsou jen pro NTP a DHCP snooping")
     out = await run_in_threadpool(plans.generate_ntp_plans, st.db, tid, sid, p.user_id, client_ip(request))
     return json_response(out)
+
+
+@endpoint(READ)
+async def site_networks(request: Request, p: Principal, tid: str) -> Response:
+    """Sítě lokality (VLAN, podsítě, DHCP), nastavení bridgů a analýza DHCP snoopingu."""
+    from .. import dhcpguard
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            snoop, devs, invs = plans.site_snooping(tx, sid)
+            modes = {str(d["id"]): plans.module_modes(tx, d["id"]).get("dhcp_snooping") for d in devs}
+        for item in snoop["devices"]:
+            item["module_mode"] = modes.get(item["device_id"])
+            item.pop("apply", None)
+            item.pop("revert", None)
+        return {**dhcpguard.site_networks(devs, invs), "snooping": snoop}
+
+    return json_response(await run_in_threadpool(q))
 
 
 @endpoint(READ)
@@ -733,6 +760,8 @@ def routes() -> list[Route]:
         Route(d + "/ports/{port}", port_get, methods=["GET"]),
         Route(d + "/ports/{port}/plan", port_plan, methods=["POST"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
+        Route(s + "/policy/{module}", site_ntp_policy, methods=["GET", "POST"]),
+        Route(s + "/networks", site_networks, methods=["GET"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),

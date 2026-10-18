@@ -328,6 +328,15 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
 8. **Skutečný kanál Wi-Fi** (plán kanálů) – na AP s balíkem `wifi`:
    `/interface wifi monitor [find] once` – čekám pole `channel` ve tvaru `5180/ax/Ceee`
    (frekvence / standard / pozice řídicího kanálu). Pošli výpis, hlavně u rádia s kanálem „auto“.
+9. **DHCP snooping** (na testovacích kusech, ne v produkci):
+   - Lokalita → Sítě a DHCP: sedí trusted porty s tím, kudy vede cesta k DHCP serveru?
+   - Povol modul DHCP snooping na switchi, vytvoř a schval plán. Pak na klientovi za switchem
+     obnov adresu (`ipconfig /renew`) – musí ji dostat.
+   - Na **routeru s DHCP serverem na VLAN rozhraní téhož bridge** po zapnutí snoopingu: dostávají
+     klienti dál adresu? (ověřuje, že bridge/CPU je pro snooping důvěryhodný.)
+   - Připoj na access port druhý MikroTik s DHCP serverem: klienti od něj adresu nedostanou a
+     `/ip dhcp-server alert print` na routeru ukáže `unknown-server` → v UI kritický alert.
+   - `/interface bridge port print` – porty mají dál příznak H (HW offload)?
 
 ## 10. Řešení problémů
 

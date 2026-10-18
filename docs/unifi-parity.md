@@ -35,7 +35,8 @@ viditelná odchylka zařízení, vědomé srovnání.
 | Client list / insights | DHCP lease, ARP, bridge host, wifi registration | klienti | hotovo (seznam + poloha) |
 | Port Manager, VLAN viewer | `/interface/bridge/port`, `/interface/bridge/vlan`, `/interface/ethernet/monitor`, `poe/monitor` | VLAN | tabulka portů (rychlost, duplex, SFP, PoE, PVID/tagované VLAN) + analýza hotové (jen čtení), správa F3 |
 | STP stav (port insights) | `/interface/bridge/monitor`, role portů v `/interface/bridge/port` | STP | root bridge, blokované porty, varování (STP vypnuté s více linkami, cizí root) – jen čtení |
-| Networks (VLAN per lokalita) | bridge vlan-filtering, VLAN rozhraní | VLAN | F3 |
+| Networks (VLAN per lokalita) | VLAN rozhraní, `/ip address`, DHCP server/relay, pool + leases | Sítě a DHCP | tabulka sítí (VLAN, router, podsíť, DHCP server/relay, leases, volné, na kolika zařízeních je VLAN) + nastavení bridgů (STP, VLAN filtering, IGMP/DHCP snooping, trusted) hotovo (jen čtení); vytváření sítí F3 |
+| Rogue DHCP Server Detection, DHCP Guard | `/ip dhcp-server alert` (unknown-server), bridge `dhcp-snooping` + port `trusted` | Sítě a DHCP | alert z DHCP alertu; trusted porty spočítané z cesty k DHCP serverům (servery, relay a jejich cíl dohledaný v klientech, DHCP klient zařízení, ruční zdroje); plán po zařízeních s automatickým návratem; při neznámé cestě se zařízení přeskočí | 
 | Blueprints + Drift Inspector | – | politiky lokality + plány | základ tato noc (NTP) |
 | NTP / čas (UniFi řeší implicitně) | `/system/ntp/client`, `/system/ntp/server` | NTP | tato noc (první zápisový modul) |
 | WiFi networks (SSID) | `/interface/wifi`, `/interface/wireless` + CAPsMAN | CAPsMAN | přehled rádií/SSID/klientů/signálu a CAPsMAN AP hotový (jen čtení); správa SSID F4 |

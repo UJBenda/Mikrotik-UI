@@ -2227,6 +2227,230 @@
    "days": 7,
    "port": null,
    "events": []
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/networks": {
+   "networks": [
+    {
+     "name": "vlan10",
+     "comment": "LAN",
+     "vlan_id": 10,
+     "tagged": true,
+     "router_id": "gw",
+     "router": "GW",
+     "subnet": "192.168.10.0/24",
+     "gateway": "192.168.10.1",
+     "dhcp": {
+      "mode": "server",
+      "name": "dhcp10",
+      "used": 1,
+      "size": 100
+     },
+     "available": 99,
+     "devices": 2
+    },
+    {
+     "name": "vlan20",
+     "comment": "",
+     "vlan_id": 20,
+     "tagged": true,
+     "router_id": "gw",
+     "router": "GW",
+     "subnet": "192.168.20.0/24",
+     "gateway": "192.168.20.1",
+     "dhcp": {
+      "mode": "relay",
+      "name": "relay20",
+      "target": "192.168.30.10"
+     },
+     "available": null,
+     "devices": 2
+    },
+    {
+     "name": "vlan30",
+     "comment": "",
+     "vlan_id": 30,
+     "tagged": true,
+     "router_id": "gw",
+     "router": "GW",
+     "subnet": "192.168.30.0/24",
+     "gateway": "192.168.30.1",
+     "dhcp": {
+      "mode": null
+     },
+     "available": null,
+     "devices": 2
+    }
+   ],
+   "bridges": [
+    {
+     "device_id": "gw",
+     "device": "GW",
+     "bridge": "bridge",
+     "ports": 2,
+     "protocol": "rstp",
+     "vlan_filtering": true,
+     "igmp_snooping": false,
+     "dhcp_snooping": false,
+     "option82": false,
+     "trusted": []
+    },
+    {
+     "device_id": "sw1",
+     "device": "SW1",
+     "bridge": "bridge",
+     "ports": 3,
+     "protocol": "rstp",
+     "vlan_filtering": true,
+     "igmp_snooping": false,
+     "dhcp_snooping": false,
+     "option82": false,
+     "trusted": []
+    },
+    {
+     "device_id": "sw2",
+     "device": "SW2",
+     "bridge": "bridge",
+     "ports": 3,
+     "protocol": "rstp",
+     "vlan_filtering": true,
+     "igmp_snooping": false,
+     "dhcp_snooping": false,
+     "option82": false,
+     "trusted": []
+    },
+    {
+     "device_id": "ap",
+     "device": "AP1",
+     "bridge": "bridge",
+     "ports": 2,
+     "protocol": "rstp",
+     "vlan_filtering": false,
+     "igmp_snooping": false,
+     "dhcp_snooping": false,
+     "option82": false,
+     "trusted": []
+    }
+   ],
+   "warnings": [],
+   "snooping": {
+    "sources": [
+     {
+      "device_id": "gw",
+      "port": null,
+      "only": null,
+      "label": "DHCP server dhcp10 (vlan10) na GW"
+     },
+     {
+      "device_id": "gw",
+      "port": null,
+      "only": null,
+      "label": "DHCP relay relay20 (vlan20) na GW"
+     },
+     {
+      "device_id": "gw",
+      "port": null,
+      "label": "DHCP server 192.168.10.1 pro bridge na AP1 → GW",
+      "only": "ap"
+     }
+    ],
+    "missing": [
+     {
+      "ip": "192.168.30.10",
+      "label": "DHCP server 192.168.30.10 (cíl relay relay20 na GW)",
+      "only": null
+     }
+    ],
+    "devices": [
+     {
+      "device_id": "gw",
+      "device": "GW",
+      "status": "blocked",
+      "trusted": [],
+      "keep": [],
+      "bridges": [],
+      "alerts": [],
+      "warnings": [],
+      "reasons": [
+       "DHCP server 192.168.30.10 (cíl relay relay20 na GW): nevím, kde v síti je – zadej ho ručně jako zdroj"
+      ],
+      "summary": "",
+      "module_mode": "observe"
+     },
+     {
+      "device_id": "sw1",
+      "device": "SW1",
+      "status": "plan",
+      "trusted": [
+       {
+        "port": "ether1",
+        "bridge": "bridge",
+        "why": [
+         "DHCP server dhcp10 (vlan10) na GW",
+         "DHCP relay relay20 (vlan20) na GW"
+        ]
+       },
+       {
+        "port": "ether2",
+        "bridge": "bridge",
+        "why": [
+         "DHCP server 192.168.30.10 (cíl relay relay20 na GW) → SW2 port ether5"
+        ]
+       }
+      ],
+      "keep": [],
+      "bridges": [
+       {
+        "bridge": "bridge",
+        "now": false
+       }
+      ],
+      "alerts": [],
+      "warnings": [],
+      "reasons": [],
+      "summary": "trusted ether1, ether2; DHCP snooping na bridge",
+      "module_mode": "manage"
+     },
+     {
+      "device_id": "sw2",
+      "device": "SW2",
+      "status": "blocked",
+      "trusted": [],
+      "keep": [],
+      "bridges": [],
+      "alerts": [],
+      "warnings": [],
+      "reasons": [
+       "DHCP server 192.168.30.10 (cíl relay relay20 na GW): nevím, kde v síti je – zadej ho ručně jako zdroj"
+      ],
+      "summary": "",
+      "module_mode": "observe"
+     },
+     {
+      "device_id": "ap",
+      "device": "AP1",
+      "status": "blocked",
+      "trusted": [],
+      "keep": [],
+      "bridges": [],
+      "alerts": [],
+      "warnings": [],
+      "reasons": [
+       "DHCP server 192.168.30.10 (cíl relay relay20 na GW): nevím, kde v síti je – zadej ho ručně jako zdroj"
+      ],
+      "summary": "",
+      "module_mode": "observe"
+     }
+    ],
+    "rogue": [
+     {
+      "device_id": "gw",
+      "device": "GW",
+      "interface": "vlan10",
+      "servers": "E4:5F:01:00:00:09"
+     }
+    ],
+    "policy": {}
+   }
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

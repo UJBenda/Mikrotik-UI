@@ -85,6 +85,24 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["clients-btn"].fire("click");
     await byId["wifi-btn"].fire("click");
     await byId["stp-btn"].fire("click");
+    // sítě a DHCP snooping
+    await byId["net-btn"].fire("click");
+    if (byId["net-wrap"].hidden || byId["net-rows"].children.length !== 3) errors.push("sítě: tabulka");
+    if (!byId["net-rows"].textContent.includes("Relay → 192.168.30.10") || !byId["net-rows"].textContent.includes("1 / 100"))
+      errors.push("sítě: DHCP sloupce " + byId["net-rows"].textContent.slice(0, 200));
+    if (byId["net-bridges"].children.length !== 4) errors.push("sítě: bridge");
+    if (!byId["dg-rogue"].textContent.includes("E4:5F:01:00:00:09")) errors.push("DHCP: cizí server");
+    if (!byId["dg-missing"].textContent.includes("192.168.30.10")) errors.push("DHCP: nedohledaný server");
+    const dgRows = byId["dg-devices"].children;
+    if (dgRows.length !== 4 || !dgRows[1].textContent.includes("ether1ether2")) errors.push("DHCP: plán po zařízeních " + (dgRows[1] || {}).textContent);
+    if (byId["dg-generate"].hidden) errors.push("DHCP: tlačítko plánů");
+    if (byId["dg-m-ip"].value !== "192.168.30.10") errors.push("DHCP: předvyplněná IP");
+    byId["dg-m-port"].value = "ether5";
+    const before = requests.length;
+    await byId["dg-manual"].fire("submit");
+    if (!requests.slice(before).some((r) => r.startsWith("POST") && r.endsWith("/policy/dhcp_snooping"))) errors.push("DHCP: uložení ručního zdroje");
+    await byId["dg-generate"].fire("click");
+    if (!requests.some((r) => r.startsWith("POST") && r.endsWith("/plans/dhcp_snooping"))) errors.push("DHCP: generování plánů");
     await byId["upg-btn"].fire("click");
     await byId["infra-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));

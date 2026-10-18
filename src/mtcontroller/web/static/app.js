@@ -345,7 +345,7 @@ async function loadSitePanel() {
   const busiest = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
   sel.value = prev && sites.some((s) => s.id === prev) ? prev : (busiest ? busiest.id : "");
   // panely jsou vázané na lokalitu – při změně je zavřít, ať neukazují data jiné lokality
-  for (const w of ["topo-wrap", "clients-wrap", "wifi-wrap", "stp-wrap", "upg-wrap", "infra-wrap"]) $(w).hidden = true;
+  for (const w of ["topo-wrap", "clients-wrap", "wifi-wrap", "stp-wrap", "upg-wrap", "infra-wrap", "net-wrap"]) $(w).hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
   const prim = $("ntp-primary");
@@ -1636,6 +1636,138 @@ function drawInfra() {
 
 // --- STP lokality ------------------------------------------------------------------------
 
+// --- sítě lokality a ochrana proti cizím DHCP (DHCP snooping) ---------------------------------
+
+let netData = null;
+
+async function loadNetworks() {
+  try { netData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/networks`); }
+  catch (e) { return msg(e.message, true); }
+  renderNetworks(netData);
+}
+
+$("net-btn").addEventListener("click", loadNetworks);
+
+const yesNo = (v) => el("td", v ? "✓" : "–", v ? "ok" : "muted");
+
+function renderNetworks(n) {
+  $("net-wrap").hidden = false;
+  const ul = $("net-warn"); ul.textContent = "";
+  for (const w of n.warnings) ul.appendChild(el("li", w, "sev-warning"));
+  const tb = $("net-rows"); tb.textContent = "";
+  for (const x of n.networks) {
+    const tr = el("tr");
+    const nm = el("td", null, "net-name");
+    nm.append(el("i", null, "dot " + (x.dhcp.mode ? "on" : "")), document.createTextNode(x.comment ? `${x.comment} (${x.name})` : x.name));
+    const d = x.dhcp;
+    const leases = d.mode === "server" && d.size != null ? `${d.used} / ${d.size}` : "–";
+    const pct = d.mode === "server" && d.size ? d.used / d.size : 0;
+    tr.append(nm, el("td", x.vlan_id != null ? String(x.vlan_id) + (x.tagged ? "" : " (untagged)") : "–"),
+              el("td", x.router), el("td", x.subnet),
+              el("td", d.mode === "server" ? "Server" : d.mode === "relay" ? `Relay → ${d.target || "?"}` : "–", d.mode ? "" : "muted"),
+              el("td", leases, pct >= 0.9 ? "bad" : pct >= 0.75 ? "warn" : ""),
+              el("td", x.available != null ? String(x.available) : "–"),
+              el("td", x.devices != null ? String(x.devices) : "–"));
+    tb.appendChild(tr);
+  }
+  if (!n.networks.length) { const tr = el("tr"); const td = el("td", "Žádné sítě s adresou (inventura běží každých 5 min)", "muted"); td.colSpan = 8; tr.appendChild(td); tb.appendChild(tr); }
+  const bt = $("net-bridges"); bt.textContent = "";
+  for (const b of n.bridges) {
+    const tr = el("tr");
+    tr.append(el("td", b.device), el("td", b.bridge), el("td", String(b.ports)),
+              el("td", b.protocol || "?", b.protocol === "none" ? "warn" : ""), yesNo(b.vlan_filtering), yesNo(b.igmp_snooping),
+              yesNo(b.dhcp_snooping), el("td", b.trusted.join(", ") || "–", b.trusted.length ? "" : "muted"));
+    bt.appendChild(tr);
+  }
+  renderSnooping(n.snooping);
+}
+
+const MOD_LABEL = { ntp: "NTP", ports: "porty", dhcp_snooping: "DHCP snooping" };
+
+const DG_STATUS = { plan: ["změna", "warn"], ok: ["nastaveno", "ok"], blocked: ["nelze bezpečně", "bad"], skip: ["přeskočeno", "muted"] };
+
+function renderSnooping(sn) {
+  const rg = $("dg-rogue"); rg.textContent = "";
+  for (const r of sn.rogue) rg.appendChild(el("li", `${r.device} ${r.interface}: cizí DHCP server ${r.servers}`, "sev-error"));
+  const src = $("dg-sources"); src.textContent = "";
+  const names = {};
+  for (const d of sn.devices) names[d.device_id] = d.device;
+  for (const x of sn.sources) {
+    const li = el("li", x.label);
+    src.appendChild(li);
+  }
+  for (const [k, m] of (sn.policy.sources || []).entries()) {
+    const li = el("li", `ručně: ${m.label} – ${names[m.device_id] || "?"} ${m.port}${m.ip ? ` (${m.ip})` : ""} `, "muted");
+    const rm = el("button", "Odebrat", "small secondary"); rm.type = "button";
+    rm.addEventListener("click", () => saveDhcpPolicy((sn.policy.sources || []).filter((_, i) => i !== k)));
+    li.appendChild(rm); src.appendChild(li);
+  }
+  const mi = $("dg-missing"); mi.textContent = "";
+  for (const m of sn.missing) {
+    mi.appendChild(el("p", `${m.label}: nevím, kde v síti je (není mezi zařízeními ani klienty). Zadej port, za kterým leží.`, "banner warn"));
+  }
+  const canM = canManage();
+  $("dg-manual").hidden = !canM;
+  const sel = $("dg-m-dev"); sel.textContent = "";
+  for (const d of sn.devices) { const o = el("option", d.device); o.value = d.device_id; sel.appendChild(o); }
+  if (sn.missing.length) $("dg-m-ip").value = sn.missing[0].ip;
+  const tb = $("dg-devices"); tb.textContent = "";
+  for (const d of sn.devices) {
+    const tr = el("tr");
+    const [stxt, scls] = DG_STATUS[d.status] || [d.status, ""];
+    const tp = el("td");
+    for (const t of d.trusted) { const sp = el("span", t.port, "chip"); sp.title = t.why.join("\n"); tp.appendChild(sp); }
+    if (!d.trusted.length) tp.appendChild(el("span", "–", "muted"));
+    const notes = [...d.reasons, ...d.warnings, ...(d.alerts.length ? [`DHCP alert na ${d.alerts.join(", ")}`] : [])];
+    tr.append(el("td", d.device), el("td", stxt, "dg-" + scls), tp, el("td", d.keep.join(", ") || "–", d.keep.length ? "" : "muted"),
+              el("td", d.bridges.map((b) => b.bridge + (b.now ? " (už zapnuto)" : "")).join(", ") || "–"),
+              el("td", notes.join(" · "), d.status === "blocked" ? "sev-error" : "muted"),
+              dgModeCell(d));
+    tb.appendChild(tr);
+  }
+  $("dg-generate").hidden = !sn.devices.some((d) => d.status === "plan");
+  $("dg-result").textContent = "";
+}
+
+function dgModeCell(d) {
+  const td = el("td", d.module_mode === "manage" ? "spravuje" : "jen sleduje ", d.module_mode === "manage" ? "" : "muted");
+  if (d.module_mode !== "manage" && d.status === "plan" && canManage()) {
+    const b = el("button", "Povolit správu", "small secondary"); b.type = "button";
+    b.addEventListener("click", async () => {
+      if (!confirm(`Povolit controlleru měnit DHCP snooping na ${d.device}? Každá změna jde přes schválení plánu s automatickým návratem.`)) return;
+      try { await api("POST", `/tenants/${tenantId}/devices/${d.device_id}/modules`, { module: "dhcp_snooping", mode: "manage" }); loadNetworks(); }
+      catch (e) { msg(e.message, true); }
+    });
+    td.appendChild(b);
+  }
+  return td;
+}
+
+async function saveDhcpPolicy(sources) {
+  try {
+    await api("POST", `/tenants/${tenantId}/sites/${siteId()}/policy/dhcp_snooping`,
+      { sources, rogue_alerts: netData ? netData.snooping.policy.rogue_alerts !== false : true });
+    await loadNetworks();
+  } catch (e) { msg(e.message, true); }
+}
+
+$("dg-manual").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const cur = (netData && netData.snooping.policy.sources) || [];
+  const ip = $("dg-m-ip").value.trim();
+  saveDhcpPolicy([...cur, { device_id: $("dg-m-dev").value, port: $("dg-m-port").value.trim(),
+    label: $("dg-m-label").value.trim() || (ip ? `DHCP server ${ip}` : "ruční zdroj"), ip: ip || null }]);
+});
+
+$("dg-generate").addEventListener("click", async () => {
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/plans/dhcp_snooping`);
+    const n = (r.devices || []).filter((d) => d.plan_id).length;
+    $("dg-result").textContent = `${n} plánů čeká na schválení v Plánech změn (zařízení musí mít modul DHCP snooping v režimu správy)`;
+    loadPlans();
+  } catch (e) { msg(e.message, true); }
+});
+
 $("stp-btn").addEventListener("click", async () => {
   try { renderStp(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/stp`)); } catch (e) { msg(e.message, true); }
 });
@@ -1727,13 +1859,13 @@ async function openDetail(id) {
   // moduly
   const mt = $("d-modules"); mt.textContent = "";
   for (const [mod, mode] of Object.entries(d.modules)) {
-    const tr = el("tr"); tr.appendChild(el("th", mod));
+    const tr = el("tr"); tr.appendChild(el("th", MOD_LABEL[mod] || mod));
     const td = el("td", mode === "manage" ? "spravuje " : "jen sleduje ");
-    if (mod === "ntp" || mod === "ports") {
+    if (MOD_LABEL[mod]) {
       const b = el("button", mode === "manage" ? "Přepnout na sledování" : "Povolit správu", "small secondary");
       b.onclick = async () => {
         const to = mode === "manage" ? "observe" : "manage";
-        if (to === "manage" && !confirm("Povolit controlleru měnit NTP na tomto zařízení (vždy až po schválení plánu)?")) return;
+        if (to === "manage" && !confirm(`Povolit controlleru měnit ${MOD_LABEL[mod]} na tomto zařízení (vždy až po schválení plánu)?`)) return;
         try { await api("POST", `/tenants/${tenantId}/devices/${id}/modules`, { module: mod, mode: to }); openDetail(id); }
         catch (e) { msg(e.message, true); }
       };

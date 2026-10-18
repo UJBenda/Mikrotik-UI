@@ -43,9 +43,10 @@ SECTIONS: list[Section] = [
     Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out,loop-protect,loop-protect-status"),
     Section("switch", "/interface/ethernet/switch", "name,type"),
     Section("bridges", "/interface/bridge",
-            "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority"),
+            "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority,"
+            "dhcp-snooping,add-dhcp-option82,igmp-snooping,mtu"),
     Section("bridge_ports", "/interface/bridge/port",
-            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment,edge"),
+            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment,edge,trusted"),
     Section("bridge_vlans", "/interface/bridge/vlan",
             "bridge,vlan-ids,tagged,untagged,current-tagged,current-untagged,disabled,dynamic"),
     Section("vlans", "/interface/vlan", "name,vlan-id,interface,disabled,comment"),
@@ -56,6 +57,10 @@ SECTIONS: list[Section] = [
     Section("ntp_server", "/system/ntp/server"),
     Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled,address-pool"),
     Section("ip_pools", "/ip/pool", "name,ranges,next-pool"),
+    Section("dhcp_relays", "/ip/dhcp-relay", "name,interface,dhcp-server,local-address,disabled"),
+    # DHCP alert = detekce cizích DHCP serverů (unknown-server)
+    Section("dhcp_alerts", "/ip/dhcp-server/alert",
+            "interface,valid-server,unknown-server,alert-timeout,disabled,comment"),
     # klienti
     Section("dhcp_leases", "/ip/dhcp-server/lease",
             "address,active-address,mac-address,active-mac-address,host-name,server,status,last-seen,dynamic"),
@@ -102,7 +107,7 @@ SECTIONS: list[Section] = [
     # WAN: výchozí routy (jen 0.0.0.0/0) a DHCP klient – pro pohled Infrastruktura
     Section("routes_default", "/ip/route", "dst-address,gateway,immediate-gw,distance,active,disabled,comment,routing-table",
             (("dst-address", "0.0.0.0/0"),)),
-    Section("dhcp_client", "/ip/dhcp-client", "interface,address,gateway,status,disabled,add-default-route"),
+    Section("dhcp_client", "/ip/dhcp-client", "interface,address,gateway,dhcp-server,status,disabled,add-default-route"),
     Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
     Section("capsman_caps_legacy", "/caps-man/remote-cap"),
 ]

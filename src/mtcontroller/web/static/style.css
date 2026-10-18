@@ -323,3 +323,14 @@ td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size
 .port.loop { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad-weak); }
 .ports-legend .sw.loop { background: transparent; border: 2px solid var(--bad); }
 td.plan-new { color: var(--accent); font-weight: 600; }
+/* sítě a DHCP snooping */
+.net-name { display: flex; align-items: center; gap: 8px; }
+.net-name .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--port-down); display: inline-block; }
+.net-name .dot.on { background: var(--port-gbe); }
+td.ok { color: var(--ok); } td.warn { color: var(--warn); } td.bad { color: var(--bad); font-weight: 600; }
+.chip { display: inline-block; padding: 1px 8px; margin: 0 4px 2px 0; border-radius: 999px; font-size: 12px;
+        background: var(--accent-weak); color: var(--accent); cursor: help; }
+td.dg-warn { color: var(--warn); font-weight: 600; } td.dg-ok { color: var(--ok); } td.dg-bad { color: var(--bad); font-weight: 600; }
+td.dg-muted { color: var(--muted); }
+#dg-manual { margin: 6px 0 10px; }
+#dg-generate { margin-top: 10px; }

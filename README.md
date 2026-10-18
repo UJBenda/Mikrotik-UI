@@ -33,6 +33,8 @@ Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](d
 - [ ] Vlastní CA a klientské certifikáty pro SSTP
 - [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP, historie 90 dní, hledání napříč lokalitami
 - [x] Bezpečnostní audit konfigurace zařízení (hardening podle doporučení MikroTiku, kritické nálezy → alert)
+- [x] Sítě lokality (VLAN, podsítě, DHCP server/relay, leases) a nastavení bridgů
+- [x] Ochrana proti cizím DHCP: DHCP snooping s trusted porty podle cesty k DHCP serveru, DHCP alert
 - [x] Plán kanálů Wi-Fi lokality (obdoba Channel AI, bez RF skenu) se skutečným kanálem rádií
 - [x] Loop protect: smyčky na portech (alert, skóre, editor portu)
 - [x] Panel portů jako UniFi: připojená zařízení s ikonou, tabulka portů, skóre anomálie za 24 h, jména a podsítě VLAN

@@ -339,6 +339,31 @@ Fáze F0–F2 jen čtou ze zařízení, takže nemůžou nic rozbít; riziko vý
   Globální data: číst smí každý, zapisovat jen provozovatel (RLS, kontrola 15).
   U zařízení se ukazují důležité změny a změny komponent, které zařízení používá.
 
+## DHCP snooping a cizí DHCP servery
+
+Bridge s `dhcp-snooping=yes` zahodí DHCP odpovědi (OFFER/ACK) z portu bez
+`trusted=yes`. Trusted musí být port, kterým vede cesta k legitimnímu DHCP
+serveru, a ten je na každém switchi jiný. Controller ho proto počítá z topologie
+lokality (`dhcpguard.py`):
+
+- **zdroje DHCP**: DHCP servery a relay na spravovaných zařízeních; cíl relay
+  (např. Windows DHCP) se dohledá podle IP mezi adresami zařízení a v tabulce
+  klientů (zařízení + port); DHCP klient switche/AP na bridgi (jeho server);
+  ruční zdroje v politice lokality `dhcp_snooping` (zařízení, port, IP),
+- **graf** spravovaných zařízení ze sousedů MNDP/LLDP s porty na obou koncích,
+- **trusted** = první port na cestě k danému zdroji (jen porty v bridgi),
+  snooping jen na bridgích, kudy DHCP teče (trusted port nebo lokální server/relay),
+- při neznámé cestě nebo nedohledaném serveru se plán pro zařízení nevytvoří
+  (snooping by DHCP odřízl); existující trusted porty se nikdy neruší,
+- na routerech s DHCP serverem plán přidá `/ip dhcp-server alert` (comment `mtc`);
+  `unknown-server` v inventuře → kritický alert `rogue_dhcp`.
+
+Pořadí aplikace: trusted porty → `dhcp-snooping=yes` → alert; návrat opačně.
+Plán jde přes commit-confirm, ale **výpadek DHCP správu neodpojí** (tunel jede
+dál), takže automatický návrat chybu v DHCP nezachytí – proto jen při známé
+cestě a s ověřením na labu (test-plan 9b, bod 9). HW podpora snoopingu je
+dokumentovaná pro CRS3xx/CRS5xx/CCR2116/CCR2216, u ostatních plán varuje.
+
 ## Postupná aktualizace lokality
 
 `upgrades.py`, tabulka `upgrade_job` (migrace 0007, RLS, kontrola 16). Kroky v jsonb,

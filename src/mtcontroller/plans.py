@@ -13,19 +13,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import inventory, ntp, portcfg
+from . import dhcpguard, inventory, ntp, portcfg
 from .config import Settings
 from .db import Database, Tx, tenant_scope
 from .services import NotFound, ServiceError, _s, audit, enqueue
 
-MODULES = {"ntp", "ports", "vlan", "firewall", "capsman"}
-MANAGEABLE = {"ntp", "ports"}
+MODULES = {"ntp", "ports", "vlan", "firewall", "capsman", "dhcp_snooping"}
+MANAGEABLE = {"ntp", "ports", "dhcp_snooping"}
 CONFIRM_MINUTES = 5  # výchozí okno pro potvrzení změny s automatickým návratem
 
 
 def basis_for(module: str, inv: dict) -> str:
     if module == "ports":
         return portcfg.config_basis(inv)
+    if module == "dhcp_snooping":
+        return dhcpguard.basis(inv)
     return inventory.basis_sha(inv, ntp.SECTIONS if module == "ntp" else [])
 
 
@@ -55,17 +57,25 @@ def module_modes(tx: Tx, device_id: Any) -> dict[str, str]:
 
 def set_site_policy(db: Database, tenant_id: Any, site_id: Any, module: str, data: dict,
                     user_id: Any = None, ip: str | None = None) -> dict:
-    if module != "ntp":
-        raise ServiceError("politika lokality je zatím jen pro NTP")
-    try:
-        policy = ntp.validate_policy(data)
-    except ntp.PolicyError as e:
-        raise ServiceError(str(e)) from e
+    if module not in ("ntp", "dhcp_snooping"):
+        raise ServiceError("politika lokality je jen pro NTP a DHCP snooping")
     with tenant_scope(db, tenant_id) as tx:
-        dev = tx.fetchone("SELECT site_id, state FROM device WHERE id = %(d)s",
-                          {"d": policy["primary_device_id"]})
-        if not dev or str(dev["site_id"]) != str(site_id):
-            raise ServiceError("primární zařízení musí patřit do této lokality")
+        if module == "ntp":
+            try:
+                policy = ntp.validate_policy(data)
+            except ntp.PolicyError as e:
+                raise ServiceError(str(e)) from e
+            dev = tx.fetchone("SELECT site_id, state FROM device WHERE id = %(d)s",
+                              {"d": policy["primary_device_id"]})
+            if not dev or str(dev["site_id"]) != str(site_id):
+                raise ServiceError("primární zařízení musí patřit do této lokality")
+        else:
+            ids = {str(r["id"]) for r in tx.fetchall(
+                "SELECT id FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline')", {"s": str(site_id)})}
+            try:
+                policy = dhcpguard.validate_policy(data, ids)
+            except ValueError as e:
+                raise ServiceError(str(e)) from e
         tx.execute(
             """INSERT INTO site_policy (tenant_id, site_id, module, data, updated_by)
                VALUES (%(t)s, %(s)s, %(m)s, %(d)s, %(u)s)
@@ -124,6 +134,49 @@ def generate_ntp_plans(db: Database, tenant_id: Any, site_id: Any, user_id: Any 
         audit(tx, "plan.generate", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
               after={"module": "ntp", "plans": sum(1 for o in out if o["result"] == "plan")}, ip=ip)
     return out
+
+
+def site_snooping(tx: Tx, site_id: Any) -> tuple[dict, list[dict], dict]:
+    """Analýza DHCP snoopingu lokality z aktuálních inventur: (výsledek, zařízení, inventury)."""
+    devs = tx.fetchall(
+        """SELECT id, serial, identity, model, role::text AS role, ros_version FROM device
+           WHERE site_id = %(s)s AND state IN ('adopted', 'offline') ORDER BY identity, serial""", {"s": str(site_id)})
+    invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
+    clients = {r["ip"]: r for r in tx.fetchall(
+        """SELECT DISTINCT ON (ip) ip, device_id::text AS device_id, port FROM client
+           WHERE site_id = %(s)s AND ip IS NOT NULL AND last_seen >= now() - interval '7 days'
+           ORDER BY ip, last_seen DESC""", {"s": str(site_id)})}
+    policy = get_site_policy(tx, site_id, "dhcp_snooping") or {}
+    return dhcpguard.site_snooping(devs, invs, clients, policy), devs, invs
+
+
+def generate_snooping_plans(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None,
+                            ip: str | None = None) -> dict:
+    """Plány DHCP snoopingu (draft) pro zařízení lokality se známou cestou ke všem DHCP zdrojům."""
+    with tenant_scope(db, tenant_id) as tx:
+        res, devs, invs = site_snooping(tx, site_id)
+        n = 0
+        for item in res["devices"]:
+            did = item["device_id"]
+            tx.execute("""UPDATE config_plan SET status = 'superseded'
+                          WHERE device_id = %(d)s AND module = 'dhcp_snooping' AND status = 'draft'""", {"d": did})
+            if item["status"] != "plan":
+                continue
+            row = tx.fetchone(
+                """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, revert_script,
+                                            confirm_minutes, basis_sha, created_by)
+                   VALUES (%(t)s, %(d)s, 'dhcp_snooping', %(sum)s, %(chg)s, %(sc)s, %(rv)s, %(cm)s, %(b)s, %(u)s)
+                   RETURNING id""",
+                {"t": str(tenant_id), "d": did, "sum": "DHCP snooping: " + item["summary"],
+                 "chg": {"trusted": item["trusted"], "bridges": item["bridges"], "alerts": item["alerts"],
+                         "keep": item["keep"], "warnings": item["warnings"]},
+                 "sc": item["apply"], "rv": item["revert"], "cm": CONFIRM_MINUTES,
+                 "b": dhcpguard.basis(invs[did]), "u": _s(user_id)})
+            item["plan_id"] = row["id"]
+            n += 1
+        audit(tx, "plan.generate", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
+              after={"module": "dhcp_snooping", "plans": n}, ip=ip)
+    return res
 
 
 def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int, user_id: Any,

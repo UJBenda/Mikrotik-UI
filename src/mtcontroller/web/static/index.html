@@ -86,6 +86,7 @@
         <button id="topo-btn" type="button" class="small secondary">Topologie</button>
         <button id="clients-btn" type="button" class="small secondary">Klienti</button>
         <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button>
+        <button id="net-btn" type="button" class="small secondary">Sítě a DHCP</button>
         <button id="stp-btn" type="button" class="small secondary">STP</button>
         <button id="upg-btn" type="button" class="small secondary">Aktualizace lokality</button></h2>
       <div id="infra-wrap" hidden class="panel">
@@ -107,6 +108,37 @@
         <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
         <h4>Úlohy</h4>
         <ul id="upg-jobs"></ul>
+      </div>
+      <div id="net-wrap" hidden class="panel">
+        <h3>Sítě</h3>
+        <ul id="net-warn"></ul>
+        <table class="nets"><thead><tr><th>Název</th><th>VLAN ID</th><th>Router</th><th>Podsíť</th><th>DHCP</th><th>IP leases</th><th>Volné</th><th>VLAN na zařízeních</th></tr></thead>
+        <tbody id="net-rows"></tbody></table>
+        <h3>Nastavení bridgů</h3>
+        <table><thead><tr><th>Zařízení</th><th>Bridge</th><th>Porty</th><th>STP</th><th>VLAN filtering</th><th>IGMP snooping</th><th>DHCP snooping</th><th>Trusted porty</th></tr></thead>
+        <tbody id="net-bridges"></tbody></table>
+        <h3>Ochrana proti cizím DHCP serverům</h3>
+        <p class="muted">DHCP snooping zahodí odpovědi DHCP serveru z portu, který není <b>trusted</b>. Trusted musí
+          být na každém switchi port, kterým vede cesta k legitimnímu DHCP serveru – controller ji počítá z topologie
+          (sousedé MNDP/LLDP). Zařízení, kde cestu nezná, přeskočí. Na routerech přidá i DHCP alert, který cizí server
+          nahlásí. Plány jdou přes schválení s automatickým návratem.</p>
+        <ul id="dg-rogue"></ul>
+        <h4>Zdroje DHCP</h4>
+        <ul id="dg-sources"></ul>
+        <div id="dg-missing"></div>
+        <form id="dg-manual" class="inline" hidden>
+          <span class="muted">Ruční zdroj:</span>
+          <select id="dg-m-dev" aria-label="Zařízení"></select>
+          <input id="dg-m-port" placeholder="port, např. ether5" size="14" required>
+          <input id="dg-m-ip" placeholder="IP serveru (volitelné)" size="15">
+          <input id="dg-m-label" placeholder="popis, např. Windows DHCP" size="22">
+          <button type="submit" class="small">Přidat</button>
+        </form>
+        <h4>Plán po zařízeních</h4>
+        <table><thead><tr><th>Zařízení</th><th>Stav</th><th>Nové trusted porty</th><th>Už trusted</th><th>DHCP snooping na</th><th>Poznámky</th><th>Správa modulu</th></tr></thead>
+        <tbody id="dg-devices"></tbody></table>
+        <button id="dg-generate" type="button" class="small">Vytvořit plány ke schválení</button>
+        <span id="dg-result" class="muted"></span>
       </div>
       <div id="stp-wrap" hidden class="panel">
         <h3>STP</h3>
