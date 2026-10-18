@@ -144,8 +144,13 @@ def poll_inventory(db: Database, box: SecretBox, limit: int = 200, urgent: bool 
             return True
         except Exception as e:  # zařízení nedostupné, pin nesedí apod.
             log.info("inventura %s selhala: %s", d["serial"], e)
+            from ..rosapi import RosApiError
+
+            text = str(e)
+            if isinstance(e, RosApiError) and e.status is None:
+                text = f"REST přes tunel neodpovídá ({d['tunnel_ip']}:443): {e}"
             try:
-                inventory.store_error(db, d["tenant_id"], d["id"], str(e))
+                inventory.store_error(db, d["tenant_id"], d["id"], text)
             except Exception:
                 log.exception("zápis chyby inventury selhal")
             return False

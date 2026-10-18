@@ -164,6 +164,9 @@ def _fetch(api: RosApi, data: dict[str, Any], errors: list[str], name: str, meth
             raise
         if e.status in (400, 404, 406) or e.status is None and "no such" in str(e):
             return  # menu na tomto zařízení neexistuje
+        if e.status is None:
+            # síťová chyba (timeout, spojení odmítnuto): další sekce by čekaly stejně – konec
+            raise
         errors.append(f"{name}: {e}")
 
 

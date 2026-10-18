@@ -139,3 +139,25 @@ def test_port_info_merges_link_poe_vlan():
     assert p["ether1"]["tagged"] == ["10", "20,30"]
     assert p["bridge"]["tagged"] == ["10"]  # VLAN do CPU
     assert p["ether3"]["link"] == "no-link" and p["ether3"]["pvid"] is None  # vypnutý bridge port
+
+
+def test_collect_stops_on_network_error():
+    """Nedostupné zařízení: po prvním timeoutu konec, ne 60 sekcí × timeout."""
+    import pytest
+
+    from mtcontroller import inventory
+    from mtcontroller.rosapi import RosApiError
+
+    class Dead(FakeApi):
+        def request(self, method, path, body=None, params=None):
+            self.calls.append(path)
+            raise RosApiError(None, "TimeoutError: timed out")
+
+    api = Dead({})
+    with pytest.raises(RosApiError):
+        inventory.collect(api)
+    assert len(api.calls) == 1
+    # chybějící menu (404) dál jen přeskočí
+    api = FakeApi({}, {"/system/routerboard": RosApiError(404, "no such command")})
+    data, errors = inventory.collect(api)
+    assert "routerboard" not in data and errors == []
