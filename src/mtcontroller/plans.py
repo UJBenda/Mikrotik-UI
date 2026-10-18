@@ -24,6 +24,14 @@ CONFIRM_MINUTES = 5  # výchozí okno pro potvrzení změny s automatickým náv
 
 
 def basis_for(module: str, inv: dict) -> str:
+    if module == "takeover":
+        from .takeover import BASIS_SECTIONS
+
+        return inventory.basis_sha(inv, BASIS_SECTIONS)
+    if module == "switch":
+        from .switchcfg import basis
+
+        return basis(inv)
     if module == "ports":
         return portcfg.config_basis(inv)
     if module == "dhcp_snooping":
@@ -186,7 +194,7 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
     superseded = False
     with tenant_scope(db, tenant_id) as tx:
         p = tx.fetchone(
-            """SELECT p.id, p.device_id, p.module, p.status, p.basis_sha, p.created_by, d.state
+            """SELECT p.id, p.device_id, p.module, p.status, p.basis_sha, p.created_by, d.state, d.managed_at
                FROM config_plan p JOIN device d ON d.id = p.device_id
                WHERE p.id = %(i)s FOR UPDATE OF p""", {"i": plan_id})
         if not p:
@@ -195,7 +203,15 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
             raise ServiceError(f"plán není ve stavu draft (je {p['status']})")
         if p["module"] == "vlan":
             raise ServiceError("plány VLAN jsou zatím jen náhled")
-        if module_modes(tx, p["device_id"]).get(p["module"]) != "manage":
+        if p["module"] == "takeover":
+            if p["managed_at"] is not None:
+                raise ServiceError("zařízení už je řízené")
+            if p["state"] != "adopted":
+                raise ServiceError("převzetí lze spustit jen u zařízení, které je online")
+        elif p["module"] == "switch":
+            if p["managed_at"] is None:
+                raise ServiceError("sladění se záměrem je jen pro řízená zařízení")
+        elif module_modes(tx, p["device_id"]).get(p["module"]) != "manage":
             raise ServiceError(f"modul {p['module']} je na zařízení v režimu observe – nejdřív přepni na manage")
         if p["state"] not in ("adopted", "offline"):
             raise ServiceError("zařízení není adoptované")
@@ -259,7 +275,7 @@ def create_port_plan(db: Database, tenant_id: Any, device_id: Any, port: str, de
 
 
 def plan_script(tx: Tx, plan_id: int, device_id: Any) -> dict:
-    r = tx.fetchone("""SELECT script, revert_script, confirm_minutes FROM config_plan
+    r = tx.fetchone("""SELECT module, script, revert_script, confirm_minutes FROM config_plan
                        WHERE id = %(i)s AND device_id = %(d)s AND status = 'queued'""",
                     {"i": plan_id, "d": str(device_id)})
     if not r:
@@ -283,16 +299,26 @@ def finish_plan(tx: Tx, command_id: int, ok: bool) -> None:
 def pending_confirm(tx: Tx, device_id: Any) -> dict | None:
     """Plán čekající na potvrzení, pro který ještě není ve frontě potvrzení."""
     return tx.fetchone(
-        """SELECT p.id, p.tenant_id FROM config_plan p WHERE p.device_id = %(d)s AND p.status = 'confirming'
+        """SELECT p.id, p.tenant_id, p.module, (p.confirm_deadline < now()) AS overdue FROM config_plan p WHERE p.device_id = %(d)s AND p.status = 'confirming'
              AND NOT EXISTS (SELECT 1 FROM device_command c WHERE c.plan_id = p.id AND c.kind = 'confirm_plan'
                              AND c.status IN ('queued', 'sent'))
            ORDER BY p.id LIMIT 1""", {"d": str(device_id)})
 
 
-def confirm_done(tx: Tx, plan_id: int, ok: bool) -> None:
+def confirm_done(tx: Tx, plan_id: int, ok: bool, tenant_id: Any = None) -> None:
+    module = (tx.fetchone("SELECT module FROM config_plan WHERE id = %(i)s", {"i": plan_id}) or {}).get("module")
     if ok:
-        tx.execute("""UPDATE config_plan SET status = 'applied', confirmed_at = now()
-                      WHERE id = %(i)s AND status = 'confirming'""", {"i": plan_id})
+        n = tx.execute("""UPDATE config_plan SET status = 'applied', confirmed_at = now()
+                          WHERE id = %(i)s AND status = 'confirming'""", {"i": plan_id})
+        if n and module == "takeover":
+            from . import takeover
+
+            takeover.finished(tx, tenant_id, plan_id, True)
+    elif module == "takeover":
+        # potvrzení převzetí selhalo = na zařízení neběží bootstrap (vrátilo se ze zálohy)
+        from . import takeover
+
+        takeover.finished(tx, tenant_id, plan_id, False)
 
 
 def rolled_back(tx: Tx, command_id: int) -> dict | None:

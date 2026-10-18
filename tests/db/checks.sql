@@ -392,5 +392,35 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_intent (tenant_id, device_id, ports)
+  SELECT tenant_id, id, '{"ether2": {"mode": "trunk"}}' FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_intent) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí výjimky zařízení tenanta B'; END IF;
+  UPDATE device_intent SET ports = '{}';
+  DELETE FROM device_intent;
+  BEGIN
+    INSERT INTO device_intent (tenant_id, device_id)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', (SELECT id FROM device LIMIT 1));
+    RAISE EXCEPTION 'FAIL: tenant A zapsal výjimku tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR not_null_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 21 výjimky zařízení izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT ports->'ether2'->>'mode' FROM device_intent) IS DISTINCT FROM 'trunk' THEN
+    RAISE EXCEPTION 'FAIL: tenant A změnil výjimky zařízení B';
+  END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

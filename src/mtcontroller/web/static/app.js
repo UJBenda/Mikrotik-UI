@@ -427,6 +427,8 @@ $("ntp-plan").addEventListener("click", async () => {
   } catch (e) { msg(e.message, true); }
 });
 
+const PLAN_MODULE = { takeover: "převzetí do řízení", switch: "sladění se záměrem", dhcp_snooping: "DHCP snooping" };
+
 async function loadPlans() {
   const list = await api("GET", `/tenants/${tenantId}/plans?status=draft`);
   const box = $("plans");
@@ -435,7 +437,7 @@ async function loadPlans() {
   if (!list.length) { box.appendChild(el("p", "Žádné plány nečekají na schválení.", "muted")); return; }
   for (const p of list) {
     const div = el("div", null, "plan");
-    div.appendChild(el("strong", `${p.identity || p.serial} (${p.site || "–"}) – ${p.module.toUpperCase()}`));
+    div.appendChild(el("strong", `${p.identity || p.serial} (${p.site || "–"}) – ${(PLAN_MODULE[p.module] || p.module).toUpperCase()}`));
     div.appendChild(el("div", p.summary));
     div.appendChild(el("pre", p.script));
     const ok = el("button", "Schválit a aplikovat", "small");
@@ -833,12 +835,12 @@ function openSiteTab(key) {
   if (loaders[key]) loaders[key]();
 }
 
-const DETAIL_TABS = ["ports", "sec", "vlan", "hist"];
+const DETAIL_TABS = ["ports", "sec", "vlan", "hist", "ctl"];
 function showDetailTab(key) {
   prefs.detailTab = key; savePrefs();
   for (const k of DETAIL_TABS) { $("dp-" + k).hidden = k !== key; $("dt-" + k).className = k === key ? "active" : ""; }
 }
-for (const k of DETAIL_TABS) $("dt-" + k).addEventListener("click", () => showDetailTab(k));
+for (const k of DETAIL_TABS) $("dt-" + k).addEventListener("click", () => { showDetailTab(k); if (k === "ctl") loadControl(detailId); });
 
 // přepínač ve stylu segmented control: options = [[hodnota, popisek], …]
 function segmented(box, options, value, onChange) {
@@ -1743,6 +1745,7 @@ async function loadNetworks() {
   try { netData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/networks`); }
   catch (e) { return msg(e.message, true); }
   renderNetworks(netData);
+  loadIntent();
 }
 
 $("net-btn").addEventListener("click", loadNetworks);
@@ -2152,6 +2155,7 @@ async function openDetail(id) {
   try { d = await api("GET", `/tenants/${tenantId}/devices/${id}`); } catch (e) { return msg(e.message, true); }
   show("detail");
   showDetailTab(DETAIL_TABS.includes(prefs.detailTab) ? prefs.detailTab : "ports");
+  if (prefs.detailTab === "ctl") loadControl(id);
   const dev = d.device, sm = d.summary;
   $("d-title").textContent = `${dev.identity || dev.serial} – ${dev.model || ""} (${dev.state})`;
   const w = $("d-warn"); w.textContent = "";
@@ -2467,3 +2471,228 @@ async function loadPortHistory(id) {
 
 // přepínání záložek lokality – registrováno po loaderech, aby se po načtení skryly ostatní panely
 for (const [k] of SITE_TABS) $(k + "-btn").addEventListener("click", () => activateSiteTab(k));
+
+
+// --- řízený režim: záměr lokality ----------------------------------------------------------------
+
+let intentData = null;
+let intentNets = [];
+
+async function loadIntent() {
+  try { intentData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/intent`); }
+  catch (e) { return msg(e.message, true); }
+  const cur = intentData.intent;
+  intentNets = cur ? cur.networks.map((n) => ({ ...n })) : [];
+  $("intent-native").checked = cur ? cur.mgmt_native : true;
+  $("intent-auto").checked = cur ? cur.auto_trunk : true;
+  $("intent-suggest").hidden = !intentData.suggested || !intentData.suggested.networks.length;
+  $("intent-state").textContent = cur ? `– ${cur.networks.length} sítí` : "– zatím nenastaven";
+  renderIntent(cur ? cur.access_vlan : null);
+  const ul = $("intent-devs"); ul.textContent = "";
+  for (const d of intentData.devices) {
+    const li = el("li", `${d.name} · ${d.managed ? "řízené" : "sledované"}`, d.managed ? "managed" : "");
+    li.title = d.model || "";
+    ul.appendChild(li);
+  }
+  $("intent-result").textContent = "";
+  const can = canManage();
+  for (const id of ["intent-save", "intent-add", "intent-sync", "intent-suggest"]) $(id).disabled = !can;
+}
+
+function intentInput(n, key, cls, ph) {
+  const i = el("input", null, cls);
+  i.value = key === "dns" ? (n.dns || []).join(", ") : (n[key] == null ? "" : String(n[key]));
+  if (ph) i.placeholder = ph;
+  i.addEventListener("input", () => { n[key] = key === "vlan_id" ? i.value.trim() : i.value; if (key === "vlan_id" || key === "name") renderAccess(); });
+  const td = el("td"); td.appendChild(i);
+  return td;
+}
+
+function renderIntent(access) {
+  const tb = $("intent-rows"); tb.textContent = "";
+  for (const n of intentNets) {
+    const tr = el("tr");
+    const pu = el("select");
+    for (const [k, label] of Object.entries(intentData.purposes)) { const o = el("option", label); o.value = k; pu.appendChild(o); }
+    pu.value = n.purpose || "lan";
+    pu.addEventListener("change", () => { n.purpose = pu.value; });
+    const tdp = el("td"); tdp.appendChild(pu);
+    const rm = el("button", "×", "small secondary"); rm.type = "button"; rm.title = "Odebrat síť";
+    rm.addEventListener("click", () => { intentNets.splice(intentNets.indexOf(n), 1); renderIntent($("intent-access").value); });
+    const tdr = el("td"); tdr.appendChild(rm);
+    tr.append(intentInput(n, "name", "", "např. Kancelář"), intentInput(n, "vlan_id", "vid", "10"), tdp,
+              intentInput(n, "subnet", "", "192.168.10.0/24"), intentInput(n, "gateway", "", "192.168.10.1"),
+              intentInput(n, "dns", "", "volitelné"), tdr);
+    tb.appendChild(tr);
+  }
+  if (!intentNets.length) {
+    const tr = el("tr"); const td = el("td", "Žádné sítě – přidej je nebo je načti ze stávající sítě.", "muted"); td.colSpan = 7;
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+  renderAccess(access);
+}
+
+function renderAccess(keep) {
+  const sel = $("intent-access");
+  const prev = keep != null ? String(keep) : sel.value;
+  sel.textContent = "";
+  for (const n of intentNets) {
+    const o = el("option", `${n.name || "?"} (VLAN ${n.vlan_id || "?"})`); o.value = String(n.vlan_id); sel.appendChild(o);
+  }
+  if ([...sel.children].some((o) => o.value === prev)) sel.value = prev;
+}
+
+$("intent-add").addEventListener("click", () => {
+  intentNets.push({ name: "", vlan_id: "", purpose: intentNets.some((n) => n.purpose === "mgmt") ? "lan" : "mgmt", subnet: "", gateway: "", dns: [] });
+  renderIntent($("intent-access").value);
+});
+$("intent-suggest").addEventListener("click", () => {
+  const sg = intentData.suggested;
+  intentNets = sg.networks.map((n) => ({ ...n }));
+  $("intent-native").checked = sg.mgmt_native; $("intent-auto").checked = sg.auto_trunk;
+  renderIntent(sg.access_vlan);
+  msg("Návrh načten ze sítí na zařízeních – zkontroluj jména a účely a ulož.");
+});
+$("intent-save").addEventListener("click", async () => {
+  const body = {
+    networks: intentNets.map((n) => ({ ...n, dns: typeof n.dns === "string" ? n.dns : (n.dns || []).join(",") })),
+    access_vlan: $("intent-access").value, mgmt_native: $("intent-native").checked, auto_trunk: $("intent-auto").checked,
+  };
+  try { await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/intent`, body); msg("Záměr lokality uložen"); loadIntent(); }
+  catch (e) { msg(e.message, true); }
+});
+const SYNC_RESULT = { ok: "beze změn", plan: "plán čeká na schválení", auto: "jen přidání VLAN – aplikuje se samo",
+  skipped: "přeskočeno", blocked: "nelze" };
+$("intent-sync").addEventListener("click", async () => {
+  let r;
+  try { r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/intent/reconcile`, {}); }
+  catch (e) { return msg(e.message, true); }
+  const ul = $("intent-result"); ul.textContent = "";
+  r.devices = r.devices || [];
+  for (const d of r.devices) {
+    ul.appendChild(el("li", `${d.device}: ${SYNC_RESULT[d.result] || d.result}${d.summary ? " – " + d.summary : ""}${d.reason ? " (" + d.reason + ")" : ""}`,
+                      d.result === "blocked" ? "sev-warning" : ""));
+  }
+  if (!r.devices.length) ul.appendChild(el("li", "Na lokalitě zatím není žádné řízené zařízení.", "muted"));
+  if (r.devices.some((d) => d.result === "plan")) loadPlans();
+});
+
+// --- řízený režim: převzetí a výjimky zařízení -------------------------------------------------------
+
+let ctlData = null;
+let ctlOver = {};
+const CTL_CLASS = { factory: "tovární / prázdná konfigurace", simple: "jednoduchá (bridge bez VLAN)",
+  conforming: "bridge s VLAN filtrováním", custom: "vlastní konfigurace (router, firewall, tunely…)" };
+const MODE_LABEL = { trunk: "trunk", access: "přístup", off: "vypnuto" };
+
+async function loadControl(id) {
+  if (!id) return;
+  try { ctlData = await api("GET", `/tenants/${tenantId}/devices/${id}/takeover`); }
+  catch (e) { return msg(e.message, true); }
+  if (id !== detailId) return;
+  renderControl();
+}
+
+function listInto(ul, items, cls) {
+  ul.textContent = "";
+  for (const x of items || []) ul.appendChild(el("li", x, cls));
+}
+
+function renderControl() {
+  const c = ctlData;
+  ctlOver = JSON.parse(JSON.stringify((c.device_intent && c.device_intent.ports) || {}));
+  const b = $("ctl-badge");
+  b.textContent = c.managed ? "řízené" : "sledované"; b.className = "badge " + (c.managed ? "managed" : "observed");
+  const intro = c.managed
+    ? `Konfiguraci zařízení nastavuje controller podle záměru lokality (od ${fmtTime(c.managed_at)}). Změny sítí nebo výjimek se projeví sladěním.`
+    : "Převzetí smaže současnou konfiguraci a nasadí ji načisto podle záměru lokality. Předtím se udělá záloha; když se zařízení po převzetí do 12 minut neozve přes tunel, samo se z ní vrátí.";
+  $("ctl-intro").textContent = intro;
+  listInto($("ctl-blockers"), c.blockers, "sev-error");
+  listInto($("ctl-warnings"), c.warnings, "sev-warning");
+  const cls = c.classification;
+  $("ctl-removed-d").hidden = c.managed || !cls || !cls.removed.length;
+  if (cls) {
+    listInto($("ctl-removed"), cls.removed);
+    $("ctl-removed-n").textContent = `(${cls.removed.length}) – konfigurace: ${CTL_CLASS[cls.class] || cls.class}`;
+  }
+  $("ctl-body").hidden = !c.model;
+  if (!c.model) return;
+  renderCtlPorts();
+  const vt = $("ctl-vlans"); vt.textContent = "";
+  const name = (p) => { if (p === "bridge") return "správa zařízení"; const x = c.model.ports.find((q) => q.port === p); return x ? x.name : p; };
+  for (const v of c.model.vlans) {
+    const tr = el("tr");
+    tr.append(el("td", String(v.vid) + (v.vid === c.model.mgmt.vid ? " (mgmt)" : "")), el("td", v.name),
+              el("td", v.tagged.map(name).join(", ") || "–", v.tagged.length ? "" : "muted"),
+              el("td", v.untagged.map(name).join(", ") || "–", v.untagged.length ? "" : "muted"));
+    vt.appendChild(tr);
+  }
+  const dm = (c.device_intent && c.device_intent.mgmt) || {};
+  $("ctl-mgmt-mode").value = dm.mode || "";
+  $("ctl-mgmt-addr").value = dm.address || "";
+  $("ctl-mgmt-addr").hidden = dm.mode !== "static";
+  const m = c.model.mgmt, path = c.model.path || {};
+  $("ctl-mgmt-now").textContent = `→ ${m.mode === "static" ? "statická " + m.address : "DHCP"} ve VLAN ${m.vid}${m.native ? " (na trunkách bez tagu)" : " (tagovaně)"}` +
+    (path.address ? `; dnes ${path.address} přes ${path.l3}` : "");
+  const rc = $("ctl-reconcile"); rc.textContent = "";
+  if (c.reconcile) {
+    if (!c.reconcile.changes.length) rc.appendChild(el("li", "Zařízení odpovídá záměru.", "muted"));
+    for (const x of c.reconcile.changes) rc.appendChild(el("li", "rozdíl: " + x));
+  }
+  const custom = cls && cls.class === "custom";
+  $("ctl-custom-l").hidden = !custom || c.managed;
+  $("ctl-custom").checked = false;
+  const go = $("ctl-go");
+  go.hidden = c.managed;
+  go.disabled = !canManage() || (c.blockers || []).length > 0 || !!(c.active_plan && c.active_plan.module === "takeover");
+  go.title = c.active_plan ? `plán #${c.active_plan.id} je ve stavu ${c.active_plan.status}` : "";
+}
+
+function renderCtlPorts() {
+  const c = ctlData;
+  const tb = $("ctl-ports"); tb.textContent = "";
+  const nets = c.model.vlans;
+  for (const p of c.model.ports) {
+    const tr = el("tr");
+    const sel = el("select"); sel.setAttribute("aria-label", "Nastavení portu " + p.name);
+    const opts = [["", "automaticky"], ...nets.map((v) => [`access:${v.vid}`, `přístup – ${v.name} (${v.vid})`]), ["trunk", "trunk (všechny sítě)"], ["off", "vypnuto"]];
+    for (const [v, label] of opts) { const o = el("option", label); o.value = v; sel.appendChild(o); }
+    const o = ctlOver[p.name];
+    sel.value = !o ? "" : o.mode === "access" ? `access:${o.vlan || ""}` : o.mode;
+    sel.disabled = c.model.uplink === p.port;
+    sel.addEventListener("change", () => {
+      if (!sel.value) delete ctlOver[p.name];
+      else if (sel.value.startsWith("access:")) ctlOver[p.name] = { mode: "access", vlan: Number(sel.value.slice(7)) };
+      else ctlOver[p.name] = { mode: sel.value };
+    });
+    const tds = el("td"); tds.appendChild(sel);
+    const net = nets.find((v) => v.vid === p.pvid);
+    const res = p.mode === "access" ? `přístup – ${net ? net.name : "VLAN " + p.pvid}` : p.mode === "trunk"
+      ? (c.model.mgmt.native ? "trunk, mgmt bez tagu" : "trunk, vše tagované") : "vypnuto";
+    tr.append(el("td", p.name + (p.name !== p.port ? ` (${p.port})` : "")), tds, el("td", res, "mode-" + p.mode),
+              el("td", p.reason + (p.trusted ? " · DHCP trusted" : ""), "muted"));
+    tb.appendChild(tr);
+  }
+}
+
+$("ctl-mgmt-mode").addEventListener("change", () => { $("ctl-mgmt-addr").hidden = $("ctl-mgmt-mode").value !== "static"; });
+$("ctl-save").addEventListener("click", async () => {
+  const mode = $("ctl-mgmt-mode").value;
+  const body = { ports: ctlOver, mgmt: mode ? { mode, address: $("ctl-mgmt-addr").value.trim() } : {} };
+  try { await api("PUT", `/tenants/${tenantId}/devices/${detailId}/intent`, body); msg("Výjimky uloženy"); loadControl(detailId); }
+  catch (e) { msg(e.message, true); }
+});
+$("ctl-go").addEventListener("click", async () => {
+  const c = ctlData;
+  const custom = c.classification && c.classification.class === "custom";
+  if (custom && !$("ctl-custom").checked) return msg("Zařízení má vlastní konfiguraci – nejdřív potvrď, že bude smazána.", true);
+  const n = (c.classification ? c.classification.removed.length : 0);
+  if (!(await ask(`Vytvořit plán převzetí? Po schválení se zařízení zazálohuje, resetuje a nastaví podle záměru (výpadek ~2–3 min).` +
+                  (n ? `\n\nZanikne: ${n} položek současné konfigurace.` : ""), "Vytvořit plán"))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/takeover`, { confirm_custom: custom && $("ctl-custom").checked });
+    msg(`Plán převzetí #${r.plan_id} čeká na schválení v Plánech změn.`);
+    loadPlans();
+    loadControl(detailId);
+  } catch (e) { msg(e.message, true); }
+});

@@ -102,6 +102,21 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (!byId["net-rows"].textContent.includes("Relay → 192.168.30.10") || !byId["net-rows"].textContent.includes("1 / 100"))
       errors.push("sítě: DHCP sloupce " + byId["net-rows"].textContent.slice(0, 200));
     if (byId["net-bridges"].children.length !== 4) errors.push("sítě: bridge");
+    // záměr lokality (řízený režim)
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    if (byId["intent-rows"].children.length !== 3) errors.push("záměr: řádky " + byId["intent-rows"].children.length);
+    if (byId["intent-access"].value !== "10" || !byId["intent-native"].checked) errors.push("záměr: volby");
+    if (byId["intent-devs"].children.length !== 2 || !byId["intent-devs"].textContent.includes("řízené")) errors.push("záměr: zařízení");
+    {
+      const n0 = requests.length;
+      await byId["intent-add"].fire("click");
+      if (byId["intent-rows"].children.length !== 4) errors.push("záměr: přidání sítě");
+      await byId["intent-save"].fire("click");
+      await byId["intent-sync"].fire("click");
+      const rq = requests.slice(n0);
+      if (!rq.some((r) => r.startsWith("PUT") && r.endsWith("/intent"))) errors.push("záměr: uložení");
+      if (!rq.some((r) => r.startsWith("POST") && r.endsWith("/intent/reconcile"))) errors.push("záměr: sladění");
+    }
     if (!byId["dg-rogue"].textContent.includes("E4:5F:01:00:00:09")) errors.push("DHCP: cizí server");
     if (!byId["dg-missing"].textContent.includes("192.168.30.10")) errors.push("DHCP: nedohledaný server");
     const dgRows = byId["dg-devices"].children;
@@ -195,6 +210,27 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/modules"))) errors.push("dialog: potvrzení neposlalo POST");
         await tick();
       }
+    }
+    // řízení: náhled převzetí, výjimka portu, plán přes vlastní dialog
+    {
+      const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+      await byId["dt-ctl"].fire("click"); await tick();
+      if (byId["dp-ctl"].hidden || byId["ctl-ports"].children.length !== 6) errors.push("řízení: porty " + byId["ctl-ports"].children.length);
+      if (!byId["ctl-ports"].textContent.includes("ether5-tiskarna (ether5)") || !byId["ctl-ports"].textContent.includes("uplink"))
+        errors.push("řízení: jména/důvody portů");
+      if (byId["ctl-vlans"].children.length !== 3 || byId["ctl-badge"].textContent !== "sledované") errors.push("řízení: VLAN/stav");
+      if (byId["ctl-go"].disabled) errors.push("řízení: tlačítko převzetí");
+      const sel = byId["ctl-ports"].children[1].children[1].children[0];
+      sel.value = "access:20"; await sel.fire("change");
+      const n0 = requests.length;
+      await byId["ctl-save"].fire("click");
+      if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.endsWith("/intent"))) errors.push("řízení: uložení výjimek");
+      const p = byId["ctl-go"].onclick ? byId["ctl-go"].onclick({}) : byId["ctl-go"].fire("click");
+      await tick();
+      if (byId["ask"].hidden) errors.push("řízení: dialog převzetí");
+      else { byId["ask-ok"].onclick(); await p; }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/takeover"))) errors.push("řízení: plán převzetí");
+      await byId["dt-ports"].fire("click");
     }
     // historie portů: dva dny, výběr portu filtruje
     const ph = byId["d-ph"].children;

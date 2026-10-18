@@ -432,3 +432,18 @@ td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fo
 .modal-box{background:var(--card,#fff);color:inherit;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:480px;width:100%;padding:16px 18px}
 .modal-box p{margin:0 0 14px;white-space:pre-line;line-height:1.45}
 .modal-acts{display:flex;justify-content:flex-end;gap:8px}
+
+/* řízený režim: záměr lokality a převzetí */
+.intent{margin-bottom:12px}
+.intent-nets input{width:100%;min-width:60px;box-sizing:border-box}
+.intent-nets input.vid{width:64px;min-width:64px}
+.intent-opts,.intent-acts{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:8px 0}
+.intent-opts label,.intent-acts label{display:flex;gap:6px;align-items:center}
+.intent-devs{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:6px 0}
+.intent-devs li{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:12px}
+.intent-devs li.managed{border-color:var(--ok);color:var(--ok)}
+.badge.managed{color:var(--ok);border-color:var(--ok);background:var(--ok-weak)}
+.badge.observed{color:var(--muted)}
+.ctl-mgmt{margin:8px 0}
+td.mode-trunk{font-weight:600}
+td.mode-off{color:var(--muted)}

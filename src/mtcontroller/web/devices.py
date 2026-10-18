@@ -59,7 +59,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
                 """SELECT d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state, d.note,
                           host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
                           d.last_checkin_at, d.last_status, d.adopted_at, d.inventory_at, d.inventory_error,
-                          d.backup_at
+                          d.backup_at, d.managed_at
                    FROM device d LEFT JOIN site s ON s.id = d.site_id WHERE d.id = %(d)s""", {"d": did})
             if not d:
                 raise NotFound("zařízení neexistuje")
@@ -809,6 +809,71 @@ async def alert_ack(request: Request, p: Principal, tid: str) -> Response:
     return json_response({"ok": True})
 
 
+# --- řízený režim (F5a): záměr lokality, převzetí, sladění ------------------------------------------
+
+@endpoint(READ)
+async def site_intent_get(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    return json_response(await run_in_threadpool(takeover.site_intent_view, st.db, tid, sid))
+
+
+@endpoint(MANAGE)
+async def site_intent_put(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    data = await _json(request)
+    new = await run_in_threadpool(takeover.set_site_intent, st.db, tid, sid, data, p.user_id, client_ip(request))
+    return json_response({"ok": True, "intent": new})
+
+
+@endpoint(MANAGE)
+async def site_intent_reconcile(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    out = await run_in_threadpool(takeover.generate_switch_plans, st.db, st.settings, tid, sid, p.user_id,
+                                  client_ip(request))
+    return json_response({"devices": out})
+
+
+@endpoint(READ)
+async def device_takeover_get(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    return json_response(await run_in_threadpool(takeover.preview, st.db, tid, did))
+
+
+@endpoint(MANAGE)
+async def device_takeover_post(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    out = await run_in_threadpool(takeover.create_takeover_plan, st.db, st.settings, st.box, tid, did,
+                                  data.get("confirm_custom") is True, p.user_id, client_ip(request))
+    return json_response(out, 201)
+
+
+@endpoint(OPERATE)
+async def device_intent_put(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    new = await run_in_threadpool(takeover.set_device_intent, st.db, tid, did, data, p.user_id, client_ip(request))
+    return json_response({"ok": True, "device_intent": new})
+
+
 def routes() -> list[Route]:
     d = T + "/devices/{device_id}"
     s = T + "/sites/{site_id}"
@@ -816,6 +881,9 @@ def routes() -> list[Route]:
         Route(d, device_detail, methods=["GET"]),
         Route(d, device_update, methods=["PATCH"]),
         Route(d + "/modules", device_module, methods=["POST"]),
+        Route(d + "/takeover", device_takeover_get, methods=["GET"]),
+        Route(d + "/takeover", device_takeover_post, methods=["POST"]),
+        Route(d + "/intent", device_intent_put, methods=["PUT"]),
         Route(d + "/backup", request_backup, methods=["POST"]),
         Route(d + "/backups/{backup_id}/diff", backup_diff, methods=["GET"]),
         Route(d + "/backups/{backup_id}/download", backup_download, methods=["GET"]),
@@ -831,6 +899,9 @@ def routes() -> list[Route]:
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/policy/{module}", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/networks", site_networks, methods=["GET"]),
+        Route(s + "/intent", site_intent_get, methods=["GET"]),
+        Route(s + "/intent", site_intent_put, methods=["PUT"]),
+        Route(s + "/intent/reconcile", site_intent_reconcile, methods=["POST"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),

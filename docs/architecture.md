@@ -474,9 +474,10 @@ Worker denně nechá zařízení zkontrolovat dostupnou verzi v jeho kanálu
 (`/system/package/update/check-for-updates`). Tabulka známých problémů verzí
 (`ros_versions.py`) se zobrazuje u zařízení. Hromadný rollout aktualizací je F3.
 
-## Řízený režim lokality (F5) – návrh k diskusi
+## Řízený režim lokality (F5)
 
-Stav: **návrh**, nic z toho zatím není implementované. Cíl: uživatel neřeší bridge, VLAN tabulky
+Stav: **F5a (switch) implementováno** a čeká na ověření v labu (test-plan 9c); F5b–F6 jsou návrh.
+Cíl: uživatel neřeší bridge, VLAN tabulky
 ani CAPsMAN. Nadefinuje sítě lokality, zařízením dá roli a controller z toho sám spočítá
 a nasadí celou konfiguraci. Vychází z UniFi, ale bez věcí, které na MikroTiku nejdou
 spolehlivě automatizovat.
@@ -671,3 +672,22 @@ když se graf změnil (nové AP, nový cizí silný soused).
    bez skenu (dnešní předpoklad + šířka podle hustoty).
 3. **F5c – RF**: noční sken, RF graf, DSatur + lokální zlepšení, výkon 2,4 GHz.
 4. **F6 – router + firewall**: z téže definice sítí VLAN rozhraní, DHCP servery, zóny.
+
+### Implementace F5a – rozhodnutí a odchylky od návrhu
+
+| Téma | Implementace | Důvod |
+| --- | --- | --- |
+| Záměr lokality | `site_policy` module `intent` (sítě, `mgmt_vlan`, `mgmt_native`, `access_vlan`, `auto_trunk`), validace `intent.py` | jeden dokument, bez nové tabulky; SSID s hesly přijdou do vlastní tabulky (F5b) |
+| Výjimky zařízení | tabulka `device_intent` (porty pod současnými jmény, management dhcp/static) | RLS jako ostatní data tenanta |
+| Management na zařízení | L3 přímo na bridgi, bridge `pvid` = VLAN managementu (netagovaný člen) | stejné pro nativní i tagovanou mgmt a i pro VLAN 1; žádné VLAN rozhraní |
+| Způsob adresy | když výjimka nic neříká, zachová se dnešní (DHCP / statická z inventury) | zařízení se po převzetí musí ozvat |
+| Trunk | uplink + porty se sousedem MikroTik nebo LLDP schopností bridge/wlan-ap; telefony (telephone) ne | IP telefony hlásí bridge kvůli průchozímu portu |
+| Převzetí | plán `takeover`: příkaz udělá `.backup` s náhodným heslem (SecretBox), stáhne bootstrap z `/api/checkin/bootstrap?id=` (jen pro příkaz ve stavu sent) a po ack `reset-configuration keep-users=yes no-defaults=yes run-after-reset` | konfigurace načisto, deterministický výsledek |
+| Návrat | bootstrap nejdřív uloží `mtc-revert` (komentář `mtc-takeover`) + tik; po 12 min bez potvrzení `backup load`; chyba konfigurace = návrat hned | polovičatou konfiguraci nesmí jít potvrdit |
+| Potvrzení | check-in hlásí `tk=1` (běží bootstrap); controller potvrdí až s `tk=1` a běžícím tunelem; potvrzení na zařízení ověří značku – po návratu ze zálohy selže → `rolled_back` | ozvání staré konfigurace nesmí převzetí potvrdit |
+| Certifikát REST | při `tk=1` controller přijme nový otisk (auditováno), při návratu obnoví původní | reset může certifikát smazat |
+| Sladění | plán `switch` = rozdíl modelu proti inventuře (porty bridge, položky VLAN, loop protect) s commit-confirm; jen-přidávající plány se při `auto_trunk` schválí samy | automatická distribuce VLAN bez rizika přerušení |
+| Flash | soubory převzetí jdou do `flash/`, pokud zařízení tuhle složku má | jinak by v RAM nepřežily restart |
+
+Otevřené (po labu): drift řízených zařízení (alert na ruční změnu), sladění spouštěné workerem
+po inventuře (dnes tlačítkem), hardening vstupu na řízeném switchi, CAPsMAN a SSID (F5b).

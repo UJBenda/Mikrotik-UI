@@ -132,7 +132,10 @@ def checkin_source(checkin_url: str, key: str, opts: FetchOpts) -> str:
 :local ver [/system resource get version]
 :local up [/system resource get uptime]
 :local cpu [/system resource get cpu-load]
-:local body ("{{\\"version\\":\\"" . $ver . "\\",\\"uptime\\":\\"" . $up . "\\",\\"cpu\\":" . $cpu . ",\\"sstp\\":\\"" . $sstp . "\\",\\"fp\\":\\"" . $fp . "\\"}}")
+# 1 = bezi prevzeti do rizeni (bootstrap po resetu ceka na potvrzeni)
+:local tk 0
+:if ([:len [/system script find name="mtc-revert" comment="mtc-takeover"]] > 0) do={{ :set tk 1 }}
+:local body ("{{\\"version\\":\\"" . $ver . "\\",\\"uptime\\":\\"" . $up . "\\",\\"cpu\\":" . $cpu . ",\\"sstp\\":\\"" . $sstp . "\\",\\"fp\\":\\"" . $fp . "\\",\\"tk\\":" . $tk . "}}")
 /file remove [find name="mtc-cmd.rsc"]
 :do {{
   :local r [/tool fetch url=$url http-method=post http-header-field=$hdr http-data=$body dst-path="mtc-cmd.rsc" check-certificate={opts.check_certificate} as-value]
@@ -143,16 +146,22 @@ def checkin_source(checkin_url: str, key: str, opts: FetchOpts) -> str:
 """
 
 
-def adopt_stage2(checkin_url: str, key: str, opts: FetchOpts) -> str:
-    """Krok 2 (odpověď na registraci): nainstaluje check-in skript a scheduler."""
+def checkin_install(checkin_url: str, key: str, opts: FetchOpts) -> str:
+    """Instalace skriptu mtc-checkin a jeho scheduleru (adopce i bootstrap převzetí)."""
     src = checkin_source(checkin_url, key, opts)
-    return f"""# MikroTik controller - adopce, krok 2
-{{
-/system scheduler remove [find name="mtc-checkin"]
+    return f"""/system scheduler remove [find name="mtc-checkin"]
 /system script remove [find name="mtc-checkin"]
 /system script add name="mtc-checkin" policy={SCRIPT_POLICY} dont-require-permissions=no comment="mtc" source={q_source(src)}
 # explicitni start: RouterOS 7.24-7.24.4 nespousti scheduler s vychozim datem/casem startu
 /system scheduler add name="mtc-checkin" interval=1m start-date=[/system clock get date] start-time=00:00:00 policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run mtc-checkin"
+"""
+
+
+def adopt_stage2(checkin_url: str, key: str, opts: FetchOpts) -> str:
+    """Krok 2 (odpověď na registraci): nainstaluje check-in skript a scheduler."""
+    return f"""# MikroTik controller - adopce, krok 2
+{{
+{checkin_install(checkin_url, key, opts).rstrip()}
 :log info "mtc: zarizeni zaregistrovano, ceka na schvaleni v controlleru"
 :execute script="/system script run mtc-checkin"
 }}

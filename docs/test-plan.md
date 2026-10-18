@@ -352,6 +352,35 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
     Klient po `ipconfig /release` + `/renew` dostane novou IP. Pošli výpis, kdyby `make-static`
     ze skriptu hlásil chybu.
 
+## 9c. Řízený režim – převzetí switche (F5a)
+
+Jen na testovacím kusu, který smíš resetovat. Ideálně switch (CRS) nebo hEX, kterým jde
+uplink k routeru labu; do jiného portu notebook.
+
+1. **Předpoklady RouterOS** (odpovědi mi pošli – podle nich případně upravím bootstrap):
+   - bod 6 z 9b (`backup load` ze skriptu bez potvrzování) – na něm stojí návrat;
+   - `/system reset-configuration keep-users=yes no-defaults=yes skip-backup=yes run-after-reset=x.rsc`
+     se souborem, který obsahuje jen `:log warning MTC-BOOT` – po startu je v logu `MTC-BOOT`?
+     A zůstal certifikát `mtc-rest` (`/certificate print`) a uživatel `mtc-ctl` (`/user print`)?
+2. **Záměr lokality**: Lokalita → Sítě → Záměr lokality. Sítě: management (VLAN např. 99,
+   účel management, podsíť a brána labu), kancelář (VLAN 10), hosté (VLAN 20). „Management bez
+   tagu na trunkách“ nech zaškrtnuté (router labu posílá síť bez tagu). Uložit.
+3. **Náhled**: detail switche → záložka Řízení. Zkontroluj: uplink je port k routeru, port
+   s notebookem je „přístup – Kancelář“, VLAN tabulka, žádná červená překážka. Notebookový port
+   můžeš přepnout na management, ať se k switchi dostaneš i po převzetí („přístup – Management“,
+   Uložit výjimky).
+4. **Převzetí**: Vytvořit plán převzetí → Plány změn → Schválit a aplikovat. Během ~1 min se
+   switch zazálohuje a resetuje; v logu na zařízení (Winbox přes MAC) `mtc: bootstrap prevzeti zacina`
+   a `mtc: bootstrap hotov`. Do pár minut se ozve přes tunel, plán přejde na **applied** a záložka
+   Řízení ukáže „řízené“. Pošli `/export` po převzetí.
+5. **Návrat**: na druhém (ještě nepřevzatém) kusu schval převzetí a hned po resetu **odpoj uplink**.
+   Za ~12 min se switch sám vrátí ze zálohy (restart do původní konfigurace); po zapojení uplinku se
+   ozve a plán bude **rolled_back** (hlásí to revert skript; když hlášení neprojde, pozná to controller
+   z prvního check-inu po termínu, který přijde ze staré konfigurace).
+6. **Sladění**: na řízené lokalitě přidej v záměru síť (VLAN 30) → Sladit řízená zařízení. Čekám
+   „jen přidání VLAN – aplikuje se samo“ a na switchi `/interface bridge vlan print` řádek 30
+   tagovaný na trunkách.
+
 ## 10. Řešení problémů
 
 | Příznak | Kde hledat |

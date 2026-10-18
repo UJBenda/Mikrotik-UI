@@ -136,6 +136,27 @@
         <tbody id="wifi-caps"></tbody></table>
       </div>
       <div id="net-wrap" hidden class="pane">
+        <details id="intent-card" class="fold intent" open>
+          <summary>Záměr lokality – řízený režim <span id="intent-state" class="muted"></span></summary>
+          <p class="muted">Sítě, které na lokalitě chceš mít. Řízená zařízení z nich controller nastaví sám: porty ke switchům
+            a AP jsou trunky se všemi sítěmi, ostatní porty jsou přístupové ve výchozí síti. Zařízení převezmeš v jeho
+            detailu na záložce Řízení.</p>
+          <table class="intent-nets"><thead><tr><th>Jméno</th><th>VLAN</th><th>Účel</th><th>Podsíť</th><th>Brána</th><th>DNS</th><th></th></tr></thead>
+          <tbody id="intent-rows"></tbody></table>
+          <div class="intent-opts">
+            <button id="intent-add" type="button" class="small secondary">+ Síť</button>
+            <label>Výchozí síť portů <select id="intent-access"></select></label>
+            <label><input type="checkbox" id="intent-native"> Management bez tagu na trunkách</label>
+            <label><input type="checkbox" id="intent-auto"> Trunky rozšiřovat automaticky</label>
+          </div>
+          <div class="intent-acts">
+            <button id="intent-save" type="button" class="small">Uložit záměr</button>
+            <button id="intent-suggest" type="button" class="small secondary" hidden>Načíst ze stávající sítě</button>
+            <button id="intent-sync" type="button" class="small secondary">Sladit řízená zařízení</button>
+          </div>
+          <ul id="intent-devs" class="intent-devs"></ul>
+          <ul id="intent-result"></ul>
+        </details>
         <ul id="net-warn"></ul>
         <table class="nets"><thead><tr><th>Název</th><th>VLAN ID</th><th>Router</th><th>Podsíť</th><th>DHCP</th><th>IP leases</th><th>Volné</th><th>VLAN na zařízeních</th></tr></thead>
         <tbody id="net-rows"></tbody></table>
@@ -292,6 +313,7 @@
         <button id="dt-sec" type="button">Bezpečnost a firewall</button>
         <button id="dt-vlan" type="button">VLAN a rozhraní</button>
         <button id="dt-hist" type="button">Zálohy a historie</button>
+        <button id="dt-ctl" type="button">Řízení</button>
       </div>
       <div id="dp-ports" class="dpane">
       <div class="ports-head">
@@ -348,6 +370,30 @@
       <details class="fold" open><summary>Sousedé (MNDP/LLDP) <span id="d-neigh-n" class="muted"></span></summary>
       <table><thead><tr><th>Port</th><th>Identita</th><th>Model</th><th>Adresa</th><th>MAC</th></tr></thead><tbody id="d-neigh"></tbody></table>
       </details>
+      </div>
+      <div id="dp-ctl" class="dpane" hidden>
+      <h3>Řízení zařízení <span id="ctl-badge" class="badge"></span></h3>
+      <p id="ctl-intro" class="muted"></p>
+      <ul id="ctl-blockers"></ul>
+      <ul id="ctl-warnings"></ul>
+      <details id="ctl-removed-d" class="fold" hidden><summary>Co převzetí odstraní <span id="ctl-removed-n" class="muted"></span></summary>
+        <ul id="ctl-removed"></ul></details>
+      <div id="ctl-body" hidden>
+        <h4>Porty</h4>
+        <table class="ptable"><thead><tr><th>Port</th><th>Nastavení</th><th>Výsledek</th><th>Proč</th></tr></thead><tbody id="ctl-ports"></tbody></table>
+        <h4>VLAN</h4>
+        <table><thead><tr><th>VLAN</th><th>Síť</th><th>Tagované</th><th>Netagované</th></tr></thead><tbody id="ctl-vlans"></tbody></table>
+        <div class="inline ctl-mgmt"><span>Management:</span>
+          <select id="ctl-mgmt-mode" aria-label="Management"><option value="">jak je dnes</option><option value="dhcp">DHCP</option><option value="static">statická adresa</option></select>
+          <input id="ctl-mgmt-addr" placeholder="192.168.99.11/24" size="18" hidden aria-label="Adresa managementu">
+          <span id="ctl-mgmt-now" class="muted"></span></div>
+        <ul id="ctl-reconcile"></ul>
+        <div class="intent-acts">
+          <button id="ctl-save" type="button" class="small secondary">Uložit výjimky</button>
+          <label id="ctl-custom-l" hidden><input type="checkbox" id="ctl-custom"> Rozumím, že vlastní konfigurace zařízení bude smazána</label>
+          <button id="ctl-go" type="button" class="small">Vytvořit plán převzetí</button>
+        </div>
+      </div>
       </div>
       <div id="dp-hist" class="dpane" hidden>
       <h3>Zálohy</h3>

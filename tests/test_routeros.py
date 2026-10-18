@@ -177,3 +177,28 @@ def test_upgrade_scripts():
             routeros.upgrade_body(bad)
         with pytest.raises(ValueError):
             routeros.upgrade_tail(bad)
+
+
+def test_takeover_scripts():
+    """Převzetí do řízení (switchcfg): příkaz, bootstrap, potvrzení, sladění – ASCII a vyvážené."""
+    import test_switchcfg as t
+
+    from mtcontroller import switchcfg
+
+    m = switchcfg.build(t.INV, t.INTENT, {"ports": {"sfp1": {"mode": "off"}}}, model_name="CRS326", identity="SW")
+    boot = switchcfg.bootstrap(m, routeros.provision_body(P, OPTS),
+                               routeros.checkin_install("https://c.example/api/checkin", "KEY", OPTS),
+                               reverted_url="https://c.example/api/checkin/ack?id=9&status=reverted",
+                               auth_header="Authorization: Bearer KEY", check_certificate="yes-without-crl",
+                               backup_password="PW")
+    cmd = routeros.wrap_command("https://c.example/api/checkin/ack?id=9", "KEY",
+                                switchcfg.takeover_body("https://c.example/api/checkin/bootstrap?id=9",
+                                                        "Authorization: Bearer KEY", "yes-without-crl", "PW"),
+                                OPTS, tail=switchcfg.TAKEOVER_TAIL)
+    conf = routeros.wrap_command("https://c.example/api/checkin/ack?id=10", "KEY", switchcfg.TAKEOVER_CONFIRM, OPTS)
+    rec = switchcfg.reconcile(t._managed_inv(), switchcfg.build(t._managed_inv(), t.INTENT, {"ports": {"ether2": {"mode": "off"}}}))
+    for s in (boot, cmd, conf, rec["apply"], rec["revert"]):
+        assert _balanced(s), s
+        s.encode("ascii")
+    # check-in hlásí běžící převzetí
+    assert 'comment="mtc-takeover"' in routeros.checkin_source("https://c.example/api/checkin", "KEY", OPTS)

@@ -2905,6 +2905,407 @@
    "module_mode": "manage",
    "pending": [],
    "oui": true
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/intent": {
+   "intent": {
+    "networks": [
+     {
+      "name": "Kancelář",
+      "vlan_id": 10,
+      "purpose": "lan",
+      "subnet": null,
+      "gateway": null,
+      "dns": []
+     },
+     {
+      "name": "Hosté",
+      "vlan_id": 20,
+      "purpose": "hoste",
+      "subnet": null,
+      "gateway": null,
+      "dns": []
+     },
+     {
+      "name": "Management",
+      "vlan_id": 99,
+      "purpose": "mgmt",
+      "subnet": "192.168.77.0/24",
+      "gateway": "192.168.77.1",
+      "dns": []
+     }
+    ],
+    "mgmt_vlan": 99,
+    "mgmt_native": true,
+    "access_vlan": 10,
+    "auto_trunk": true
+   },
+   "suggested": null,
+   "purposes": {
+    "mgmt": "management",
+    "lan": "zaměstnanci / LAN",
+    "hoste": "hosté",
+    "iot": "IoT",
+    "kamery": "kamery",
+    "voip": "telefony",
+    "jine": "jiné"
+   },
+   "devices": [
+    {
+     "id": "06813aef-ac70-438a-a7d6-7859862f16ed",
+     "name": "gw",
+     "model": "RB5009",
+     "role": "gateway",
+     "managed": false
+    },
+    {
+     "id": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
+     "name": "sw",
+     "model": "CRS326",
+     "role": "switch",
+     "managed": true
+    }
+   ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/takeover": {
+   "managed": false,
+   "managed_at": null,
+   "state": "adopted",
+   "has_intent": true,
+   "device_intent": {
+    "ports": {
+     "sfp1": {
+      "mode": "off"
+     }
+    },
+    "mgmt": {}
+   },
+   "active_plan": null,
+   "ports": [
+    {
+     "name": "ether1",
+     "port": "ether1"
+    },
+    {
+     "name": "ether2",
+     "port": "ether2"
+    },
+    {
+     "name": "ether3",
+     "port": "ether3"
+    },
+    {
+     "name": "ether4",
+     "port": "ether4"
+    },
+    {
+     "name": "ether5-tiskarna",
+     "port": "ether5"
+    },
+    {
+     "name": "sfp1",
+     "port": "sfp1"
+    }
+   ],
+   "model": {
+    "bridge": "bridge",
+    "ports": [
+     {
+      "port": "ether1",
+      "name": "ether1",
+      "mode": "trunk",
+      "reason": "uplink (MAC brány v tabulce bridge)",
+      "comment": null,
+      "pvid": 99,
+      "frame_types": "admit-all",
+      "loop": false,
+      "trusted": true
+     },
+     {
+      "port": "ether2",
+      "name": "ether2",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": null,
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     },
+     {
+      "port": "ether3",
+      "name": "ether3",
+      "mode": "trunk",
+      "reason": "soused cAP-chodba",
+      "comment": null,
+      "pvid": 99,
+      "frame_types": "admit-all",
+      "loop": false,
+      "trusted": false
+     },
+     {
+      "port": "ether4",
+      "name": "ether4",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": null,
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     },
+     {
+      "port": "ether5",
+      "name": "ether5-tiskarna",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": "ether5-tiskarna",
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     },
+     {
+      "port": "sfp1",
+      "name": "sfp1",
+      "mode": "off",
+      "reason": "výjimka",
+      "comment": null,
+      "pvid": null,
+      "frame_types": null,
+      "loop": false,
+      "trusted": false
+     }
+    ],
+    "vlans": [
+     {
+      "vid": 10,
+      "name": "Kancelář",
+      "tagged": [
+       "ether1",
+       "ether3"
+      ],
+      "untagged": [
+       "ether2",
+       "ether4",
+       "ether5"
+      ]
+     },
+     {
+      "vid": 20,
+      "name": "Hosté",
+      "tagged": [
+       "ether1",
+       "ether3"
+      ],
+      "untagged": []
+     },
+     {
+      "vid": 99,
+      "name": "Management",
+      "tagged": [],
+      "untagged": [
+       "bridge",
+       "ether1",
+       "ether3"
+      ]
+     }
+    ],
+    "uplink": "ether1",
+    "mgmt": {
+     "vid": 99,
+     "native": true,
+     "mode": "dhcp"
+    },
+    "path": {
+     "l3": "bridge",
+     "address": "192.168.77.50/24",
+     "gateway": "192.168.77.1",
+     "mode": "dhcp",
+     "uplink": "ether1",
+     "tagged_vid": null,
+     "how": "MAC brány v tabulce bridge",
+     "dns": []
+    },
+    "snooping": true,
+    "identity": "SW",
+    "timezone": "Europe/Prague",
+    "ntp": [
+     "tik.cesnet.cz",
+     "tak.cesnet.cz"
+    ],
+    "blockers": [],
+    "warnings": [
+     "management přes DHCP – doporučuji rezervaci adresy na DHCP serveru"
+    ]
+   },
+   "classification": {
+    "class": "simple",
+    "removed": [],
+    "custom": []
+   },
+   "blockers": [],
+   "warnings": [
+    "management přes DHCP – doporučuji rezervaci adresy na DHCP serveru"
+   ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/c98a55a0-459a-4cc5-823b-67fa7d9cd27c/takeover": {
+   "managed": true,
+   "managed_at": "2026-10-18T20:00:00+02:00",
+   "state": "adopted",
+   "has_intent": true,
+   "device_intent": {
+    "ports": {},
+    "mgmt": {}
+   },
+   "active_plan": null,
+   "ports": [],
+   "model": {
+    "bridge": "bridge",
+    "ports": [
+     {
+      "port": "ether1",
+      "name": "ether1",
+      "mode": "trunk",
+      "reason": "uplink (MAC brány v tabulce bridge)",
+      "comment": null,
+      "pvid": 99,
+      "frame_types": "admit-all",
+      "loop": false,
+      "trusted": true
+     },
+     {
+      "port": "ether2",
+      "name": "ether2",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": null,
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     },
+     {
+      "port": "ether3",
+      "name": "ether3",
+      "mode": "trunk",
+      "reason": "soused cAP-chodba",
+      "comment": null,
+      "pvid": 99,
+      "frame_types": "admit-all",
+      "loop": false,
+      "trusted": false
+     },
+     {
+      "port": "ether4",
+      "name": "ether4",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": null,
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     },
+     {
+      "port": "ether5",
+      "name": "ether5-tiskarna",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": "ether5-tiskarna",
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     },
+     {
+      "port": "sfp1",
+      "name": "sfp1",
+      "mode": "access",
+      "reason": "výchozí",
+      "comment": null,
+      "pvid": 10,
+      "frame_types": "admit-only-untagged-and-priority-tagged",
+      "loop": true,
+      "trusted": false
+     }
+    ],
+    "vlans": [
+     {
+      "vid": 10,
+      "name": "Kancelář",
+      "tagged": [
+       "ether1",
+       "ether3"
+      ],
+      "untagged": [
+       "ether2",
+       "ether4",
+       "ether5",
+       "sfp1"
+      ]
+     },
+     {
+      "vid": 20,
+      "name": "Hosté",
+      "tagged": [
+       "ether1",
+       "ether3"
+      ],
+      "untagged": []
+     },
+     {
+      "vid": 99,
+      "name": "Management",
+      "tagged": [],
+      "untagged": [
+       "bridge",
+       "ether1",
+       "ether3"
+      ]
+     }
+    ],
+    "uplink": "ether1",
+    "mgmt": {
+     "vid": 99,
+     "native": true,
+     "mode": "dhcp"
+    },
+    "path": {
+     "l3": "bridge",
+     "address": "192.168.77.50/24",
+     "gateway": "192.168.77.1",
+     "mode": "dhcp",
+     "uplink": "ether1",
+     "tagged_vid": null,
+     "how": "MAC brány v tabulce bridge",
+     "dns": []
+    },
+    "snooping": false,
+    "identity": "mtc-switch",
+    "timezone": "Europe/Prague",
+    "ntp": [
+     "tik.cesnet.cz",
+     "tak.cesnet.cz"
+    ],
+    "blockers": [],
+    "warnings": [
+     "DHCP snooping vynechán: čip nemá HW podporu (běžel by na CPU)",
+     "management přes DHCP – doporučuji rezervaci adresy na DHCP serveru"
+    ]
+   },
+   "classification": {
+    "class": "simple",
+    "removed": [],
+    "custom": []
+   },
+   "blockers": [],
+   "warnings": [],
+   "reconcile": {
+    "changes": [
+     "nová VLAN 30 (Kamery)"
+    ],
+    "additive": true
+   }
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

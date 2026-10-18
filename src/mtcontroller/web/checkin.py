@@ -97,6 +97,23 @@ async def ack(request: Request) -> Response:
     return script_response("ok\n" if ok else "ignored\n")
 
 
+async def bootstrap(request: Request) -> Response:
+    """Bootstrap převzetí do řízení – stahuje ho zařízení během schváleného příkazu."""
+    from .. import takeover
+
+    st = get_state(request)
+    dev = await run_in_threadpool(services.lookup_device_by_key, st.db, _bearer(request))
+    if not dev:
+        return script_response(routeros.error_script("neplatny check-in klic"), 401)
+    try:
+        cid = int(request.query_params.get("id", ""))
+        script = await run_in_threadpool(takeover.bootstrap_script, st.db, st.settings, st.box, dev, cid,
+                                         client_ip(request))
+    except (ValueError, ServiceError):
+        return script_response(routeros.error_script("zadne probihajici prevzeti"), 404)
+    return script_response(script)
+
+
 def _ascii(s: str) -> str:
     import unicodedata
 
@@ -109,4 +126,5 @@ def routes() -> list[Route]:
         Route("/adopt/{token}/register", adopt_register, methods=["POST"]),
         Route("/api/checkin", checkin, methods=["POST"]),
         Route("/api/checkin/ack", ack, methods=["POST"]),
+        Route("/api/checkin/bootstrap", bootstrap, methods=["POST"]),
     ]

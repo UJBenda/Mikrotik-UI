@@ -483,12 +483,21 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         from .plans import plan_script
 
         pl = plan_script(tx, int(cmd["params"]["plan_id"]), dev["id"])
+        if pl["module"] == "takeover":
+            from . import takeover
+
+            return takeover.render_takeover(tx, settings, box, cmd, dev, ack_url, key)
         body = pl["script"]
         if pl["revert_script"]:
             body = routeros.safe_apply_body(body, pl["revert_script"], f"{ack_url}&status=reverted", key, opts,
                                             int(pl["confirm_minutes"] or 5))
         return routeros.wrap_command(ack_url, key, body, opts)
     if kind == "confirm_plan":
+        mod = tx.fetchone("SELECT module FROM config_plan WHERE id = %(i)s", {"i": int(cmd["params"].get("plan_id") or 0)})
+        if mod and mod["module"] == "takeover":
+            from .switchcfg import TAKEOVER_CONFIRM
+
+            return routeros.wrap_command(ack_url, key, TAKEOVER_CONFIRM, opts)
         return routeros.wrap_command(ack_url, key, routeros.CONFIRM_BODY, opts)
     if kind == "poe_cycle":
         from . import inventory, portcfg
@@ -534,6 +543,8 @@ def _parse_status(body: dict) -> dict:
         "cpu": cpu if isinstance(cpu, int) and 0 <= cpu <= 100 else None,
         "sstp": body.get("sstp") if body.get("sstp") in ("up", "down", "none") else "unknown",
         "fp": fp if _FP.match(fp) else "",
+        # 1 = na zařízení běží bootstrap převzetí (čeká na potvrzení)
+        "tk": body.get("tk") == 1,
     }
 
 
@@ -555,9 +566,16 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
         st["ip"] = ip
         new_state = "adopted" if dev["state"] == "offline" else dev["state"]
         fp_update = None
+        from . import takeover
+
+        in_takeover = st["tk"] and takeover.takeover_active(tx, dev["id"])
         if st["fp"]:
-            if dev["state"] == "provisioning":
+            if dev["state"] == "provisioning" or (in_takeover and st["fp"] != dev["api_cert_fingerprint"]):
+                # po resetu (převzetí) má zařízení nový certifikát REST – nahlásilo ho autentizovaně
                 fp_update = st["fp"]
+                if dev["state"] != "provisioning":
+                    audit(tx, "device.cert_renewed", tenant_id=device_ref["tenant_id"], target=f"device:{dev['id']}",
+                          before={"fp": dev["api_cert_fingerprint"]}, after={"fp": st["fp"], "reason": "takeover"}, ip=ip)
             elif dev["api_cert_fingerprint"] and st["fp"] != dev["api_cert_fingerprint"]:
                 audit(tx, "device.cert_changed", tenant_id=device_ref["tenant_id"],
                       target=f"device:{dev['id']}", before={"fp": dev["api_cert_fingerprint"]},
@@ -591,6 +609,13 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
         from .plans import pending_confirm
 
         pc = pending_confirm(tx, dev["id"])
+        # převzetí: potvrdit až když běží bootstrap (tk) i tunel – jinak by se potvrdilo
+        # ozvání ze staré konfigurace nebo zařízení bez správy přes tunel
+        if pc and pc["module"] == "takeover" and not (st["tk"] and st["sstp"] == "up"):
+            if pc["overdue"] and not st["tk"]:
+                # po termínu se zařízení ozvalo bez běžícího bootstrapu = vrátilo se ze zálohy
+                takeover.finished(tx, device_ref["tenant_id"], pc["id"], False)
+            pc = None
         if pc:
             cid = enqueue(tx, device_ref["tenant_id"], dev["id"], "confirm_plan", {"plan_id": pc["id"]})
             tx.execute("UPDATE device_command SET plan_id = %(p)s WHERE id = %(c)s", {"p": pc["id"], "c": cid})
@@ -627,6 +652,9 @@ def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | 
                                 AND kind = 'apply_plan'""", {"id": command_id, "d": str(device_ref["id"])})
             row = rolled_back(tx, command_id) if ok else None
             if row:
+                from . import takeover
+
+                takeover.rolled_back(tx, tenant_id, row["id"])
                 audit(tx, "plan.rolled_back", tenant_id=tenant_id, target=f"device:{device_ref['id']}",
                       after={"plan_id": row["id"], "summary": row["summary"]}, ip=ip)
             return bool(row)
@@ -645,9 +673,9 @@ def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | 
             from .plans import confirm_done
 
             pid = tx.fetchone("SELECT plan_id FROM device_command WHERE id = %(c)s", {"c": command_id})["plan_id"]
-            confirm_done(tx, pid, status == "done")
-            audit(tx, "plan.confirmed", tenant_id=tenant_id, target=f"device:{device_ref['id']}",
-                  after={"plan_id": pid}, ip=ip)
+            confirm_done(tx, pid, status == "done", tenant_id)
+            audit(tx, "plan.confirmed" if status == "done" else "plan.confirm_failed", tenant_id=tenant_id,
+                  target=f"device:{device_ref['id']}", after={"plan_id": pid}, ip=ip)
         if row["kind"] == "apply_plan":
             from .plans import finish_plan
 
