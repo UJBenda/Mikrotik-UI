@@ -709,3 +709,19 @@ K ověření v labu: názvy vlastností steeringu (`rrm`, `wnm`), dynamické pol
 rádia s `datapath.vlan-id` na CAP, řízení vlastních rádií hostitele přes `caps-man-addresses=127.0.0.1`,
 `/interface wifi radio provision`, FT s WPA3 a staršími klienty. Nové AP se do provisioningu dostane
 dalším „Nasadit Wi-Fi“ (rádia se berou z inventury řízených AP).
+
+## Rychlé doručení změn
+
+Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem
+potřebuje ještě jeden check-in na potvrzení. Aby změna neběžela minuty:
+
+- **Kick**: po schválení plánu, po ručním příkazu a po ack (další příkaz nebo potvrzení)
+  controller přes REST v tunelu zavolá `/execute` s kódem check-inu – zařízení si příkaz
+  vyzvedne hned (`services.kick`, na pozadí, best-effort; když tunel nejede, doručí scheduler).
+  Vlastní soubor `mtc-kick.rsc`, aby si s naplánovaným check-inem nemazaly soubor příkazu.
+  Provisioning se nešťouchá (mění heslo vlastního účtu mtc-ctl – to smí jen scheduler),
+  převzetí se potvrzuje až po resetu.
+- **Rychlá inventura**: po ack se zařízení označí k nové inventuře a worker ji mezi koly
+  (každých 5 s) načte hned.
+- **UI**: `GET …/devices/{id}/activity` – detail zařízení ukazuje průběh (čeká na doručení →
+  zařízení provádí → čeká na potvrzení → hotovo) a po dokončení a nové inventuře se sám obnoví.

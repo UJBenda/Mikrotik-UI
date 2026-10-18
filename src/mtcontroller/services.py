@@ -718,6 +718,72 @@ def valid_ip(v: str | None) -> str | None:
         return None
 
 
+# --- okamžité doručení (kick) ---------------------------------------------------------------------
+
+KICK_ENABLED = True       # testy vypínají (zařízení neexistují)
+KICK_FILE = "mtc-kick.rsc"
+# provision mění heslo vlastního účtu mtc-ctl (chce politiku password) – ten jen schedulerem
+_NO_KICK = {"provision"}
+
+
+def kick_needed(tx: Tx, device_id: Any) -> bool:
+    """Čeká na zařízení něco, co si vyzvedne check-inem? (příkaz ve frontě nebo potvrzení změny)"""
+    nxt = tx.fetchone(
+        """SELECT kind FROM device_command WHERE device_id = %(d)s AND status = 'queued'
+           ORDER BY (kind = 'confirm_plan') DESC, id LIMIT 1""", {"d": str(device_id)})
+    if nxt:
+        return nxt["kind"] not in _NO_KICK
+    return tx.fetchone(
+        """SELECT 1 FROM config_plan p WHERE p.device_id = %(d)s AND p.status = 'confirming' AND p.module <> 'takeover'
+             AND NOT EXISTS (SELECT 1 FROM device_command c WHERE c.plan_id = p.id AND c.kind = 'confirm_plan'
+                             AND c.status IN ('queued', 'sent'))""", {"d": str(device_id)}) is not None
+
+
+def kick(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, device_id: Any, delay: float = 0.0) -> None:
+    """Okamžitý check-in přes REST v tunelu: zařízení si příkaz vyzvedne hned a nečeká
+    na scheduler (1 min). Spustí kód check-inu přes /execute (na pozadí zařízení)
+    s vlastním souborem příkazu. Best-effort: při chybě doručí scheduler jako dřív."""
+    if not KICK_ENABLED:
+        return
+    import threading
+    import time
+
+    def run() -> None:
+        api = None
+        try:
+            if delay:
+                time.sleep(delay)
+            with tenant_scope(db, tenant_id) as tx:
+                d = tx.fetchone(
+                    """SELECT id, state, host(tunnel_ip) AS tunnel_ip, api_cert_fingerprint AS fp FROM device
+                       WHERE id = %(d)s""", {"d": str(device_id)})
+                if not d or d["state"] != "adopted" or not d["tunnel_ip"] or not d["fp"] or not kick_needed(tx, device_id):
+                    return
+                key = get_secret(tx, box, device_id, "checkin_key") or ""
+                api = device_api(tx, box, d, timeout=5.0)
+            opts = routeros.FetchOpts(settings.security.device_check_certificate)
+            src = routeros.checkin_source(f"https://{settings.web.checkin_host}/api/checkin", key, opts, cmd_file=KICK_FILE)
+            api.request("POST", "/execute", {"script": src})
+            log.info("kick %s: check-in vyvolán", device_id)
+        except Exception as e:  # zařízení nedostupné – doručí scheduler
+            log.info("kick %s se nepovedl: %s", device_id, e)
+        finally:
+            close = getattr(api, "close", None)
+            if close:
+                close()
+
+    threading.Thread(target=run, name=f"kick-{device_id}", daemon=True).start()
+
+
+def kick_for_command(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, command_id: int) -> None:
+    if not KICK_ENABLED:
+        return
+    with tenant_scope(db, tenant_id) as tx:
+        r = tx.fetchone("SELECT device_id FROM device_command WHERE id = %(c)s", {"c": command_id})
+    if r:
+        kick(db, settings, box, tenant_id, r["device_id"])
+
+
 def device_api(tx: Tx, box: SecretBox, dev: dict, timeout: float = 10.0):
     """REST klient na zařízení přes tunel: servisní účet + pinning certifikátu,
     který zařízení nahlásilo během provisioningu."""

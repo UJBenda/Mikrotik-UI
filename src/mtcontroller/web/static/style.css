@@ -447,3 +447,14 @@ td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fo
 .ctl-mgmt{margin:8px 0}
 td.mode-trunk{font-weight:600}
 td.mode-off{color:var(--muted)}
+
+/* průběh změny na zařízení */
+.live{display:flex;align-items:center;gap:8px;padding:6px 10px;margin:6px 0;border:1px solid var(--accent);
+  border-radius:6px;background:var(--accent-weak);font-size:13px}
+.live::before{content:"";width:10px;height:10px;border-radius:50%;border:2px solid var(--accent);border-top-color:transparent;
+  animation:spin 0.8s linear infinite;flex:none}
+.live.done{border-color:var(--ok);background:var(--ok-weak)}
+.live.done::before{animation:none;border-color:var(--ok);background:var(--ok)}
+.live.fail{border-color:var(--bad);background:var(--bad-weak)}
+.live.fail::before{animation:none;border-color:var(--bad);background:var(--bad)}
+@keyframes spin{to{transform:rotate(360deg)}}

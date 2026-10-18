@@ -94,6 +94,9 @@ async def ack(request: Request) -> Response:
         ok = await run_in_threadpool(services.ack, st.db, dev, cid, status, client_ip(request))
     except (ValueError, ServiceError):
         return script_response("bad request\n", 400)
+    if ok and status == "done":
+        # další příkaz nebo potvrzení změny doručit hned (zařízení mezitím dokončí skript)
+        services.kick(st.db, st.settings, st.box, dev["tenant_id"], dev["id"], delay=3.0)
     return script_response("ok\n" if ok else "ignored\n")
 
 

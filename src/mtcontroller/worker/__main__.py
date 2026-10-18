@@ -31,6 +31,7 @@ from ..tunnel import TunnelAccount, TunnelProvider, build_providers
 log = logging.getLogger("mtc.worker")
 
 TICK = 30
+FAST_EVERY = 5  # s – rychlá inventura po změně konfigurace
 RELEASES_EVERY = 24 * 3600  # changelogy RouterOS (download.mikrotik.com)
 RECONCILE_EVERY = 600
 OFFLINE_AFTER_MIN = 5
@@ -125,13 +126,15 @@ def _due(db: Database, box: SecretBox, where: str, limit: int) -> list[tuple[dic
         return [(d, device_api(tx, box, d)) for d in devs]
 
 
-def poll_inventory(db: Database, box: SecretBox, limit: int = 200) -> int:
+def poll_inventory(db: Database, box: SecretBox, limit: int = 200, urgent: bool = False) -> int:
+    """urgent = jen zařízení, kterým se právě změnila konfigurace (inventory_at NULL po ack)."""
     from concurrent.futures import ThreadPoolExecutor
 
     from .. import inventory
 
-    due = _due(db, box, f"inventory_at IS NULL OR inventory_at < now() - interval '{INVENTORY_EVERY_MIN} minutes'",
-               limit)
+    where = ("inventory_at IS NULL" if urgent else
+             f"inventory_at IS NULL OR inventory_at < now() - interval '{INVENTORY_EVERY_MIN} minutes'")
+    due = _due(db, box, where, limit)
 
     def one(item) -> bool:
         d, api = item
@@ -288,7 +291,14 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
             except Exception:
                 log.exception("údržba selhala")
             last_reconcile = now
-        stop.wait(TICK)
+        # mezi koly každých pár sekund načíst zařízení po změně – UI vidí výsledek hned
+        for _ in range(TICK // FAST_EVERY):
+            if stop.wait(FAST_EVERY):
+                break
+            try:
+                poll_inventory(db, box, limit=20, urgent=True)
+            except Exception:
+                log.exception("rychlá inventura selhala")
     log.info("worker zastaven")
 
 

@@ -353,6 +353,7 @@ async def command(request: Request, p: Principal, tid: str) -> Response:
     params = {k: str(data[k])[:40] for k in ("version", "port") if data.get(k)} or None
     cid = await run_in_threadpool(services.request_command, st.db, tid, did, str(data.get("kind", "")),
                                   p.user_id, client_ip(request), params)
+    services.kick(st.db, st.settings, st.box, tid, did)  # doručit hned, ne až scheduler
     return json_response({"command_id": cid}, 201)
 
 

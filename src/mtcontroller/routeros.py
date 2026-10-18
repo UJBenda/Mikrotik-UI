@@ -121,8 +121,12 @@ def adopt_stage1(register_url: str, opts: FetchOpts) -> str:
 """
 
 
-def checkin_source(checkin_url: str, key: str, opts: FetchOpts) -> str:
-    """Zdroj skriptu mtc-checkin (spouští ho scheduler každou minutu)."""
+def checkin_source(checkin_url: str, key: str, opts: FetchOpts, cmd_file: str = "mtc-cmd.rsc") -> str:
+    """Zdroj skriptu mtc-checkin (spouští ho scheduler každou minutu).
+    `cmd_file` jiný než výchozí = okamžitý check-in vyvolaný controllerem (nesmí si
+    s naplánovaným během mazat soubor s příkazem)."""
+    if not re.fullmatch(r"mtc-[a-z]+\.rsc", cmd_file):
+        raise ValueError("neplatný soubor příkazu")
     return f""":local url {q(checkin_url)}
 :local hdr {q("Content-Type: application/json,Authorization: Bearer " + key)}
 :local sstp "none"
@@ -136,13 +140,13 @@ def checkin_source(checkin_url: str, key: str, opts: FetchOpts) -> str:
 :local tk 0
 :if ([:len [/system script find name="mtc-revert" comment="mtc-takeover"]] > 0) do={{ :set tk 1 }}
 :local body ("{{\\"version\\":\\"" . $ver . "\\",\\"uptime\\":\\"" . $up . "\\",\\"cpu\\":" . $cpu . ",\\"sstp\\":\\"" . $sstp . "\\",\\"fp\\":\\"" . $fp . "\\",\\"tk\\":" . $tk . "}}")
-/file remove [find name="mtc-cmd.rsc"]
+/file remove [find name="{cmd_file}"]
 :do {{
-  :local r [/tool fetch url=$url http-method=post http-header-field=$hdr http-data=$body dst-path="mtc-cmd.rsc" check-certificate={opts.check_certificate} as-value]
+  :local r [/tool fetch url=$url http-method=post http-header-field=$hdr http-data=$body dst-path="{cmd_file}" check-certificate={opts.check_certificate} as-value]
   :delay 1s
-  /import file-name="mtc-cmd.rsc"
+  /import file-name="{cmd_file}"
 }} on-error={{ :log warning "mtc: check-in selhal" }}
-/file remove [find name="mtc-cmd.rsc"]
+/file remove [find name="{cmd_file}"]
 """
 
 

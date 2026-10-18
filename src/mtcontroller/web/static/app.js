@@ -334,7 +334,8 @@ async function sendCommand(d, kind, label, extra) {
   if (!(await ask(`${label}: ${d.serial}?`))) return;
   try {
     await api("POST", `/tenants/${tenantId}/devices/${d.id}/commands`, Object.assign({ kind }, extra || {}));
-    msg(`${label} naplánováno – provede se při dalším check-inu`);
+    msg(`${label}: posílám na zařízení`);
+    watchDevice(d.id, d.identity || d.serial);
   } catch (e) { msg(e.message, true); }
 }
 
@@ -427,7 +428,7 @@ $("ntp-plan").addEventListener("click", async () => {
   } catch (e) { msg(e.message, true); }
 });
 
-const PLAN_MODULE = { takeover: "převzetí do řízení", switch: "sladění se záměrem", dhcp_snooping: "DHCP snooping",
+const PLAN_MODULE = { ntp: "NTP", ports: "port", dhcp: "DHCP", takeover: "převzetí do řízení", switch: "sladění se záměrem", dhcp_snooping: "DHCP snooping",
   capsman: "Wi-Fi (CAPsMAN)" };
 
 async function loadPlans() {
@@ -443,8 +444,8 @@ async function loadPlans() {
     div.appendChild(el("pre", p.script));
     const ok = el("button", "Schválit a aplikovat", "small");
     ok.onclick = async () => {
-      if (!(await ask("Aplikovat plán na zařízení? Provede se při dalším check-inu."))) return;
-      try { await api("POST", `/tenants/${tenantId}/plans/${p.id}/approve`); msg("Plán schválen"); loadPlans(); }
+      if (!(await ask("Aplikovat plán na zařízení? Controller ho pošle hned (když zařízení přes tunel neodpoví, nejpozději při dalším check-inu do minuty)."))) return;
+      try { await api("POST", `/tenants/${tenantId}/plans/${p.id}/approve`); msg("Plán schválen – posílám na zařízení"); loadPlans(); watchDevice(p.device_id, p.identity || p.serial); }
       catch (e) { msg(e.message, true); }
     };
     const no = el("button", "Zahodit", "small secondary");
@@ -2157,6 +2158,7 @@ async function openDetail(id) {
   show("detail");
   showDetailTab(DETAIL_TABS.includes(prefs.detailTab) ? prefs.detailTab : "ports");
   if (prefs.detailTab === "ctl") loadControl(id);
+  if (!watch || watch.id !== id) { $("d-live").hidden = true; watchDevice(id, null, true); }
   const dev = d.device, sm = d.summary;
   $("d-title").textContent = `${dev.identity || dev.serial} – ${dev.model || ""} (${dev.state})`;
   const w = $("d-warn"); w.textContent = "";
@@ -2789,3 +2791,58 @@ $("ctl-go").addEventListener("click", async () => {
     loadControl(detailId);
   } catch (e) { msg(e.message, true); }
 });
+
+
+// --- průběh změny na zařízení (doručení → provedení → potvrzení → nová inventura) ----------------------
+
+const PLAN_STATE = { queued: "čeká na doručení", confirming: "provedeno, čeká na potvrzení spojení", applied: "hotovo",
+  failed: "selhalo", rolled_back: "vráceno zpět" };
+const CMD_STATE = { queued: "čeká na doručení", sent: "zařízení provádí", done: "hotovo", failed: "selhalo" };
+let watch = null;
+
+function stopWatch() { if (watch) { clearInterval(watch.timer); watch = null; } }
+
+// sleduje rozpracované změny zařízení; quiet = jen když něco běží (otevření detailu)
+function watchDevice(id, label, quiet) {
+  if (!id) return;
+  stopWatch();
+  const w = { id, label, t0: Date.now(), seenBusy: false, doneAt: null, invAt: undefined, timer: null };
+  watch = w;
+  const bar = () => (detailId === id ? $("d-live") : null);
+  const setBar = (text, cls) => { const b = bar(); if (!b) return; b.hidden = false; b.className = "live" + (cls ? " " + cls : ""); b.textContent = text; };
+  const tick = async () => {
+    if (watch !== w) return;
+    let a;
+    try { a = await api("GET", `/tenants/${tenantId}/devices/${id}/activity`); } catch (_e) { return; }
+    if (watch !== w) return;
+    if (a.busy) {
+      w.seenBusy = true;
+      const p = a.plans.find((x) => x.status === "queued" || x.status === "confirming");
+      const c = a.commands.find((x) => x.status === "queued" || x.status === "sent");
+      const sent = p && p.status === "queued" && c && c.status === "sent";
+      const what = p ? `${(PLAN_MODULE[p.module] || p.module)}: ${sent ? "zařízení provádí změnu" : PLAN_STATE[p.status] || p.status}`
+        : c ? `${c.kind}: ${CMD_STATE[c.status] || c.status}` : "probíhá změna";
+      setBar(`${what} (${Math.round((Date.now() - w.t0) / 1000)} s)`);
+    } else if (!w.seenBusy) {
+      if (quiet) { stopWatch(); return; }
+      w.seenBusy = true;  // změna proběhla dřív, než se stav poprvé načetl
+    } else if (!w.doneAt) {
+      w.doneAt = Date.now(); w.invAt = a.inventory_at;
+      const last = a.plans[0];
+      const bad = last && (last.status === "failed" || last.status === "rolled_back") ||
+        (!last && a.commands[0] && a.commands[0].status === "failed");
+      setBar(bad ? `Změna ${PLAN_STATE[last ? last.status : "failed"]} – podrobnosti v historii zařízení` : "Změna provedena – načítám nový stav zařízení…",
+             bad ? "fail" : "done");
+      msg(bad ? `${label || "Zařízení"}: změna ${PLAN_STATE[last ? last.status : "failed"]}` : `${label || "Zařízení"}: změna provedena`, !!bad);
+      loadPlans();
+      if (bar()) openDetail(id);
+    } else if ((a.inventory_at && a.inventory_at !== w.invAt) || Date.now() - w.doneAt > 60000) {
+      stopWatch();
+      if (detailId === id && !$("detail").hidden) { await openDetail(id); setBar("Stav zařízení aktuální", "done"); setTimeout(() => { const b = bar(); if (b) b.hidden = true; }, 4000); }
+      return;
+    }
+    if (Date.now() - w.t0 > 15 * 60000) stopWatch();
+  };
+  w.timer = setInterval(tick, 2000);
+  tick();
+}

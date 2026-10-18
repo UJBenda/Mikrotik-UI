@@ -569,6 +569,9 @@ async def plan_approve(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     pid = _int(request.path_params["plan_id"], 0, 0, 2**62)
     cid = await run_in_threadpool(plans.approve_plan, st.db, st.settings, tid, pid, p.user_id, client_ip(request))
+    from ..services import kick_for_command
+
+    await run_in_threadpool(kick_for_command, st.db, st.settings, st.box, tid, cid)
     return json_response({"ok": True, "command_id": cid})
 
 
@@ -839,6 +842,11 @@ async def site_intent_reconcile(request: Request, p: Principal, tid: str) -> Res
     sid = _uuid(request.path_params["site_id"])
     out = await run_in_threadpool(takeover.generate_switch_plans, st.db, st.settings, tid, sid, p.user_id,
                                   client_ip(request))
+    from ..services import kick
+
+    for o in out:
+        if o.get("result") == "auto":
+            kick(st.db, st.settings, st.box, tid, o["device_id"])
     return json_response({"devices": out})
 
 
@@ -934,6 +942,32 @@ async def site_wifi_plan(request: Request, p: Principal, tid: str) -> Response:
     return json_response(out, 201)
 
 
+@endpoint(READ)
+async def device_activity(request: Request, p: Principal, tid: str) -> Response:
+    """Rozpracované plány a příkazy zařízení – UI podle toho sleduje průběh změny."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            d = tx.fetchone("SELECT state, inventory_at, last_checkin_at FROM device WHERE id = %(d)s", {"d": did})
+            if not d:
+                raise NotFound("zařízení neexistuje")
+            pl = tx.fetchall(
+                """SELECT id, module, summary, status::text AS status, confirm_deadline FROM config_plan
+                   WHERE device_id = %(d)s AND (status IN ('queued', 'confirming')
+                         OR finished_at > now() - interval '10 minutes' OR confirmed_at > now() - interval '10 minutes')
+                   ORDER BY id DESC LIMIT 10""", {"d": did})
+            cmds = tx.fetchall(
+                """SELECT id, kind, status::text AS status, created_at, sent_at, finished_at FROM device_command
+                   WHERE device_id = %(d)s AND (status IN ('queued', 'sent') OR finished_at > now() - interval '10 minutes')
+                   ORDER BY id DESC LIMIT 10""", {"d": did})
+        busy = any(x["status"] in ("queued", "confirming") for x in pl) or any(c["status"] in ("queued", "sent") for c in cmds)
+        return {**d, "plans": pl, "commands": cmds, "busy": busy}
+
+    return json_response(await run_in_threadpool(q))
+
+
 def routes() -> list[Route]:
     d = T + "/devices/{device_id}"
     s = T + "/sites/{site_id}"
@@ -941,6 +975,7 @@ def routes() -> list[Route]:
         Route(d, device_detail, methods=["GET"]),
         Route(d, device_update, methods=["PATCH"]),
         Route(d + "/modules", device_module, methods=["POST"]),
+        Route(d + "/activity", device_activity, methods=["GET"]),
         Route(d + "/takeover", device_takeover_get, methods=["GET"]),
         Route(d + "/takeover", device_takeover_post, methods=["POST"]),
         Route(d + "/intent", device_intent_put, methods=["PUT"]),

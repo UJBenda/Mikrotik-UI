@@ -192,3 +192,13 @@ class AsgiClient:
 
 def uid() -> str:
     return str(uuid.uuid4())
+
+
+def _no_kick() -> None:
+    # okamžité doručení přes REST v testech nejde (zařízení neexistují)
+    from mtcontroller import services
+
+    services.KICK_ENABLED = False
+
+
+_no_kick()
