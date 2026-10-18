@@ -361,6 +361,8 @@ body 5–6 jsou předpoklady pro bezpečné aplikování změn (VLAN, firewall).
 | Registrace vrátí 400 „spravovane" | zařízení je už v jiném tenantovi nebo adoptované – nejdřív Odebrat |
 | Zařízení zůstává **provisioning** | `/log print where message~"mtc"` na MikroTiku; `journalctl -u mtc-worker -f` na controlleru |
 | SSTP: `ssl: no common ciphers` | certifikát SSTP na koncentrátoru je ECDSA – vystav RSA 2048 (sekce 2) a `/interface sstp-server server set certificate=mtc-sstp` |
+| Tunel zařízení je `connected`, ale zařízení zůstává **provisioning** a `ping 10.200.1.x` z controlleru nejde | na koncentrátoru `/ip firewall address-list print where list=mtc-controller` musí být IP Debianu (ne koncentrátoru); `/ip firewall filter print stats where comment~"mtc"` – počítadlo u `drop do tunelu` roste = špatná adresa; na Debianu `ip route get 10.200.1.1` nesmí jít přes výchozí bránu (`redirected`) – `ip route flush cache`, redirecty vypíná install.sh |
+| Tlačítka v UI „nic nedělají“ | prohlížeč potlačil potvrzovací dialogy (`confirm`) – UI to hlásí vpravo dole; zavři a znovu otevři kartu |
 | `mtc-sstp` neběží | `/ppp active print` a `/log print where topics~"sstp"` na koncentrátoru; jméno `connect-to` musí sedět s certifikátem (mimo lab režim) |
 | Worker hlásí „otisk certifikátu nesouhlasí" u zařízení | porovnej `/certificate print detail where name=mtc-rest` se sloupcem `api_cert_fingerprint` v DB |
 | `nginx -t` hlásí „Address family not supported“ | server má vypnuté IPv6 – v `/etc/nginx/sites-available/mtcontroller.conf` smaž řádky `listen [::]:…` |

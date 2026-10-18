@@ -36,6 +36,9 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 # heslo uctu controlleru (z {c.api_password_file})
 :local apiPassword {q(api_password)}
 
+# --- controller_ip nesmi byt adresa tohoto koncentratoru ---
+:if ([:len [/ip address find address~("^" . $ctrl . "/")]] > 0) do={{ :error ("mtc: controller_ip " . $ctrl . " je adresa tohoto koncentratoru, v config.toml nastav IP Debianu") }}
+
 # --- certifikat SSTP pro $sstpHost: musi byt RSA (SSTP server nabizi jen RSA sifry,
 # s ECDSA klient hlasi "no common ciphers") ---
 :local sstpCert ""
@@ -62,6 +65,11 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
   /user set [find name={q(c.api_user)}] group="mtc-controller" password=$apiPassword address=($ctrl . "/32")
 }}
 
+# --- bez ICMP redirectu: pri vypadku tunelu by controller dostal redirect na vychozi branu
+# a kernel by si cachoval spatnou routu na pool ---
+/ip settings set send-redirects=no
+# RouterOS 7.24+: sluzba reverse-proxy sedi na 443, na koncentratoru patri 443 jen SSTP
+:do {{ /ip service set reverse-proxy disabled=yes }} on-error={{}}
 # --- SSTP server na 443 (az po presunu www-ssl z 443 na port REST) ---
 /interface sstp-server server set enabled=yes port=443 certificate=$sstpCert authentication=mschap2 default-profile="{PPP_PROFILE}"
 

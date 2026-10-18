@@ -121,6 +121,17 @@ mtc-admin migrate
 
 say "systemd"
 install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" /etc/systemd/system/
+# ICMP redirecty: koncentrátor je pošle, když tunel zařízení zrovna neběží – kernel by si pak
+# cachoval routu na pool přes výchozí bránu a správa do tunelu by přestala chodit
+say "sysctl (ignorovat ICMP redirecty)"
+cat > /etc/sysctl.d/99-mtcontroller.conf <<'EOF2'
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+EOF2
+sysctl -q --system >/dev/null 2>&1 || true
+ip route flush cache 2>/dev/null || true
+
 # routy na zařízení přes aktivní koncentrátor (tunnel.manage_routes) potřebují CAP_NET_ADMIN
 if grep -Eq '^[[:space:]]*manage_routes[[:space:]]*=[[:space:]]*true' "$ETC/config.toml"; then
   install -d -m 0755 /etc/systemd/system/mtc-worker.service.d
