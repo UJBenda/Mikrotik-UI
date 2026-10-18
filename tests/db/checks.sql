@@ -452,5 +452,33 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 23) výchozí hesla ze štítků izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO factory_password (tenant_id, serial, wrapped_key, ciphertext)
+  VALUES ('00000000-0000-0000-0000-0000000000b1', 'HG409B1', '\x00', '\x00');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM factory_password) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí hesla tenanta B'; END IF;
+  UPDATE factory_password SET note = 'x';
+  DELETE FROM factory_password;
+  BEGIN
+    INSERT INTO factory_password (tenant_id, serial, wrapped_key, ciphertext)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', 'EVIL1', '\x00', '\x00');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal heslo tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RAISE NOTICE 'OK 23 výchozí hesla izolovaná';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM factory_password WHERE note IS NULL) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant A změnil heslo B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

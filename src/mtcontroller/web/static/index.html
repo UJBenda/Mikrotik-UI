@@ -96,6 +96,7 @@
               <button id="stp-btn" type="button">STP</button>
               <button id="ntp-btn" type="button">NTP</button>
               <button id="upg-btn" type="button">Aktualizace</button>
+              <button id="deploy-btn" type="button">Nasazení</button>
             </div>
           </div>
       <div id="infra-wrap" hidden class="pane">
@@ -236,6 +237,34 @@
           </form>
           <div id="ntp-result" class="muted"></div>
           </div>
+      <div id="deploy-wrap" hidden class="pane">
+        <h3>Výchozí konfigurace podle role</h3>
+        <p class="muted">Nový kus připrav ještě před montáží: nahraj mu výchozí konfiguraci zvolené role. Po zapojení se
+          sám ohlásí controlleru a objeví se v Adopci jako čekající – schvaluješ ručně. Po adopci ho controller řídí
+          bez dalšího resetu (sítě a VLAN ze záměru lokality). Klíč lokality je v souborech i příkazech – nesdílej je.</p>
+        <table class="deploy"><thead><tr><th>Role</th><th>Netinstall (vlastní výchozí konfigurace)</th><th>Běžící zařízení (smaže konfiguraci)</th></tr></thead>
+        <tbody id="deploy-roles"></tbody></table>
+        <p class="muted">Netinstall: <code>netinstall-cli -r -s mtc-default-ROLE.rsc -a 192.168.88.3 routeros-…npk</code> – konfigurace
+          zůstane jako výchozí i po resetu tlačítkem. Běžící zařízení: příkaz vlož do terminálu (Winbox/SSH); stáhne
+          konfiguraci, resetuje se a naběhne v ní (uživatelé zůstanou).</p>
+        <div class="intent-acts"><button id="deploy-rotate" type="button" class="small secondary">Vyměnit klíč lokality</button>
+          <span class="muted">staré soubory a příkazy pak přestanou fungovat</span></div>
+        <h3>Výchozí hesla ze štítků <span class="muted">(celý tenant)</span></h3>
+        <p class="muted">Evidence admin hesel z výroby podle sériového čísla – i pro kusy, které ještě nejsou adoptované.
+          Uložená jen šifrovaně, každé zobrazení se zapíše do auditu.</p>
+        <form id="fpw-form" class="inline">
+          <input id="fpw-serial" placeholder="sériové číslo" size="14" required>
+          <input id="fpw-pass" placeholder="heslo ze štítku" size="16" required autocomplete="off">
+          <input id="fpw-note" placeholder="poznámka (model, umístění)" size="24">
+          <button type="submit" class="small">Uložit</button>
+        </form>
+        <details class="fold"><summary>Import CSV</summary>
+          <textarea id="fpw-csv" rows="5" cols="60" placeholder="sériové číslo;heslo;poznámka"></textarea><br>
+          <button id="fpw-import" type="button" class="small secondary">Importovat</button> <span id="fpw-import-res" class="muted"></span>
+        </details>
+        <table><thead><tr><th>Sériové číslo</th><th>Poznámka</th><th>Zařízení</th><th>Heslo</th><th></th></tr></thead>
+        <tbody id="fpw-rows"></tbody></table>
+      </div>
       <div id="upg-wrap" hidden class="pane">
         <p class="muted">Postupně po jednom zařízení: AP a PtP → switche → gateway. Další až po návratu
           předchozího s novou verzí; při chybě se zastaví.</p>

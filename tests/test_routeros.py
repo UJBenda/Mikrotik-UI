@@ -202,3 +202,16 @@ def test_takeover_scripts():
         s.encode("ascii")
     # check-in hlásí běžící převzetí
     assert 'comment="mtc-takeover"' in routeros.checkin_source("https://c.example/api/checkin", "KEY", OPTS)
+
+
+def test_default_config_scripts():
+    """Výchozí konfigurace podle role a zónový firewall (defaults, fwmatrix) – ASCII a vyvážené."""
+    from mtcontroller import defaults
+
+    for role in defaults.ROLES:
+        s = defaults.script(role, "https://c.example/enroll/KEY?role=" + role, OPTS)
+        assert _balanced(s), role
+        s.encode("ascii")
+    s = defaults.one_liner("https://c.example/enroll/KEY/default/switch", OPTS)
+    assert _balanced(s)
+    s.encode("ascii")

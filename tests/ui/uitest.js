@@ -180,6 +180,20 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!byId["lease-rows"].children[0] || byId["lease-rows"].children[0].className !== "lease-edit-row") errors.push("leases: nová rezervace z mapy");
     }
     if (!requests.some((r) => r.startsWith("POST") && r.endsWith("/plans/dhcp_snooping"))) errors.push("DHCP: generování plánů");
+    // nasazení: výchozí konfigurace podle role, výchozí hesla
+    {
+      const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+      await byId["deploy-btn"].fire("click"); await tick();
+      if (byId["deploy-wrap"].hidden || byId["deploy-roles"].children.length !== 5) errors.push("nasazení: role " + byId["deploy-roles"].children.length);
+      if (!byId["deploy-roles"].textContent.includes("reset-configuration no-defaults=yes")) errors.push("nasazení: příkaz");
+      if (byId["fpw-rows"].children.length !== 2 || !byId["fpw-rows"].textContent.includes("zatím neadoptované")) errors.push("nasazení: hesla");
+      const n0 = requests.length;
+      byId["fpw-csv"].value = "AB12CD;Heslo1234";
+      await byId["fpw-import"].fire("click");
+      await byId["fpw-rows"].children[0].children[3].children[0].fire("click");
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/factory-passwords/import"))) errors.push("nasazení: import");
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/reveal"))) errors.push("nasazení: zobrazení hesla");
+    }
     await byId["upg-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     if (byId["upg-wrap"].hidden || byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");

@@ -841,7 +841,7 @@ function setBadge(key, n, cls) {
 }
 
 const SITE_TABS = [["infra", "infra-wrap"], ["topo", "topo-wrap"], ["clients", "clients-wrap"], ["wifi", "wifi-wrap"],
-  ["net", "net-wrap"], ["stp", "stp-wrap"], ["ntp", "ntp-wrap"], ["upg", "upg-wrap"]];
+  ["net", "net-wrap"], ["stp", "stp-wrap"], ["ntp", "ntp-wrap"], ["upg", "upg-wrap"], ["deploy", "deploy-wrap"]];
 
 function activateSiteTab(key) {
   prefs.siteTab = key; savePrefs();
@@ -852,7 +852,7 @@ function activateSiteTab(key) {
 function openSiteTab(key) {
   activateSiteTab(key);
   const loaders = { infra: loadInfra, topo: loadTopology, clients: loadClients, wifi: loadWifi, net: loadNetworks,
-    stp: loadStp, upg: loadUpgrade };
+    stp: loadStp, upg: loadUpgrade, deploy: loadDeploy };
   if (loaders[key]) loaders[key]();
 }
 
@@ -2865,3 +2865,97 @@ function watchDevice(id, label, quiet) {
   w.timer = setInterval(tick, 2000);
   tick();
 }
+
+
+// --- nasazení: výchozí konfigurace podle role a výchozí hesla ---------------------------------------
+
+async function loadDeploy() {
+  const tb = $("deploy-roles"); tb.textContent = "";
+  $("deploy-rotate").disabled = !canManage();
+  if (!canManage()) {
+    const tr = el("tr"); const td = el("td", "Výchozí konfiguraci (obsahuje klíč lokality) vidí jen správce tenanta.", "muted");
+    td.colSpan = 3; tr.appendChild(td); tb.appendChild(tr);
+  } else {
+    let d;
+    try { d = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/defaults`); } catch (e) { return msg(e.message, true); }
+    renderDeploy(d);
+  }
+  loadFactoryPasswords();
+}
+
+function renderDeploy(d) {
+  const tb = $("deploy-roles"); tb.textContent = "";
+  for (const r of d.roles) {
+    const tr = el("tr");
+    const a = el("a", `mtc-default-${r.role}.rsc`);
+    a.href = `/api/admin/tenants/${tenantId}/sites/${siteId()}/defaults/${r.role}.rsc`;
+    a.setAttribute("download", `mtc-default-${r.role}.rsc`);
+    const td1 = el("td"); td1.appendChild(a);
+    const pre = el("pre", r.one_liner);
+    const cp = el("button", "Kopírovat", "small secondary"); cp.type = "button";
+    cp.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(r.one_liner); msg("Příkaz zkopírován"); } catch (_e) { msg("Kopírování nejde – označ text ručně", true); }
+    });
+    const td2 = el("td"); td2.append(pre, cp);
+    const role = el("td"); role.append(el("strong", r.label), el("div", `v controlleru: ${r.device_role}`, "muted"));
+    tr.append(role, td1, td2);
+    tb.appendChild(tr);
+  }
+}
+
+$("deploy-btn").addEventListener("click", () => loadDeploy());
+$("deploy-rotate").addEventListener("click", async () => {
+  if (!(await ask("Vyměnit klíč lokality? Všechny dříve stažené výchozí konfigurace a příkazy přestanou fungovat " +
+                  "(zařízení, která se ještě neohlásila, se neohlásí). Adoptovaných zařízení se to netýká.", "Vyměnit"))) return;
+  try { renderDeploy(await api("POST", `/tenants/${tenantId}/sites/${siteId()}/defaults`, {})); msg("Klíč lokality vyměněn"); }
+  catch (e) { msg(e.message, true); }
+});
+
+async function loadFactoryPasswords() {
+  let rows;
+  try { rows = await api("GET", `/tenants/${tenantId}/factory-passwords`); } catch (e) { return msg(e.message, true); }
+  const tb = $("fpw-rows"); tb.textContent = "";
+  for (const r of rows) {
+    const tr = el("tr");
+    const dev = r.device_id ? `${r.identity || "?"} (${r.state})` : "zatím neadoptované";
+    const pw = el("td");
+    const show = el("button", "Zobrazit", "small secondary"); show.type = "button"; show.disabled = !canManage();
+    show.addEventListener("click", async () => {
+      try {
+        const x = await api("POST", `/tenants/${tenantId}/factory-passwords/${encodeURIComponent(r.serial)}/reveal`, {});
+        pw.textContent = ""; pw.appendChild(el("span", x.password, "pw-shown"));
+        setTimeout(() => { pw.textContent = ""; pw.appendChild(show); }, 20000);
+      } catch (e) { msg(e.message, true); }
+    });
+    pw.appendChild(show);
+    const del = el("button", "×", "small secondary"); del.type = "button"; del.title = "Smazat"; del.disabled = !canManage();
+    del.addEventListener("click", async () => {
+      if (!(await ask(`Smazat uložené heslo pro ${r.serial}?`, "Smazat"))) return;
+      try { await api("DELETE", `/tenants/${tenantId}/factory-passwords/${encodeURIComponent(r.serial)}`); loadFactoryPasswords(); }
+      catch (e) { msg(e.message, true); }
+    });
+    const tdd = el("td"); tdd.appendChild(del);
+    tr.append(el("td", r.serial), el("td", r.note || "–", r.note ? "" : "muted"), el("td", dev, r.device_id ? "" : "muted"), pw, tdd);
+    tb.appendChild(tr);
+  }
+  if (!rows.length) { const tr = el("tr"); const td = el("td", "Zatím žádná hesla.", "muted"); td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr); }
+  for (const id of ["fpw-import"]) $(id).disabled = !canManage();
+}
+
+$("fpw-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("POST", `/tenants/${tenantId}/factory-passwords`,
+              { serial: $("fpw-serial").value, password: $("fpw-pass").value, note: $("fpw-note").value });
+    $("fpw-serial").value = ""; $("fpw-pass").value = ""; $("fpw-note").value = "";
+    msg("Heslo uloženo (šifrovaně)"); loadFactoryPasswords();
+  } catch (err) { msg(err.message, true); }
+});
+$("fpw-import").addEventListener("click", async () => {
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/factory-passwords/import`, { csv: $("fpw-csv").value });
+    $("fpw-import-res").textContent = `importováno ${r.imported}` + (r.errors.length ? `, chyby: ${r.errors.join("; ")}` : "");
+    if (!r.errors.length) $("fpw-csv").value = "";
+    loadFactoryPasswords();
+  } catch (e) { msg(e.message, true); }
+});

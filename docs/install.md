@@ -27,7 +27,7 @@ aplikují se nové migrace, služby se restartují).
 | Databáze | role `mtc_owner` (vlastník schématu, jen migrace jako root) a `mtc_app` (aplikace, `NOBYPASSRLS`); peer autentizace přes unix socket, žádná hesla po síti |
 | Migrace | `mtc-admin migrate` |
 | Služby | `mtc-web`, `mtc-worker` se systemd sandboxem |
-| nginx | admin hostname jen z admin sítě, check-in hostname jen `/api/checkin`, `/adopt/`, `/healthz`; neznámý hostname = TLS odmítnut |
+| nginx | admin hostname jen z admin sítě, check-in hostname jen `/api/checkin`, `/adopt/`, `/enroll/`, `/healthz`; neznámý hostname = TLS odmítnut |
 
 ## Po instalaci
 

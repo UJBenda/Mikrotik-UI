@@ -95,9 +95,12 @@ def adopt_one_liner(base_url: str, token: str, opts: FetchOpts) -> str:
             f"/import file-name=\"mtc-adopt.rsc\"")
 
 
-def adopt_stage1(register_url: str, opts: FetchOpts) -> str:
+def adopt_stage1(register_url: str, opts: FetchOpts, role: str | None = None) -> str:
     """Krok 1: zjistí identitu zařízení a zaregistruje ho. Odpověď (krok 2)
     rovnou importuje."""
+    if role is not None and not re.fullmatch(r"[a-z_]{1,20}", role):
+        raise ValueError("neplatná role")
+    role_json = f',\\"role\\":\\"{role}\\"' if role else ""
     return f"""# MikroTik controller - adopce, krok 1
 {{
 :local serial ""
@@ -110,7 +113,7 @@ def adopt_stage1(register_url: str, opts: FetchOpts) -> str:
 :local ver [/system resource get version]
 :local mac ""
 :do {{ :set mac [/interface ethernet get [find default-name="ether1"] mac-address] }} on-error={{}}
-:local body ("{{\\"serial\\":\\"" . $serial . "\\",\\"model\\":\\"" . $model . "\\",\\"version\\":\\"" . $ver . "\\",\\"mac\\":\\"" . $mac . "\\"}}")
+:local body ("{{\\"serial\\":\\"" . $serial . "\\",\\"model\\":\\"" . $model . "\\",\\"version\\":\\"" . $ver . "\\",\\"mac\\":\\"" . $mac . "\\"{role_json}}}")
 /file remove [find name="mtc-stage2.rsc"]
 /tool fetch url={q(register_url)} http-method=post http-header-field="Content-Type: application/json" http-data=$body dst-path="mtc-stage2.rsc" check-certificate={opts.check_certificate}
 :delay 2s

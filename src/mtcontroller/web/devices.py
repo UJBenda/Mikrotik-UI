@@ -968,6 +968,96 @@ async def device_activity(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+# --- výchozí konfigurace a ohlášení klíčem lokality ---------------------------------------------------
+
+def _defaults_view(st, key: str) -> dict:
+    from .. import defaults, routeros
+
+    opts = routeros.FetchOpts(st.settings.security.device_check_certificate)
+    base = f"https://{st.settings.web.checkin_host}"
+    return {
+        "roles": [{"role": r, "label": label, "device_role": defaults.DEVICE_ROLE[r],
+                   "one_liner": defaults.one_liner(f"{base}/enroll/{key}/default/{r}", opts)}
+                  for r, label in defaults.ROLES.items()],
+        "enroll_base": f"{base}/enroll/",
+    }
+
+
+@endpoint(MANAGE)
+async def site_defaults(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    from ..services import site_enroll_key
+
+    rotate = request.method == "POST"
+    key = await run_in_threadpool(site_enroll_key, st.db, st.box, tid, sid, rotate, p.user_id, client_ip(request))
+    return json_response(_defaults_view(st, key))
+
+
+@endpoint(MANAGE)
+async def site_default_file(request: Request, p: Principal, tid: str) -> Response:
+    from .. import defaults, routeros
+    from ..services import site_enroll_key
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    role = request.path_params["role"]
+    if role not in defaults.ROLES:
+        raise NotFound("neznámá role")
+    key = await run_in_threadpool(site_enroll_key, st.db, st.box, tid, sid, False, p.user_id, client_ip(request))
+    opts = routeros.FetchOpts(st.settings.security.device_check_certificate)
+    body = defaults.script(role, f"https://{st.settings.web.checkin_host}/enroll/{key}?role={role}", opts)
+    return Response(body, media_type="text/plain; charset=us-ascii",
+                    headers={"Content-Disposition": f'attachment; filename="mtc-default-{role}.rsc"'})
+
+
+# --- výchozí hesla ze štítků -----------------------------------------------------------------------
+
+@endpoint(OPERATE)
+async def factory_passwords(request: Request, p: Principal, tid: str) -> Response:
+    from .. import factorypw
+
+    st = get_state(request)
+    if request.method == "GET":
+        return json_response(await run_in_threadpool(factorypw.listing, st.db, tid))
+    if not p.can(tid, MANAGE):
+        raise NotFound("nenalezeno")
+    data = await _json(request)
+    out = await run_in_threadpool(factorypw.save, st.db, st.box, tid, str(data.get("serial", "")),
+                                  str(data.get("password", "")), data.get("note"), p.user_id, client_ip(request))
+    return json_response(out, 201)
+
+
+@endpoint(MANAGE)
+async def factory_passwords_import(request: Request, p: Principal, tid: str) -> Response:
+    from .. import factorypw
+
+    st = get_state(request)
+    data = await _json(request)
+    out = await run_in_threadpool(factorypw.import_csv, st.db, st.box, tid, str(data.get("csv", "")), p.user_id,
+                                  client_ip(request))
+    return json_response(out)
+
+
+@endpoint(MANAGE)
+async def factory_password_reveal(request: Request, p: Principal, tid: str) -> Response:
+    from .. import factorypw
+
+    st = get_state(request)
+    pw = await run_in_threadpool(factorypw.reveal, st.db, st.box, tid, request.path_params["serial"], p.user_id,
+                                 client_ip(request))
+    return json_response({"password": pw})
+
+
+@endpoint(MANAGE)
+async def factory_password_delete(request: Request, p: Principal, tid: str) -> Response:
+    from .. import factorypw
+
+    st = get_state(request)
+    await run_in_threadpool(factorypw.delete, st.db, tid, request.path_params["serial"], p.user_id, client_ip(request))
+    return json_response({"ok": True})
+
+
 def routes() -> list[Route]:
     d = T + "/devices/{device_id}"
     s = T + "/sites/{site_id}"
@@ -1002,6 +1092,12 @@ def routes() -> list[Route]:
         Route(s + "/ssids/{ssid_id}", site_ssid_delete, methods=["DELETE"]),
         Route(s + "/wifi/preview", site_wifi_preview, methods=["GET"]),
         Route(s + "/wifi/plan", site_wifi_plan, methods=["POST"]),
+        Route(s + "/defaults", site_defaults, methods=["GET", "POST"]),
+        Route(s + "/defaults/{role}.rsc", site_default_file, methods=["GET"]),
+        Route(T + "/factory-passwords", factory_passwords, methods=["GET", "POST"]),
+        Route(T + "/factory-passwords/import", factory_passwords_import, methods=["POST"]),
+        Route(T + "/factory-passwords/{serial}/reveal", factory_password_reveal, methods=["POST"]),
+        Route(T + "/factory-passwords/{serial}", factory_password_delete, methods=["DELETE"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),

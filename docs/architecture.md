@@ -725,3 +725,26 @@ potřebuje ještě jeden check-in na potvrzení. Aby změna neběžela minuty:
   (každých 5 s) načte hned.
 - **UI**: `GET …/devices/{id}/activity` – detail zařízení ukazuje průběh (čeká na doručení →
   zařízení provádí → čeká na potvrzení → hotovo) a po dokončení a nové inventuře se sám obnoví.
+
+## Výchozí konfigurace podle role a ohlášení (jako UniFi)
+
+Nový kus se připraví před montáží: Lokalita → Nasazení → výchozí konfigurace zvolené role
+(switch, AP, switch + AP, switch + CAPsMAN, firewall). Dvě cesty:
+
+- **Netinstall** `-s mtc-default-ROLE.rsc` – vlastní výchozí konfigurace, platí i po resetu tlačítkem;
+- **běžící kus**: one-liner stáhne skript z `/enroll/<klíč>/default/<role>` a provede
+  `reset-configuration no-defaults=yes keep-users=yes run-after-reset=` (soubory do `flash/`, má-li ho zařízení).
+
+| Téma | Implementace |
+| --- | --- |
+| Výchozí stav | jeden `bridge` se všemi porty, `vlan-filtering=yes`, vše ve VLAN 1 bez tagu, DHCP klient na bridgi, NTP, vypnuté telnet/ftp/www/api, MAC server vypnutý; AP: rádia vypnutá (SSID až z CAPsMANu) |
+| Firewall | WAN ether1 (DHCP klient), LAN bridge 192.168.88.1/24 + DHCP server, zónový firewall `fwmatrix`: zóny = interface listy, `mtc-admin` address list pro správu, politika LAN → WAN, uvnitř zóny povoleno, jinak výchozí zákaz; input jen služby (DNS/DHCP/NTP) z vnitřních zón a správa z `mtc-admin`; NAT, IPv6 bez přístupu z WAN. Komentáře `mtc-fw:` (ne `mtc:` – to jsou pravidla tunelu) |
+| Ohlášení | scheduler `mtc-enroll` každou minutu `GET /enroll/<klíč lokality>?role=…` → adopce krok 1 s rolí → zařízení čeká na schválení (ruční); po instalaci check-inu se scheduler sám odstraní |
+| Klíč lokality | `site_policy` module `enroll`: hash (vyhledání) + šifrovaná podoba (zobrazení v UI); víceúčelový, rotace zneplatní staré skripty; jen pro tenant_admin |
+| Po adopci | značka `mtc-default:<role>` v komentáři bridge → zařízení je řízené hned (`managed_at`), bez převzetí resetem; role z výchozí konfigurace (`device_intent.role`) |
+| Sladění | navíc `pvid` bridge (VLAN managementu) a adresa managementu DHCP ↔ statická (nová adresa dřív, než zmizí stará; s automatickým návratem) |
+| Výchozí hesla | tabulka `factory_password` (migrace 0015, RLS, checks 23) podle sériového čísla, šifrovaně, import CSV, zobrazení jen tenant_admin a auditované |
+
+Firewall/router je zatím jen výchozí konfigurace; sladění sítí a editor matice zón přijde s řízením routeru (F6).
+K ověření v labu: `netinstall-cli -s` (vlastní výchozí konfigurace přežije reset tlačítkem),
+`run-after-reset` se skriptem z `flash/` na starších kusech, FastTrack s `hw-offload` na RB2011/hAP ac².

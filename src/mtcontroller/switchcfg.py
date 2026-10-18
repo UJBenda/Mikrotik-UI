@@ -603,14 +603,14 @@ def reconcile(inv: dict, model: dict) -> dict:
                 ([f"+tag {','.join(sorted(added))}"] if added else []) + ([f"změna {','.join(sorted(gone))}"] if gone else [])))
             if gone:
                 additive = False
-    keep = {v["vid"] for v in model["vlans"]}
-    for vid, cur in sorted(cur_vlans.items()):
-        if vid not in keep:
-            apply.append(f"/interface bridge vlan remove [find bridge={BRIDGE} vlan-ids={vid} dynamic=no]")
-            revert.append(f"/interface bridge vlan add bridge={BRIDGE} vlan-ids={vid} tagged={q(str(cur.get('tagged') or ''))} "
-                          f"untagged={q(str(cur.get('untagged') or ''))} comment={q('mtc:v' + str(vid))}")
-            changes.append(f"odebrat VLAN {vid}")
-            additive = False
+    # bridge: VLAN managementu (bridge je její netagovaný člen) – před porty, ať netagovaný provoz nezmizí
+    br = next((b for b in _rows(inv, "bridges") if str(b.get("name")) == BRIDGE), None)
+    want_pvid = str(model["mgmt"]["vid"])
+    if br is not None and str(br.get("pvid") or "1") != want_pvid:
+        apply.append(f"/interface bridge set {BRIDGE} pvid={want_pvid}")
+        revert.append(f"/interface bridge set {BRIDGE} pvid={br.get('pvid') or 1}")
+        changes.append(f"management bridge: VLAN {br.get('pvid') or 1} → {want_pvid}")
+        additive = False
     # porty
     for it in model["ports"]:
         port, name = it["port"], names.get(it["port"], it["port"])
@@ -656,6 +656,22 @@ def reconcile(inv: dict, model: dict) -> dict:
         if e and cur_loop != want_loop and not (cur_loop == "default" and want_loop == "off"):
             apply.append(f"/interface ethernet set [find default-name={q(port)}] loop-protect={want_loop}")
             revert.append(f"/interface ethernet set [find default-name={q(port)}] loop-protect={cur_loop}")
+    # nepotřebné VLAN až nakonec (porty už mají nové pvid)
+    keep = {v["vid"] for v in model["vlans"]}
+    for vid, cur in sorted(cur_vlans.items()):
+        if vid not in keep:
+            apply.append(f"/interface bridge vlan remove [find bridge={BRIDGE} vlan-ids={vid} dynamic=no]")
+            revert.append(f"/interface bridge vlan add bridge={BRIDGE} vlan-ids={vid} tagged={q(str(cur.get('tagged') or ''))} "
+                          f"untagged={q(str(cur.get('untagged') or ''))} comment={q('mtc:v' + str(vid))}")
+            changes.append(f"odebrat VLAN {vid}")
+            additive = False
+    # adresa managementu: DHCP ↔ statická (s návratem, přeruší-li to správu)
+    a, r, c = _mgmt_diff(inv, model["mgmt"])
+    if a:
+        apply += a
+        revert += r
+        changes += c
+        additive = False
     # CAP (AP + switch): řídí ho CAPsMAN lokality
     capcur = inv.get("wifi_cap") if isinstance(inv.get("wifi_cap"), dict) else None
     if capcur is not None:
@@ -682,6 +698,54 @@ def reconcile(inv: dict, model: dict) -> dict:
     return {"apply": "\n".join(apply) + ("\n" if apply else ""), "revert": "\n".join(revert) + ("\n" if revert else ""),
             "changes": changes, "additive": additive and bool(changes),
             "summary": "; ".join(changes[:6]) + (f" (+{len(changes) - 6})" if len(changes) > 6 else "")}
+
+
+def _mgmt_diff(inv: dict, mgmt: dict) -> tuple[list[str], list[str], list[str]]:
+    """Změna adresy managementu na bridgi. Návrat (revert) se na konci obrátí – proto
+    v revert pořadí „od posledního kroku“."""
+    dhcp = [c for c in _rows(inv, "dhcp_client") if str(c.get("interface")) == BRIDGE and not _true(c.get("disabled"))]
+    static = [x for x in _rows(inv, "addresses") if str(x.get("interface")) == BRIDGE and not _true(x.get("dynamic"))
+              and not _true(x.get("disabled"))]
+    route = next((x for x in _rows(inv, "routes_default") if str(x.get("comment") or "") == "mtc mgmt"), None)
+    apply: list[str] = []
+    undo: list[str] = []      # kroky návratu v pořadí, v jakém se mají provést
+    changes: list[str] = []
+    if mgmt.get("mode") == "static":
+        addr, gw = mgmt["address"], mgmt.get("gateway")
+        if not any(str(x.get("address")) == addr for x in static):
+            apply.append(f'/ip address add address={q(addr)} interface={BRIDGE} comment="mtc"')
+            undo.append(f"/ip address remove [find address={q(addr)} interface={BRIDGE}]")
+            changes.append(f"management: statická adresa {addr}")
+        for x in static:
+            if str(x.get("address")) != addr:
+                apply.append(f"/ip address remove [find address={q(str(x.get('address')))} interface={BRIDGE}]")
+                undo.insert(0, f'/ip address add address={q(str(x.get("address")))} interface={BRIDGE} comment="mtc"')
+        if gw and (not route or str(route.get("gateway")) != gw):
+            if route:
+                apply.append(f'/ip route set [find comment="mtc mgmt"] gateway={q(gw)}')
+                undo.insert(0, f'/ip route set [find comment="mtc mgmt"] gateway={q(str(route.get("gateway")))}')
+            else:
+                apply.append(f'/ip route add dst-address=0.0.0.0/0 gateway={q(gw)} comment="mtc mgmt"')
+                undo.insert(0, '/ip route remove [find comment="mtc mgmt"]')
+        if mgmt.get("dns"):
+            apply.append(f"/ip dns set servers={q(','.join(mgmt['dns']))}")
+        if dhcp:
+            apply.append(f"/ip dhcp-client remove [find interface={BRIDGE}]")
+            undo.insert(0, f'/ip dhcp-client add interface={BRIDGE} use-peer-dns=yes add-default-route=yes comment="mtc" disabled=no')
+            changes.append("management: DHCP klient pryč")
+    else:
+        if not dhcp:
+            apply.append(f'/ip dhcp-client add interface={BRIDGE} use-peer-dns=yes add-default-route=yes comment="mtc" disabled=no')
+            undo.append(f"/ip dhcp-client remove [find interface={BRIDGE}]")
+            changes.append("management: DHCP")
+            for x in static:
+                apply.append(f"/ip address remove [find address={q(str(x.get('address')))} interface={BRIDGE}]")
+                undo.insert(0, f'/ip address add address={q(str(x.get("address")))} interface={BRIDGE} comment="mtc"')
+            if route:
+                apply.append('/ip route remove [find comment="mtc mgmt"]')
+                undo.insert(0, f'/ip route add dst-address=0.0.0.0/0 gateway={q(str(route.get("gateway")))} comment="mtc mgmt"')
+    # reconcile() návrat na konci obrací – vložíme v opačném pořadí, než se má provést
+    return apply, list(reversed(undo)), changes
 
 
 def _cur_item(b: dict) -> dict:

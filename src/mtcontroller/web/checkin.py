@@ -69,6 +69,47 @@ async def adopt_register(request: Request) -> Response:
     return script_response(script)
 
 
+# --- výchozí konfigurace: ohlášení klíčem lokality ---------------------------------------------
+
+async def enroll_stage1(request: Request) -> Response:
+    """Zařízení s naší výchozí konfigurací se ohlašuje (scheduler mtc-enroll)."""
+    from .. import defaults
+
+    st = get_state(request)
+    key = request.path_params["key"]
+    role = request.query_params.get("role", "")
+    if role not in defaults.ROLES or not await run_in_threadpool(services.enroll_key_valid, st.db, key):
+        return script_response(routeros.error_script("klic lokality je neplatny"), 404)
+    return script_response(routeros.adopt_stage1(f"{_base(st)}/enroll/{key}/register", _opts(st), role))
+
+
+async def enroll_register(request: Request) -> Response:
+    st = get_state(request)
+    key = request.path_params["key"]
+    ip = client_ip(request)
+    try:
+        payload = services.parse_json_body(await _body(request), MAX_BODY)
+        reg = await run_in_threadpool(services.register_device, st.db, st.box, "", payload, ip, key)
+    except NotFound as e:
+        log.warning("ohlášení odmítnuto z %s: %s", ip, e)
+        return script_response(routeros.error_script("klic lokality je neplatny"), 404)
+    except ServiceError as e:
+        log.warning("ohlášení odmítnuto z %s: %s", ip, e)
+        return script_response(routeros.error_script(_ascii(str(e))), 400)
+    return script_response(routeros.adopt_stage2(f"{_base(st)}/api/checkin", reg.checkin_key, _opts(st)))
+
+
+async def enroll_default(request: Request) -> Response:
+    """Výchozí konfigurace pro běžící zařízení (one-liner z UI)."""
+    from .. import defaults
+
+    st = get_state(request)
+    key, role = request.path_params["key"], request.path_params["role"]
+    if role not in defaults.ROLES or not await run_in_threadpool(services.enroll_key_valid, st.db, key):
+        return script_response(routeros.error_script("klic lokality je neplatny"), 404)
+    return script_response(defaults.script(role, f"{_base(st)}/enroll/{key}?role={role}", _opts(st)))
+
+
 async def checkin(request: Request) -> Response:
     st = get_state(request)
     dev = await run_in_threadpool(services.lookup_device_by_key, st.db, _bearer(request))
@@ -127,6 +168,9 @@ def routes() -> list[Route]:
     return [
         Route("/adopt/{token}", adopt_stage1, methods=["GET"]),
         Route("/adopt/{token}/register", adopt_register, methods=["POST"]),
+        Route("/enroll/{key}", enroll_stage1, methods=["GET"]),
+        Route("/enroll/{key}/register", enroll_register, methods=["POST"]),
+        Route("/enroll/{key}/default/{role}", enroll_default, methods=["GET"]),
         Route("/api/checkin", checkin, methods=["POST"]),
         Route("/api/checkin/ack", ack, methods=["POST"]),
         Route("/api/checkin/bootstrap", bootstrap, methods=["POST"]),

@@ -458,3 +458,8 @@ td.mode-off{color:var(--muted)}
 .live.fail{border-color:var(--bad);background:var(--bad-weak)}
 .live.fail::before{animation:none;border-color:var(--bad);background:var(--bad)}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* nasazení: výchozí konfigurace */
+table.deploy td{vertical-align:top}
+table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-all;font-size:11px}
+.pw-shown{font-family:ui-monospace,monospace;background:var(--accent-weak);padding:1px 6px;border-radius:4px}

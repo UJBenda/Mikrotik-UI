@@ -187,8 +187,22 @@ class Registration:
     checkin_key: str
 
 
+def _claim(tx: Tx, token: str, enroll_key: str | None) -> dict | None:
+    """Oprávnění k registraci: jednorázový adopční token, nebo klíč lokality (výchozí konfigurace)."""
+    if enroll_key is not None:
+        r = tx.fetchone("""SELECT tenant_id, site_id FROM site_policy WHERE module = 'enroll'
+                           AND data->>'key_hash' = %(h)s""", {"h": token_hash(enroll_key)})
+        return {"id": None, "tenant_id": r["tenant_id"], "site_id": r["site_id"]} if r else None
+    return tx.fetchone(
+        """SELECT id, tenant_id, site_id FROM adoption_token
+           WHERE token_hash = %(h)s AND used_at IS NULL AND expires_at > now()
+           FOR UPDATE""",
+        {"h": token_hash(token)},
+    )
+
+
 def register_device(db: Database, box: SecretBox, token: str, payload: dict,
-                    ip: str | None = None) -> Registration:
+                    ip: str | None = None, enroll_key: str | None = None) -> Registration:
     serial = str(payload.get("serial", ""))
     model = str(payload.get("model", ""))[:100]
     version = str(payload.get("version", ""))
@@ -199,15 +213,13 @@ def register_device(db: Database, box: SecretBox, token: str, payload: dict,
         raise ServiceError("neplatná identita zařízení")
     if not version.startswith("7."):
         raise ServiceError(f"podporován je jen RouterOS v7 (zařízení má {version})")
+    from .defaults import DEVICE_ROLE
+
+    profile = payload.get("role") if payload.get("role") in DEVICE_ROLE else None
 
     key = new_token()
     with operator_scope(db) as tx:
-        tok = tx.fetchone(
-            """SELECT id, tenant_id, site_id FROM adoption_token
-               WHERE token_hash = %(h)s AND used_at IS NULL AND expires_at > now()
-               FOR UPDATE""",
-            {"h": token_hash(token)},
-        )
+        tok = _claim(tx, token, enroll_key)
         if not tok:
             raise NotFound("adopční token je neplatný, použitý nebo prošlý")
         tenant_id = tok["tenant_id"]
@@ -222,12 +234,7 @@ def register_device(db: Database, box: SecretBox, token: str, payload: dict,
     if rejected:
         raise ServiceError("zařízení je už spravované; nejdřív ho odeber ze správy")
     with operator_scope(db) as tx:
-        tok = tx.fetchone(
-            """SELECT id, tenant_id, site_id FROM adoption_token
-               WHERE token_hash = %(h)s AND used_at IS NULL AND expires_at > now()
-               FOR UPDATE""",
-            {"h": token_hash(token)},
-        )
+        tok = _claim(tx, token, enroll_key)
         if not tok:
             raise NotFound("adopční token je neplatný, použitý nebo prošlý")
         tenant_id = tok["tenant_id"]
@@ -240,28 +247,76 @@ def register_device(db: Database, box: SecretBox, token: str, payload: dict,
             tx.execute(
                 """UPDATE device SET state = 'pending', model = %(m)s, ros_version = %(v)s, mac = %(mac)s,
                        site_id = coalesce(%(site)s, site_id), checkin_key_hash = %(k)s,
-                       api_cert_fingerprint = NULL, tunnel_ip = NULL, last_checkin_at = now()
+                       api_cert_fingerprint = NULL, tunnel_ip = NULL, last_checkin_at = now(),
+                       role = coalesce(%(r)s::device_role, role)
                    WHERE id = %(id)s""",
                 {"m": model, "v": version, "mac": mac or None, "site": _s(tok["site_id"]),
-                 "k": token_hash(key), "id": str(device_id)},
+                 "k": token_hash(key), "id": str(device_id), "r": DEVICE_ROLE.get(profile)},
             )
         else:
             device_id = tx.fetchone(
                 """INSERT INTO device (tenant_id, site_id, serial, model, ros_version, mac,
-                                       state, checkin_key_hash, last_checkin_at)
-                   VALUES (%(t)s, %(site)s, %(s)s, %(m)s, %(v)s, %(mac)s, 'pending', %(k)s, now())
+                                       state, checkin_key_hash, last_checkin_at, role)
+                   VALUES (%(t)s, %(site)s, %(s)s, %(m)s, %(v)s, %(mac)s, 'pending', %(k)s, now(),
+                           coalesce(%(r)s::device_role, 'unknown'))
                    RETURNING id""",
                 {"t": str(tenant_id), "site": _s(tok["site_id"]), "s": serial, "m": model,
-                 "v": version, "mac": mac or None, "k": token_hash(key)},
+                 "v": version, "mac": mac or None, "k": token_hash(key), "r": DEVICE_ROLE.get(profile)},
             )["id"]
         put_secret(tx, box, tenant_id, device_id, "checkin_key", key)
-        tx.execute(
-            "UPDATE adoption_token SET used_at = now(), used_by_device = %(d)s WHERE id = %(id)s",
-            {"d": str(device_id), "id": str(tok["id"])},
-        )
+        if tok["id"] is not None:
+            tx.execute(
+                "UPDATE adoption_token SET used_at = now(), used_by_device = %(d)s WHERE id = %(id)s",
+                {"d": str(device_id), "id": str(tok["id"])},
+            )
+        if profile in ("switch", "ap", "switch_ap", "switch_capsman"):
+            # role řízeného režimu podle výchozí konfigurace (AP / switch)
+            tx.execute(
+                """INSERT INTO device_intent (tenant_id, device_id, role) VALUES (%(t)s, %(d)s, %(r)s)
+                   ON CONFLICT (device_id) DO UPDATE SET role = EXCLUDED.role""",
+                {"t": str(tenant_id), "d": str(device_id), "r": DEVICE_ROLE[profile]})
         audit(tx, "device.register", tenant_id=tenant_id, target=f"device:{device_id}",
-              after={"serial": serial, "model": model, "version": version}, ip=ip)
+              after={"serial": serial, "model": model, "version": version, "via": "enroll" if enroll_key else "token",
+                     "profile": profile}, ip=ip)
     return Registration(device_id, tenant_id, key)
+
+
+# --- klíč lokality pro výchozí konfiguraci (ohlášení bez jednorázového tokenu) ----------------
+
+def site_enroll_key(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, rotate: bool = False,
+                    user_id: Any = None, ip: str | None = None) -> str:
+    """Klíč lokality vložený do výchozí konfigurace. V DB jen hash (vyhledání) a šifrovaná
+    podoba (aby šel znovu zobrazit v UI). Rotace = staré skripty přestanou fungovat."""
+    import base64
+
+    ctx = f"enroll:{site_id}".encode()
+    with tenant_scope(db, tenant_id) as tx:
+        if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": str(site_id)}):
+            raise NotFound("lokalita neexistuje")
+        r = tx.fetchone("SELECT data FROM site_policy WHERE site_id = %(s)s AND module = 'enroll'", {"s": str(site_id)})
+        if r and not rotate:
+            d = r["data"]
+            return box.open(SealedSecret(base64.b64decode(d["wrapped"]), base64.b64decode(d["ct"]), d["kv"]), ctx).decode()
+        key = new_token()
+        sealed = box.seal(key.encode(), ctx)
+        data = {"key_hash": token_hash(key), "wrapped": base64.b64encode(sealed.wrapped_key).decode(),
+                "ct": base64.b64encode(sealed.ciphertext).decode(), "kv": sealed.key_version}
+        tx.execute(
+            """INSERT INTO site_policy (tenant_id, site_id, module, data, updated_by)
+               VALUES (%(t)s, %(s)s, 'enroll', %(d)s, %(u)s)
+               ON CONFLICT (site_id, module) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by,
+                   updated_at = now()""", {"t": str(tenant_id), "s": str(site_id), "d": data, "u": _s(user_id)})
+        audit(tx, "site.enroll_key", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
+              after={"rotated": bool(r)}, ip=ip)
+    return key
+
+
+def enroll_key_valid(db: Database, key: str) -> bool:
+    if not key or len(key) > 100:
+        return False
+    with operator_scope(db) as tx:
+        return tx.fetchone("SELECT 1 FROM site_policy WHERE module = 'enroll' AND data->>'key_hash' = %(h)s",
+                           {"h": token_hash(key)}) is not None
 
 
 # --- schválení -------------------------------------------------------------------

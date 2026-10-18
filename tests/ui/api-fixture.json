@@ -3518,7 +3518,62 @@
    "plans": [],
    "commands": [],
    "busy": false
-  }
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/defaults": {
+   "roles": [
+    {
+     "role": "switch",
+     "label": "switch",
+     "device_role": "switch",
+     "one_liner": "{ :local p \"\"; :if ([:len [/file find name=\"flash\" type=\"directory\"]] > 0) do={ :set p \"flash/\" }; /tool fetch url=\"https://c.example/enroll/KEY/default/switch\" dst-path=($p . \"mtc-default.rsc\") check-certificate=yes-without-crl; :delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no run-after-reset=($p . \"mtc-default.rsc\") }"
+    },
+    {
+     "role": "ap",
+     "label": "AP",
+     "device_role": "ap",
+     "one_liner": "{ :local p \"\"; :if ([:len [/file find name=\"flash\" type=\"directory\"]] > 0) do={ :set p \"flash/\" }; /tool fetch url=\"https://c.example/enroll/KEY/default/ap\" dst-path=($p . \"mtc-default.rsc\") check-certificate=yes-without-crl; :delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no run-after-reset=($p . \"mtc-default.rsc\") }"
+    },
+    {
+     "role": "switch_ap",
+     "label": "switch + AP",
+     "device_role": "ap",
+     "one_liner": "{ :local p \"\"; :if ([:len [/file find name=\"flash\" type=\"directory\"]] > 0) do={ :set p \"flash/\" }; /tool fetch url=\"https://c.example/enroll/KEY/default/switch_ap\" dst-path=($p . \"mtc-default.rsc\") check-certificate=yes-without-crl; :delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no run-after-reset=($p . \"mtc-default.rsc\") }"
+    },
+    {
+     "role": "switch_capsman",
+     "label": "switch + CAPsMAN",
+     "device_role": "switch",
+     "one_liner": "{ :local p \"\"; :if ([:len [/file find name=\"flash\" type=\"directory\"]] > 0) do={ :set p \"flash/\" }; /tool fetch url=\"https://c.example/enroll/KEY/default/switch_capsman\" dst-path=($p . \"mtc-default.rsc\") check-certificate=yes-without-crl; :delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no run-after-reset=($p . \"mtc-default.rsc\") }"
+    },
+    {
+     "role": "firewall",
+     "label": "firewall / router",
+     "device_role": "gateway",
+     "one_liner": "{ :local p \"\"; :if ([:len [/file find name=\"flash\" type=\"directory\"]] > 0) do={ :set p \"flash/\" }; /tool fetch url=\"https://c.example/enroll/KEY/default/firewall\" dst-path=($p . \"mtc-default.rsc\") check-certificate=yes-without-crl; :delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no run-after-reset=($p . \"mtc-default.rsc\") }"
+    }
+   ],
+   "enroll_base": "https://c.example/enroll/"
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/factory-passwords": [
+   {
+    "serial": "HG409B1",
+    "note": "cAP ax sklad",
+    "updated_at": "2026-10-18T23:00:00+02:00",
+    "device_id": "06813aef-ac70-438a-a7d6-7859862f16ed",
+    "identity": "gw",
+    "model": "RB5009",
+    "state": "adopted"
+   },
+   {
+    "serial": "AB12CD",
+    "note": null,
+    "updated_at": "2026-10-18T23:00:00+02:00",
+    "device_id": null,
+    "identity": null,
+    "model": null,
+    "state": null
+   }
+  ]
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",
  "gw": "06813aef-ac70-438a-a7d6-7859862f16ed",

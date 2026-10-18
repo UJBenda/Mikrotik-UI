@@ -397,6 +397,22 @@ Potřebuješ převzatý switch (bod 9c) a aspoň jedno AP s balíkem `wifi` (cAP
 6. **Roaming**: se dvěma AP projdi s telefonem mezi nimi; na switchi
    `/log print where topics~"wireless"` – čekám „roamed“/FT. Pošli výpis, hlavně u WPA3 klientů.
 
+## 9e. Výchozí konfigurace podle role a ohlášení
+
+1. Lokalita → Nasazení: u role **switch** zkopíruj příkaz a vlož ho do terminálu testovacího kusu
+   (smaže konfiguraci, uživatelé zůstanou). Po restartu: `/interface bridge print` (komentář
+   `mtc-default:switch`), `/system scheduler print` (mtc-enroll).
+2. Do minuty se kus objeví v Přehledu → Adopce jako čekající s rolí switch. Schval ho. Po provisioningu
+   je v detailu → Řízení „řízené“ (bez převzetí resetem).
+3. Netinstall: `netinstall-cli -r -s mtc-default-ap.rsc -a <IP> routeros-…npk wifi-qcom-…npk` na cAP ax.
+   Po instalaci a po **resetu tlačítkem** musí naběhnout zase naše výchozí konfigurace (ne tovární).
+4. Firewall (hEX / RB2011): role firewall – klient na ether2 dostane 192.168.88.x a internet; z WAN nejde
+   Winbox ani ping na router ze sítě, která není v `mtc-admin`. Detail → Bezpečnost a firewall → Matice zón
+   ukazuje LAN → WAN povoleno, WAN → LAN zakázáno.
+5. Přepnutí managementu: v Řízení nastav statickou adresu → Sladit řízená zařízení → plán schval. Zařízení se
+   ozve z nové adresy; s úmyslně špatnou bránou se do 5 minut samo vrátí.
+6. Výchozí hesla: ulož heslo ze štítku, „Zobrazit“ ho ukáže na 20 s a v Auditu je záznam `factory_password.reveal`.
+
 ## 10. Řešení problémů
 
 | Příznak | Kde hledat |

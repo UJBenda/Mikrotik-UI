@@ -2,7 +2,7 @@
 
 Jedna aplikace obsluhuje dva hostname a routy jsou podle nich striktně oddělené:
 - admin UI a API (`/`, `/static/…`, `/api/admin/…`) jen na web.ui_host,
-- check-in a adopce (`/api/checkin…`, `/adopt/…`) jen na web.checkin_host.
+- check-in, adopce a ohlášení (`/api/checkin…`, `/adopt/…`, `/enroll/…`) jen na web.checkin_host.
 Cokoli jiného je 404. nginx navíc pouští admin hostname jen z admin sítě.
 """
 
@@ -28,7 +28,7 @@ from ..tunnel import TunnelProvider
 
 log = logging.getLogger("mtc.web")
 
-CHECKIN_PREFIXES = ("/api/checkin", "/adopt/")
+CHECKIN_PREFIXES = ("/api/checkin", "/adopt/", "/enroll/")
 SHARED_PATHS = ("/healthz",)
 
 

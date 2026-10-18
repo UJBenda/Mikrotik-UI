@@ -294,6 +294,18 @@ def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], er
                        %(rx_errors)s, %(tx_errors)s, %(rx_drops)s, %(tx_drops)s, %(link_downs)s)""",
                 dict(smp, t=str(tenant_id), d=str(device_id)),
             )
+        # naše výchozí konfigurace (značka v bridgi) = zařízení je řízené od adopce, bez převzetí resetem
+        from .defaults import role_from_inventory
+
+        prof = role_from_inventory(data)
+        if prof:
+            row = tx.fetchone("""UPDATE device SET managed_at = now() WHERE id = %(d)s AND managed_at IS NULL
+                                 AND state = 'adopted' RETURNING id""", {"d": str(device_id)})
+            if row:
+                from .services import audit
+
+                audit(tx, "device.managed_default", tenant_id=tenant_id, target=f"device:{device_id}",
+                      after={"profile": prof})
         ident = (data.get("identity") or {}).get("name") if isinstance(data.get("identity"), dict) else None
         res = data.get("resource") if isinstance(data.get("resource"), dict) else {}
         tx.execute(

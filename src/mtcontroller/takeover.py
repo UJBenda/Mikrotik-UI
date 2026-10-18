@@ -208,6 +208,11 @@ def preview(db: Database, tenant_id: Any, device_id: Any) -> dict:
 
     out.update(model=model, classification=cls, blockers=blockers, warnings=model["warnings"],
                wifi=supports_wifi(inv), capsman=cap_host)
+    if d["managed_at"] is not None and d["role"] == "gateway":
+        out["blockers"] = ["firewall/router: konfiguraci nastavila výchozí konfigurace (zóny WAN/LAN); "
+                           "správa sítí a matice zón routeru přijde v další fázi"]
+        out.pop("model", None)
+        return out
     if d["managed_at"] is not None:
         r = switchcfg.reconcile(inv, model)
         out["reconcile"] = {"changes": r["changes"], "additive": r["additive"]}
@@ -373,6 +378,9 @@ def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site
                 continue
             did = str(d["id"])
             item = {"device_id": did, "device": d["identity"] or d["serial"]}
+            if d["role"] == "gateway":
+                out.append(item | {"result": "skipped", "reason": "firewall/router – sladění zón přijde s řízením routeru"})
+                continue
             dd = _device(tx, did)
             inv = inventory.load(tx, did)
             if not inv:
