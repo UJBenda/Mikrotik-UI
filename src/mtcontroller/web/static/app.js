@@ -34,6 +34,9 @@ async function api(method, path, body) {
 
 function show(which) {
   for (const s of ["login", "mfa", "app", "detail"]) $(s).hidden = s !== which;
+  $("nav").hidden = !(which === "app" || which === "detail");
+  // v detailu zůstává navigace: klik na sekci se vrátí do aplikace
+  for (const [k] of VIEWS) { const b = $("nav-" + k); if (b) b.className = "navbtn" + (which === "app" && k === prefs.view ? " active" : ""); }
 }
 
 function el(tag, text, cls) {
@@ -111,10 +114,13 @@ async function startApp() {
   const out = el("button", "Odhlásit", "small secondary");
   out.onclick = async () => { await api("POST", "/logout").catch(() => {}); location.reload(); };
   const pw = el("button", "Heslo", "small secondary");
-  pw.onclick = () => { $("pw-card").hidden = !$("pw-card").hidden; };
+  pw.onclick = () => { showView("users"); $("pw-card").hidden = false; };
   who.append(pw, " ");
   who.appendChild(out);
+  $("hdr-tenant").hidden = false;
   $("tenant-form").hidden = !me.superadmin;
+  buildNav();
+  showView(prefs.view || "overview");
   if (me.superadmin) loadSystem();
   await loadTenants();
 }
@@ -225,6 +231,7 @@ async function loadDevices() {
   const tb = $("devices");
   tb.textContent = "";
   devicesCache = list;
+  setBadge("overview", list.filter((d) => d.state === "pending").length, "warn");
   for (const d of list) {
     const tr = el("tr");
     if (d.state !== "pending") {
@@ -345,9 +352,10 @@ async function loadSitePanel() {
   const busiest = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
   sel.value = prev && sites.some((s) => s.id === prev) ? prev : (busiest ? busiest.id : "");
   // panely jsou vázané na lokalitu – při změně je zavřít, ať neukazují data jiné lokality
-  for (const w of ["topo-wrap", "clients-wrap", "wifi-wrap", "stp-wrap", "upg-wrap", "infra-wrap", "net-wrap"]) $(w).hidden = true;
+  for (const [, w] of SITE_TABS) $(w).hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
+  openSiteTab(SITE_TABS.some(([k]) => k === prefs.siteTab) ? prefs.siteTab : "infra");
   const prim = $("ntp-primary");
   prim.textContent = "";
   const siteDevs = devicesCache.filter((x) => x.site_id === siteId() && x.state !== "pending");
@@ -397,6 +405,7 @@ async function loadPlans() {
   const list = await api("GET", `/tenants/${tenantId}/plans?status=draft`);
   const box = $("plans");
   box.textContent = "";
+  setBadge("plans", list.length, "warn");
   if (!list.length) { box.appendChild(el("p", "Žádné plány nečekají na schválení.", "muted")); return; }
   for (const p of list) {
     const div = el("div", null, "plan");
@@ -425,13 +434,14 @@ function svgEl(tag, attrs, text) {
   return e;
 }
 
-$("topo-btn").addEventListener("click", async () => {
+async function loadTopology() {
   try {
     const t = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/topology`);
     drawTopology(t);
     $("topo-wrap").hidden = false;
   } catch (e) { msg(e.message, true); }
-});
+}
+$("topo-btn").addEventListener("click", loadTopology);
 
 function drawTopology(t) {
   const svg = $("topo");
@@ -486,10 +496,11 @@ async function loadAlerts() {
   tb.textContent = "";
   const crit = list.filter((a) => a.severity === "critical").length;
   $("alerts-count").textContent = list.length ? `${list.length}${crit ? ` (${crit} kritických)` : ""}` : "žádné";
+  setBadge("alerts", list.length, crit ? "bad" : "warn");
   for (const a of list) {
     const tr = el("tr");
     tr.append(el("td", SEV_LABEL[a.severity] || a.severity, "sev-" + (a.severity === "critical" ? "error" : a.severity)),
-              el("td", a.identity || a.serial), el("td", a.site || "–"), el("td", a.message), el("td", fmtTime(a.opened_at)));
+              el("td", a.identity || a.serial), el("td", a.site || "–"), el("td", a.message, "wrap"), el("td", fmtTime(a.opened_at)));
     const act = el("td");
     if (a.acknowledged_at) act.appendChild(el("span", `potvrdil ${a.acknowledged_by || ""}`, "muted"));
     else {
@@ -566,9 +577,10 @@ function renderClients() {
 
 // --- Wi-Fi lokality --------------------------------------------------------------------
 
-$("wifi-btn").addEventListener("click", async () => {
+async function loadWifi() {
   try { renderWifi(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi`)); } catch (e) { msg(e.message, true); }
-});
+}
+$("wifi-btn").addEventListener("click", loadWifi);
 
 function renderWifi(w) {
   $("wifi-wrap").hidden = false;
@@ -745,6 +757,62 @@ $("pw-form").addEventListener("submit", async (ev) => {
 
 const prefs = (() => { try { return JSON.parse(localStorage.getItem("mtc-view") || "{}"); } catch (e) { return {}; } })();
 function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(prefs)); } catch (e) { /* bez úložiště */ } }
+
+// --- navigace: levý panel se sekcemi, záložky lokality a detailu -----------------------------
+
+const VIEWS = [["overview", "Přehled"], ["site", "Lokalita"], ["plans", "Plány změn"],
+  ["alerts", "Alerty"], ["users", "Uživatelé"], ["audit", "Audit"], ["system", "Systém"]];
+const navBadges = {};
+
+function buildNav() {
+  const nav = $("nav"); nav.textContent = "";
+  for (const [key, label] of VIEWS) {
+    if (key === "system" && !(me && me.superadmin)) continue;
+    const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key;
+    b.appendChild(el("span", label));
+    const badge = el("span", "", "nbadge"); badge.hidden = true;
+    b.appendChild(badge); navBadges[key] = badge;
+    b.addEventListener("click", () => { if ($("app").hidden) { show("app"); loadDevices(); } showView(key); });
+    nav.appendChild(b);
+  }
+}
+
+function showView(key) {
+  if (!VIEWS.some(([k]) => k === key) || (key === "system" && !(me && me.superadmin))) key = "overview";
+  prefs.view = key; savePrefs();
+  for (const [k] of VIEWS) {
+    const v = $("view-" + k); if (v) v.hidden = k !== key;
+    const b = $("nav-" + k); if (b) b.className = "navbtn" + (k === key ? " active" : "");
+  }
+}
+
+function setBadge(key, n, cls) {
+  const b = navBadges[key]; if (!b) return;
+  b.textContent = n ? String(n) : ""; b.hidden = !n; b.className = "nbadge" + (cls ? " nb-" + cls : "");
+}
+
+const SITE_TABS = [["infra", "infra-wrap"], ["topo", "topo-wrap"], ["clients", "clients-wrap"], ["wifi", "wifi-wrap"],
+  ["net", "net-wrap"], ["stp", "stp-wrap"], ["ntp", "ntp-wrap"], ["upg", "upg-wrap"]];
+
+function activateSiteTab(key) {
+  prefs.siteTab = key; savePrefs();
+  for (const [k, w] of SITE_TABS) { $(w).hidden = k !== key; $(k + "-btn").className = k === key ? "active" : ""; }
+}
+
+// loadery záložek jsou definované níž; mapa se vyhodnotí až při volání
+function openSiteTab(key) {
+  activateSiteTab(key);
+  const loaders = { infra: loadInfra, topo: loadTopology, clients: loadClients, wifi: loadWifi, net: loadNetworks,
+    stp: loadStp, upg: loadUpgrade };
+  if (loaders[key]) loaders[key]();
+}
+
+const DETAIL_TABS = ["ports", "sec", "vlan", "hist"];
+function showDetailTab(key) {
+  prefs.detailTab = key; savePrefs();
+  for (const k of DETAIL_TABS) { $("dp-" + k).hidden = k !== key; $("dt-" + k).className = k === key ? "active" : ""; }
+}
+for (const k of DETAIL_TABS) $("dt-" + k).addEventListener("click", () => showDetailTab(k));
 
 // přepínač ve stylu segmented control: options = [[hodnota, popisek], …]
 function segmented(box, options, value, onChange) {
@@ -1491,11 +1559,12 @@ $("upg-start").addEventListener("click", async () => {
 
 let infraData = null;
 
-$("infra-btn").addEventListener("click", async () => {
+async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
   $("infra-wrap").hidden = false;
   renderInfra();
-});
+}
+$("infra-btn").addEventListener("click", loadInfra);
 $("infra-ext").addEventListener("change", () => { if (infraData) renderInfra(); });
 
 function miniPorts(ports) {
@@ -2016,9 +2085,10 @@ $("dg-generate").addEventListener("click", async () => {
   } catch (e) { msg(e.message, true); }
 });
 
-$("stp-btn").addEventListener("click", async () => {
+async function loadStp() {
   try { renderStp(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/stp`)); } catch (e) { msg(e.message, true); }
-});
+}
+$("stp-btn").addEventListener("click", loadStp);
 
 function renderStp(s) {
   $("stp-wrap").hidden = false;
@@ -2055,6 +2125,7 @@ async function openDetail(id) {
   let d;
   try { d = await api("GET", `/tenants/${tenantId}/devices/${id}`); } catch (e) { return msg(e.message, true); }
   show("detail");
+  showDetailTab(DETAIL_TABS.includes(prefs.detailTab) ? prefs.detailTab : "ports");
   const dev = d.device, sm = d.summary;
   $("d-title").textContent = `${dev.identity || dev.serial} – ${dev.model || ""} (${dev.state})`;
   const w = $("d-warn"); w.textContent = "";
@@ -2099,7 +2170,7 @@ async function openDetail(id) {
   kv($("d-summary"), [
     ["Sériové číslo", dev.serial], ["RouterOS", dev.ros_version], ["Kanál / dostupná", sm.update_channel ? `${sm.update_channel} / ${sm.latest_version || "?"}` : null],
     ["RouterBOOT", sm.firmware ? `${sm.firmware}${sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware ? " → " + sm.firmware_upgrade : ""}` : null],
-    ["Uptime", sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} % (${sm.cpu || ""})` : null],
+    ["Uptime", sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} %${sm.cpu ? ` (${sm.cpu})` : ""}` : null],
     ["Paměť", sm.memory_used_pct != null ? `${sm.memory_used_pct} %` : null], ["Úložiště", sm.hdd_used_pct != null ? `${sm.hdd_used_pct} %` : null],
     ["Lokalita", dev.site], ["Poznámka", dev.note], ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
     ["Check-in", fmtTime(dev.last_checkin_at)], ["Inventura", fmtTime(dev.inventory_at)], ["Záloha", fmtTime(dev.backup_at)],
@@ -2367,3 +2438,6 @@ async function loadPortHistory(id) {
     ul.appendChild(phItem(e, !phState.port));
   }
 }
+
+// přepínání záložek lokality – registrováno po loaderech, aby se po načtení skryly ostatní panely
+for (const [k] of SITE_TABS) $(k + "-btn").addEventListener("click", () => activateSiteTab(k));

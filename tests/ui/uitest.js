@@ -7,6 +7,7 @@ const html = fs.readFileSync(htmlPath, "utf8");
 const api = JSON.parse(fs.readFileSync(apiPath, "utf8"));
 const errors = [];
 const requests = [];
+const byId = {};
 
 class El {
   constructor(tag, id) {
@@ -17,6 +18,9 @@ class El {
   set textContent(v) { this._text = v === null || v === undefined ? "" : String(v); this.children = []; }
   get textContent() { return this._text + this.children.map((c) => (c instanceof El ? c.textContent : String(c))).join(""); }
   set innerHTML(v) { throw new Error("innerHTML nesmí být použito (XSS): " + this.id); }
+  // prvky vytvořené skriptem s id jsou dostupné přes getElementById (navigace)
+  set id(v) { this._id = v; if (v) byId[v] = this; }
+  get id() { return this._id || ""; }
   appendChild(c) { this.children.push(c); return c; }
   insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); return c; }
   append(...cs) { for (const c of cs) this.children.push(typeof c === "string" ? c : c); }
@@ -32,7 +36,6 @@ class El {
   reset() {}
 }
 
-const byId = {};
 for (const m of html.matchAll(/<(\w+)[^>]*\sid="([^"]+)"/g)) byId[m[2]] = new El(m[1], m[2]);
 // pole formulářů jako vlastnosti formuláře (f.upstream.value)
 for (const m of html.matchAll(/<form[^>]*id="([^"]+)"[\s\S]*?<\/form>/g)) {
@@ -74,6 +77,13 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
     if (visible.join() !== "app") errors.push("po bootu je vidět " + visible.join());
     const devRows = byId["devices"].children.length;
+    // levá navigace: sekce, odznaky, přepínání
+    if (byId["nav"].children.length !== 7) errors.push("navigace: čekáno 7 sekcí, je " + byId["nav"].children.length);
+    if (byId["view-overview"].hidden || !byId["view-alerts"].hidden) errors.push("navigace: výchozí pohled");
+    await byId["nav-alerts"].fire("click");
+    if (byId["view-alerts"].hidden || !byId["view-overview"].hidden || byId["nav-alerts"].className !== "navbtn active") errors.push("navigace: přepnutí na alerty");
+    if (byId["nav-alerts"].children[1].textContent !== "4" || byId["nav-plans"].children[1].textContent !== "2") errors.push("navigace: odznaky " + byId["nav-alerts"].children[1].textContent);
+    await byId["nav-site"].fire("click");
     if (byId["system-card"].hidden || byId["system-steps"].children.length !== 3) errors.push("stav systému");
     if (byId["users-card"].hidden || byId["users"].children.length !== 2) errors.push("uživatelé: čekány 2 řádky");
     const tiles = byId["overview"].children.length;
@@ -136,6 +146,10 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     }
     if (!requests.some((r) => r.startsWith("POST") && r.endsWith("/plans/dhcp_snooping"))) errors.push("DHCP: generování plánů");
     await byId["upg-btn"].fire("click");
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    if (byId["upg-wrap"].hidden || byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");
+    if (!byId["upg-start"].hidden) errors.push("aktualizace lokality: spuštění musí být skryté, když úloha běží");
+    if (!byId["net-wrap"].hidden) errors.push("záložky lokality: po přepnutí má být předchozí panel skrytý");
     await byId["infra-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     if (byId["infra-list"].children.length !== 4) errors.push("infrastruktura: seznam zařízení " + byId["infra-list"].children.length);
@@ -153,8 +167,6 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       errors.push("wifi: plán kanálů obsah " + byId["wifi-plan-sum"].textContent);
     if (!byId["wifi-radios"].textContent.includes("36 · 5180 MHz")) errors.push("wifi: skutečný kanál v tabulce rádií");
     if (byId["wifi-caps-t"].hidden) errors.push("wifi: tabulka CAPsMAN skrytá");
-    if (byId["upg-wrap"].hidden || byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");
-    if (!byId["upg-start"].hidden) errors.push("aktualizace lokality: spuštění musí být skryté, když úloha běží");
     const stpRows = byId["stp-bridges"].children.length;
     if (stpRows !== 3) errors.push("stp: čekány 3 bridge, je " + stpRows);
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");

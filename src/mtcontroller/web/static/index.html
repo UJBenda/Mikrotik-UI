@@ -10,10 +10,18 @@
 <body>
 <header>
   <h1><span class="logo" aria-hidden="true"></span>MikroTik Controller</h1>
+  <div id="hdr-tenant" class="hdr-tenant" hidden>
+    <label>Tenant <select id="tenant"></select></label>
+    <form id="tenant-form" class="inline superadmin" hidden>
+      <input name="name" placeholder="Nový tenant (firma)" required size="18">
+      <button class="small">Založit</button>
+    </form>
+  </div>
   <div id="who"></div>
 </header>
 
 <main>
+  <nav id="nav" class="nav" aria-label="Sekce" hidden></nav>
   <section id="login" hidden>
     <h2>Přihlášení</h2>
     <form id="login-form">
@@ -37,27 +45,14 @@
   </section>
 
   <section id="app" hidden>
-    <div class="row">
-      <label>Tenant <select id="tenant"></select></label>
-      <form id="tenant-form" class="inline superadmin" hidden>
-        <input name="name" placeholder="Nový tenant (firma)" required>
-        <button>Založit</button>
-      </form>
-    </div>
-
-    <div class="card" id="system-card" hidden>
-      <h2>Systém <button id="system-refresh" type="button" class="small secondary">Obnovit</button></h2>
-      <p id="system-summary"></p>
-      <table><thead><tr><th>Krok workeru</th><th>Trvání</th><th>Výsledek</th></tr></thead><tbody id="system-steps"></tbody></table>
-    </div>
-
-    <div id="overview" class="overview"></div>
-    <div class="row">
-      <input id="csearch" placeholder="Najít klienta ve všech lokalitách (MAC, IP, jméno)…" size="48">
-      <ul id="csearch-out"></ul>
-    </div>
-
-    <div class="grid">
+    <div class="content">
+      <div id="view-overview" class="view">
+        <div id="overview" class="overview"></div>
+        <div class="row">
+          <input id="csearch" placeholder="Najít klienta ve všech lokalitách (MAC, IP, jméno)…" size="48">
+          <ul id="csearch-out"></ul>
+        </div>
+        <div class="grid">
       <div class="card">
         <h2>Lokality</h2>
         <ul id="sites"></ul>
@@ -78,19 +73,32 @@
           <button id="token-copy" type="button">Kopírovat</button>
         </div>
       </div>
-    </div>
-
+        </div>
     <div class="card">
-      <h2>Lokalita <select id="site-sel"></select>
-        <button id="infra-btn" type="button" class="small secondary">Infrastruktura</button>
-        <button id="topo-btn" type="button" class="small secondary">Topologie</button>
-        <button id="clients-btn" type="button" class="small secondary">Klienti</button>
-        <button id="wifi-btn" type="button" class="small secondary">Wi-Fi</button>
-        <button id="net-btn" type="button" class="small secondary">Sítě a DHCP</button>
-        <button id="stp-btn" type="button" class="small secondary">STP</button>
-        <button id="upg-btn" type="button" class="small secondary">Aktualizace lokality</button></h2>
-      <div id="infra-wrap" hidden class="panel">
-        <h3>Infrastruktura</h3>
+      <h2>Zařízení <button id="refresh" type="button" class="small">Obnovit</button></h2>
+      <table>
+        <thead><tr><th>Stav</th><th>Sériové č.</th><th>Model</th><th>RouterOS</th><th>Lokalita</th><th>Tunel IP</th><th>SSTP</th><th>Poslední check-in</th><th>Akce</th></tr></thead>
+        <tbody id="devices"></tbody>
+      </table>
+    </div>
+      </div>
+
+      <div id="view-site" class="view" hidden>
+        <div class="card">
+          <div class="site-head">
+            <h2>Lokalita <select id="site-sel"></select></h2>
+            <div id="site-tabs" class="seg">
+              <button id="infra-btn" type="button">Infrastruktura</button>
+              <button id="topo-btn" type="button">Topologie</button>
+              <button id="clients-btn" type="button">Klienti</button>
+              <button id="wifi-btn" type="button">Wi-Fi</button>
+              <button id="net-btn" type="button">Sítě a DHCP</button>
+              <button id="stp-btn" type="button">STP</button>
+              <button id="ntp-btn" type="button">NTP</button>
+              <button id="upg-btn" type="button">Aktualizace</button>
+            </div>
+          </div>
+      <div id="infra-wrap" hidden class="pane">
         <div id="infra-warn"></div>
         <div class="infra-bar">
           <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
@@ -100,17 +108,34 @@
           <div class="infra-canvas"><svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg></div>
         </div>
       </div>
-      <div id="upg-wrap" hidden class="panel">
-        <h3>Postupná aktualizace lokality</h3>
-        <p class="muted">Postupně po jednom zařízení: AP a PtP → switche → gateway. Další až po návratu
-          předchozího s novou verzí; při chybě se zastaví.</p>
-        <ol id="upg-cands"></ol>
-        <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
-        <h4>Úlohy</h4>
-        <ul id="upg-jobs"></ul>
+        <div id="topo-wrap" hidden class="pane">
+          <svg id="topo" viewBox="0 0 800 400" role="img" aria-label="Topologie lokality"></svg>
+          <p class="muted">Plné uzly = spravovaná zařízení, prázdné = sousedé mimo správu.</p>
+        </div>
+      <div id="clients-wrap" hidden class="pane">
+        <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
+        <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
+        <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th></tr></thead>
+        <tbody id="clients"></tbody></table>
       </div>
-      <div id="net-wrap" hidden class="panel">
-        <h3>Sítě</h3>
+      <div id="wifi-wrap" hidden class="pane">
+        <p id="wifi-summary" class="muted"></p>
+        <ul id="wifi-warn"></ul>
+        <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>SSID</th><th>Režim</th><th>Pásmo</th><th>Kanál</th><th>Šířka</th><th>Klienti</th><th>Signál prům./min</th></tr></thead>
+        <tbody id="wifi-radios"></tbody></table>
+        <div id="wifi-plan-wrap" hidden>
+          <h3>Plán kanálů <span id="wifi-plan-sum" class="muted"></span></h3>
+          <p class="muted">Doporučení bez RF skenu (sken by přerušil provoz): AP jedné lokality se mohou slyšet,
+            cílem je co nejméně AP na stejném kanálu. Nic se nemění – příkaz lze použít ručně.</p>
+          <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>Pásmo</th><th>Teď</th><th>Doporučeno</th><th>Proč</th><th>Příkaz</th></tr></thead>
+          <tbody id="wifi-plan"></tbody></table>
+          <ul id="wifi-plan-notes" class="muted"></ul>
+        </div>
+        <h3 id="wifi-caps-h" hidden>CAPsMAN – připojené AP</h3>
+        <table id="wifi-caps-t" hidden><thead><tr><th>Controller</th><th>AP</th><th>Adresa</th><th>Model</th><th>Verze</th><th>Stav</th></tr></thead>
+        <tbody id="wifi-caps"></tbody></table>
+      </div>
+      <div id="net-wrap" hidden class="pane">
         <ul id="net-warn"></ul>
         <table class="nets"><thead><tr><th>Název</th><th>VLAN ID</th><th>Router</th><th>Podsíť</th><th>DHCP</th><th>IP leases</th><th>Volné</th><th>VLAN na zařízeních</th></tr></thead>
         <tbody id="net-rows"></tbody></table>
@@ -156,41 +181,14 @@
         <button id="dg-generate" type="button" class="small">Vytvořit plány ke schválení</button>
         <span id="dg-result" class="muted"></span>
       </div>
-      <div id="stp-wrap" hidden class="panel">
-        <h3>STP</h3>
+      <div id="stp-wrap" hidden class="pane">
         <p id="stp-roots" class="muted"></p>
         <ul id="stp-warn"></ul>
         <table><thead><tr><th>Zařízení</th><th>Bridge</th><th>Protokol</th><th>Root</th><th>Root port</th><th>Cena k rootu</th><th>Linky ke spravovaným</th></tr></thead>
         <tbody id="stp-bridges"></tbody></table>
       </div>
-      <div id="wifi-wrap" hidden class="panel">
-        <h3>Wi-Fi</h3>
-        <p id="wifi-summary" class="muted"></p>
-        <ul id="wifi-warn"></ul>
-        <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>SSID</th><th>Režim</th><th>Pásmo</th><th>Kanál</th><th>Šířka</th><th>Klienti</th><th>Signál prům./min</th></tr></thead>
-        <tbody id="wifi-radios"></tbody></table>
-        <div id="wifi-plan-wrap" hidden>
-          <h3>Plán kanálů <span id="wifi-plan-sum" class="muted"></span></h3>
-          <p class="muted">Doporučení bez RF skenu (sken by přerušil provoz): AP jedné lokality se mohou slyšet,
-            cílem je co nejméně AP na stejném kanálu. Nic se nemění – příkaz lze použít ručně.</p>
-          <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>Pásmo</th><th>Teď</th><th>Doporučeno</th><th>Proč</th><th>Příkaz</th></tr></thead>
-          <tbody id="wifi-plan"></tbody></table>
-          <ul id="wifi-plan-notes" class="muted"></ul>
-        </div>
-        <h3 id="wifi-caps-h" hidden>CAPsMAN – připojené AP</h3>
-        <table id="wifi-caps-t" hidden><thead><tr><th>Controller</th><th>AP</th><th>Adresa</th><th>Model</th><th>Verze</th><th>Stav</th></tr></thead>
-        <tbody id="wifi-caps"></tbody></table>
-      </div>
-      <div id="clients-wrap" hidden class="panel">
-        <h3>Klienti</h3>
-        <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
-        <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
-        <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th></tr></thead>
-        <tbody id="clients"></tbody></table>
-      </div>
-      <div class="grid">
-        <div>
-          <h3>NTP politika</h3>
+          <div id="ntp-wrap" hidden class="pane">
+          <h3>NTP politika lokality</h3>
           <form id="ntp-form">
             <label>Primární NTP (zařízení) <select name="primary_device_id" id="ntp-primary"></select></label>
             <label>Upstream servery <input name="upstream" placeholder="tik.cesnet.cz, tak.cesnet.cz"></label>
@@ -199,35 +197,33 @@
             <button type="button" id="ntp-plan" class="secondary">Vygenerovat plány</button>
           </form>
           <div id="ntp-result" class="muted"></div>
-        </div>
-        <div id="topo-wrap" hidden>
-          <h3>Topologie (MNDP/LLDP)</h3>
-          <svg id="topo" viewBox="0 0 800 400" role="img" aria-label="Topologie lokality"></svg>
-          <p class="muted">Plné uzly = spravovaná zařízení, prázdné = sousedé mimo správu.</p>
+          </div>
+      <div id="upg-wrap" hidden class="pane">
+        <p class="muted">Postupně po jednom zařízení: AP a PtP → switche → gateway. Další až po návratu
+          předchozího s novou verzí; při chybě se zastaví.</p>
+        <ol id="upg-cands"></ol>
+        <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
+        <h4>Úlohy</h4>
+        <ul id="upg-jobs"></ul>
+      </div>
         </div>
       </div>
-    </div>
 
+      <div id="view-plans" class="view" hidden>
+    <div class="card">
+      <h2>Plány změn ke schválení <button id="plans-refresh" type="button" class="small secondary">Obnovit</button></h2>
+      <div id="plans"></div>
+    </div>
+      </div>
+      <div id="view-alerts" class="view" hidden>
     <div class="card">
       <h2>Alerty <span id="alerts-count" class="badge"></span>
         <button id="alerts-refresh" type="button" class="small secondary">Obnovit</button></h2>
       <table><thead><tr><th>Závažnost</th><th>Zařízení</th><th>Lokalita</th><th>Zpráva</th><th>Od</th><th></th></tr></thead>
       <tbody id="alerts"></tbody></table>
     </div>
-
-    <div class="card">
-      <h2>Plány změn ke schválení <button id="plans-refresh" type="button" class="small secondary">Obnovit</button></h2>
-      <div id="plans"></div>
-    </div>
-
-    <div class="card">
-      <h2>Zařízení <button id="refresh" type="button" class="small">Obnovit</button></h2>
-      <table>
-        <thead><tr><th>Stav</th><th>Sériové č.</th><th>Model</th><th>RouterOS</th><th>Lokalita</th><th>Tunel IP</th><th>SSTP</th><th>Poslední check-in</th><th>Akce</th></tr></thead>
-        <tbody id="devices"></tbody>
-      </table>
-    </div>
-
+      </div>
+      <div id="view-users" class="view" hidden>
     <div class="card" id="users-card" hidden>
       <h2>Uživatelé tenanta</h2>
       <table><thead><tr><th>E-mail</th><th>Role</th><th>MFA</th><th>Poslední přihlášení</th><th></th></tr></thead>
@@ -239,7 +235,6 @@
       </form>
       <p id="user-temp" class="warn" hidden></p>
     </div>
-
     <div class="card" id="pw-card" hidden>
       <h2>Změna hesla</h2>
       <form id="pw-form" class="inline">
@@ -248,13 +243,23 @@
         <button>Změnit</button>
       </form>
     </div>
-
+      </div>
+      <div id="view-audit" class="view" hidden>
     <div class="card">
       <h2>Audit</h2>
       <table>
         <thead><tr><th>Čas</th><th>Uživatel</th><th>Akce</th><th>Cíl</th><th>IP</th></tr></thead>
         <tbody id="audit"></tbody>
       </table>
+    </div>
+      </div>
+      <div id="view-system" class="view" hidden>
+    <div class="card" id="system-card" hidden>
+      <h2>Systém <button id="system-refresh" type="button" class="small secondary">Obnovit</button></h2>
+      <p id="system-summary"></p>
+      <table><thead><tr><th>Krok workeru</th><th>Trvání</th><th>Výsledek</th></tr></thead><tbody id="system-steps"></tbody></table>
+    </div>
+      </div>
     </div>
   </section>
 
@@ -271,17 +276,24 @@
         <ul id="d-notes-list"></ul>
         <p id="d-notes-more" class="muted"></p>
       </div>
-      <div class="grid">
-        <div><h3>Přehled</h3><table><tbody id="d-summary"></tbody></table>
+      <div class="dgrid">
+        <div><h3>Přehled</h3><table class="kv kv2"><tbody id="d-summary"></tbody></table>
              <form id="d-edit" class="inline">
                <select id="d-edit-site" aria-label="Lokalita"></select>
                <select id="d-edit-role" aria-label="Role"></select>
                <input id="d-edit-note" maxlength="500" placeholder="Poznámka (umístění, kontakt…)">
                <button type="submit" class="small">Uložit</button>
              </form></div>
-        <div><h3>Moduly</h3><table><tbody id="d-modules"></tbody></table>
-             <h3>NTP</h3><table><tbody id="d-ntp"></tbody></table></div>
+        <div><h3>Moduly</h3><table class="kv"><tbody id="d-modules"></tbody></table></div>
+        <div><h3>NTP</h3><table class="kv"><tbody id="d-ntp"></tbody></table></div>
       </div>
+      <div id="d-tabs" class="seg dtabs">
+        <button id="dt-ports" type="button">Porty a provoz</button>
+        <button id="dt-sec" type="button">Bezpečnost a firewall</button>
+        <button id="dt-vlan" type="button">VLAN a rozhraní</button>
+        <button id="dt-hist" type="button">Zálohy a historie</button>
+      </div>
+      <div id="dp-ports" class="dpane">
       <div class="ports-head">
         <h3>Porty</h3>
         <div id="d-ports-views"></div>
@@ -313,6 +325,8 @@
         <div class="traffic-bar"><div id="d-ph-range"></div><select id="d-ph-port" aria-label="Port"></select></div>
         <div id="d-ph"></div>
       </details>
+      </div>
+      <div id="dp-sec" class="dpane" hidden>
       <h3>Bezpečnost konfigurace</h3>
       <ul id="d-security"></ul>
       <div class="ports-head">
@@ -322,21 +336,26 @@
       <ul id="d-fw-notes" class="muted"></ul>
       <div id="d-fw" class="fw"></div>
       <div id="d-fw-detail" hidden><h4 id="d-fw-detail-h"></h4><ol id="d-fw-detail-list"></ol></div>
+      </div>
+      <div id="dp-vlan" class="dpane" hidden>
       <h3>VLAN a bridge <span id="d-vlan-status" class="badge"></span></h3>
       <ul id="d-vlan"></ul>
       <button id="d-vlan-plan" type="button" class="small secondary" hidden>Náhled migrace na jeden bridge</button>
       <div id="d-vlan-preview" hidden><ol id="d-vlan-steps"></ol><ul id="d-vlan-notes" class="muted"></ul><pre id="d-vlan-script"></pre></div>
-      <details class="fold"><summary>Všechna rozhraní <span id="d-ifaces-n" class="muted"></span></summary>
+      <details class="fold" open><summary>Všechna rozhraní <span id="d-ifaces-n" class="muted"></span></summary>
       <table><thead><tr><th>Jméno</th><th>Typ</th><th>Stav</th><th>Linka</th><th>VLAN</th><th>STP</th><th>PoE</th><th>MAC</th><th>Výpadky linky</th><th>Chyby RX/TX</th><th>Komentář</th></tr></thead><tbody id="d-ifaces"></tbody></table>
       </details>
-      <details class="fold"><summary>Sousedé (MNDP/LLDP) <span id="d-neigh-n" class="muted"></span></summary>
+      <details class="fold" open><summary>Sousedé (MNDP/LLDP) <span id="d-neigh-n" class="muted"></span></summary>
       <table><thead><tr><th>Port</th><th>Identita</th><th>Model</th><th>Adresa</th><th>MAC</th></tr></thead><tbody id="d-neigh"></tbody></table>
       </details>
+      </div>
+      <div id="dp-hist" class="dpane" hidden>
       <h3>Zálohy</h3>
       <table><thead><tr><th>Čas</th><th>Důvod</th><th>Velikost</th><th>Změna</th><th></th></tr></thead><tbody id="d-backups"></tbody></table>
       <pre id="d-diff" hidden></pre>
       <h3>Plány a příkazy</h3>
       <table><thead><tr><th>Čas</th><th>Co</th><th>Stav</th></tr></thead><tbody id="d-history"></tbody></table>
+      </div>
     </div>
   </section>
   <div id="msg" role="status"></div>
