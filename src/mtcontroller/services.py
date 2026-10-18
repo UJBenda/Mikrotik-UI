@@ -488,6 +488,11 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
 
             return takeover.render_takeover(tx, settings, box, cmd, dev, ack_url, key)
         body = pl["script"]
+        if pl["module"] == "capsman":
+            # hesla SSID jen při doručení (v DB je skript s tokeny)
+            from . import takeover, wificfg
+
+            body = wificfg.fill_secrets(body, lambda h: takeover.ssid_psk(tx, box, h))
         if pl["revert_script"]:
             body = routeros.safe_apply_body(body, pl["revert_script"], f"{ack_url}&status=reverted", key, opts,
                                             int(pl["confirm_minutes"] or 5))

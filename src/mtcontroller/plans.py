@@ -32,6 +32,10 @@ def basis_for(module: str, inv: dict) -> str:
         from .switchcfg import basis
 
         return basis(inv)
+    if module == "capsman":
+        from .wificfg import basis
+
+        return basis(inv)
     if module == "ports":
         return portcfg.config_basis(inv)
     if module == "dhcp_snooping":
@@ -208,9 +212,10 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
                 raise ServiceError("zařízení už je řízené")
             if p["state"] != "adopted":
                 raise ServiceError("převzetí lze spustit jen u zařízení, které je online")
+        elif p["module"] in ("switch", "capsman") and p["managed_at"] is not None:
+            pass  # řízené zařízení: konfiguraci určuje záměr lokality
         elif p["module"] == "switch":
-            if p["managed_at"] is None:
-                raise ServiceError("sladění se záměrem je jen pro řízená zařízení")
+            raise ServiceError("sladění se záměrem je jen pro řízená zařízení")
         elif module_modes(tx, p["device_id"]).get(p["module"]) != "manage":
             raise ServiceError(f"modul {p['module']} je na zařízení v režimu observe – nejdřív přepni na manage")
         if p["state"] not in ("adopted", "offline"):

@@ -422,5 +422,35 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 22) Wi-Fi sítě (SSID, šifrované heslo) izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO site_ssid (id, tenant_id, site_id, ssid, vlan_id, psk_wrapped_key, psk_ciphertext)
+  VALUES ('00000000-0000-0000-0000-00000000551d', '00000000-0000-0000-0000-0000000000b1',
+          '00000000-0000-0000-0000-00000000b5b1', 'Brno-WiFi', 10, '\x00', '\x00');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM site_ssid) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí SSID tenanta B'; END IF;
+  UPDATE site_ssid SET ssid = 'x';
+  DELETE FROM site_ssid;
+  BEGIN
+    INSERT INTO site_ssid (id, tenant_id, site_id, ssid, vlan_id, psk_wrapped_key, psk_ciphertext)
+      VALUES (gen_random_uuid(), '00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-00000000b5b1',
+              'evil', 10, '\x00', '\x00');
+    RAISE EXCEPTION 'FAIL: tenant A založil SSID tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RAISE NOTICE 'OK 22 SSID izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT ssid FROM site_ssid) IS DISTINCT FROM 'Brno-WiFi' THEN RAISE EXCEPTION 'FAIL: tenant A změnil SSID B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

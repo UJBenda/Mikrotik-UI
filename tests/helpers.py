@@ -186,6 +186,9 @@ class AsgiClient:
     def put(self, path, **kw):
         return self.request("PUT", path, **kw)
 
+    def delete(self, path, **kw):
+        return self.request("DELETE", path, **kw)
+
 
 def uid() -> str:
     return str(uuid.uuid4())

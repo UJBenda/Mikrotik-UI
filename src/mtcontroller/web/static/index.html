@@ -156,6 +156,23 @@
           </div>
           <ul id="intent-devs" class="intent-devs"></ul>
           <ul id="intent-result"></ul>
+          <h4>Wi-Fi</h4>
+          <p class="muted">Rádia všech AP s rolí „AP + switch“ řídí jeden CAPsMAN lokality (běží na řízeném zařízení,
+            nejlépe na páteřním switchi). Roaming 802.11r/k/v je zapnutý, kanály a šířky rozdělí controller sám.</p>
+          <div class="intent-opts">
+            <label>CAPsMAN na <select id="wifi-host"></select></label>
+            <label>Max. šířka 5 GHz <select id="wifi-width"><option value="80">80 MHz</option><option value="40">40 MHz</option><option value="20">20 MHz</option></select></label>
+            <label><input type="checkbox" id="wifi-dfs"> i DFS kanály (52–140)</label>
+            <label>Země <input id="wifi-country" size="14"></label>
+          </div>
+          <table class="intent-nets"><thead><tr><th>SSID</th><th>Síť</th><th>Pásma</th><th>Heslo</th><th>Izolace klientů</th><th>Roaming (FT)</th><th>Zapnuto</th><th></th></tr></thead>
+          <tbody id="ssid-rows"></tbody></table>
+          <div class="intent-acts">
+            <button id="wifi-save" type="button" class="small secondary">Uložit nastavení Wi-Fi</button>
+            <button id="ssid-add" type="button" class="small secondary">+ SSID</button>
+            <button id="wifi-deploy" type="button" class="small">Nasadit Wi-Fi</button>
+          </div>
+          <ul id="wifi-result"></ul>
         </details>
         <ul id="net-warn"></ul>
         <table class="nets"><thead><tr><th>Název</th><th>VLAN ID</th><th>Router</th><th>Podsíť</th><th>DHCP</th><th>IP leases</th><th>Volné</th><th>VLAN na zařízeních</th></tr></thead>
@@ -383,6 +400,9 @@
         <table class="ptable"><thead><tr><th>Port</th><th>Nastavení</th><th>Výsledek</th><th>Proč</th></tr></thead><tbody id="ctl-ports"></tbody></table>
         <h4>VLAN</h4>
         <table><thead><tr><th>VLAN</th><th>Síť</th><th>Tagované</th><th>Netagované</th></tr></thead><tbody id="ctl-vlans"></tbody></table>
+        <div class="inline ctl-mgmt"><span>Role:</span>
+          <select id="ctl-role" aria-label="Role"></select>
+          <span id="ctl-role-why" class="muted"></span></div>
         <div class="inline ctl-mgmt"><span>Management:</span>
           <select id="ctl-mgmt-mode" aria-label="Management"><option value="">jak je dnes</option><option value="dhcp">DHCP</option><option value="static">statická adresa</option></select>
           <input id="ctl-mgmt-addr" placeholder="192.168.99.11/24" size="18" hidden aria-label="Adresa managementu">

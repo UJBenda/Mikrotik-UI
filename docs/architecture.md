@@ -476,7 +476,7 @@ Worker denně nechá zařízení zkontrolovat dostupnou verzi v jeho kanálu
 
 ## Řízený režim lokality (F5)
 
-Stav: **F5a (switch) implementováno** a čeká na ověření v labu (test-plan 9c); F5b–F6 jsou návrh.
+Stav: **F5a (switch) a F5b (Wi-Fi přes CAPsMAN) implementováno**, čeká na ověření v labu (test-plan 9c, 9d); F5c–F6 jsou návrh.
 Cíl: uživatel neřeší bridge, VLAN tabulky
 ani CAPsMAN. Nadefinuje sítě lokality, zařízením dá roli a controller z toho sám spočítá
 a nasadí celou konfiguraci. Vychází z UniFi, ale bez věcí, které na MikroTiku nejdou
@@ -691,3 +691,21 @@ když se graf změnil (nové AP, nový cizí silný soused).
 
 Otevřené (po labu): drift řízených zařízení (alert na ruční změnu), sladění spouštěné workerem
 po inventuře (dnes tlačítkem), hardening vstupu na řízeném switchi, CAPsMAN a SSID (F5b).
+
+### Implementace F5b – Wi-Fi přes CAPsMAN
+
+| Téma | Implementace | Důvod |
+| --- | --- | --- |
+| SSID | tabulka `site_ssid` (migrace 0014, RLS, checks 22): SSID, síť (VLAN), pásma, izolace, FT, zapnuto; heslo jen šifrované (SecretBox, kontext `ssid:<id>`) | tajemství nikdy v plaintextu v DB |
+| Heslo ve skriptu | plán `capsman` ukládá jen token `MTCPSK<id>`; heslo se dosadí až při doručení příkazu (`wificfg.fill_secrets`, RLS tenanta) | skript plánu je v DB a v UI |
+| Wi-Fi politika | v záměru `wifi`: zařízení s CAPsMANem (jen řízené zařízení lokality), země, DFS, max. šířka 5 GHz | uživatel neřeší kanály ani CAPsMAN |
+| Role AP | `device_intent.role` = switch / ap; AP jde vybrat až když lokalita má CAPsMAN a zařízení má balík wifi (wifi-qcom, wifi-qcom-ac); starý `wireless` jen jako switch | jedna generace CAPsMANu |
+| CAP | v bootstrapu i ve sladění: `/interface wifi cap` – discovery na bridgi (management), `caps-man-names` = identita hostitele, `lock-to-caps-man` | AP se nepřipojí k cizímu CAPsMANu |
+| Manager | objekty `mtc-*` (komentář `mtc`) se nahradí celé: steering (rrm, wnm), per SSID security (WPA2/WPA3-PSK, FT + FT over DS) a datapath (bridge, vlan-id, izolace), per rádio channel + master configuration + provisioning podle radio-mac, další SSID jako slave | deterministický stav; FT funguje jen v rámci jednoho CAPsMANu |
+| Kanály | `channels.plan` s politikou (max. šířka, bez DFS → zúžení, dokud se AP nevejdou vedle sebe); kanál per rádio v channel objektu | F5c doplní RF sken |
+| Bez návratu | plán `capsman` nemá commit-confirm | změna Wi-Fi nemůže přerušit správu – AP jsou na drátě |
+
+K ověření v labu: názvy vlastností steeringu (`rrm`, `wnm`), dynamické položky bridge VLAN pro
+rádia s `datapath.vlan-id` na CAP, řízení vlastních rádií hostitele přes `caps-man-addresses=127.0.0.1`,
+`/interface wifi radio provision`, FT s WPA3 a staršími klienty. Nové AP se do provisioningu dostane
+dalším „Nasadit Wi-Fi“ (rádia se berou z inventury řízených AP).

@@ -117,6 +117,26 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!rq.some((r) => r.startsWith("PUT") && r.endsWith("/intent"))) errors.push("záměr: uložení");
       if (!rq.some((r) => r.startsWith("POST") && r.endsWith("/intent/reconcile"))) errors.push("záměr: sladění");
     }
+    // Wi-Fi: CAPsMAN jen z řízených zařízení, SSID řádky, nasazení přes dialog
+    {
+      const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+      await tick();
+      if (byId["wifi-host"].children.length !== 2 || byId["wifi-host"].value !== api.sw) errors.push("wifi: CAPsMAN výběr");
+      if (byId["ssid-rows"].children.length !== 2) errors.push("wifi: SSID řádky " + byId["ssid-rows"].children.length);
+      if (byId["wifi-deploy"].disabled) errors.push("wifi: nasazení zakázané");
+      const n0 = requests.length;
+      const row = byId["ssid-rows"].children[0];
+      await row.children[7].children[0].fire("click");
+      if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.includes("/ssids/"))) errors.push("wifi: uložení SSID");
+      await byId["ssid-add"].fire("click");
+      if (byId["ssid-rows"].children.length !== 3) errors.push("wifi: nový SSID");
+      const p = byId["wifi-deploy"].fire("click");
+      await tick();
+      if (byId["ask"].hidden || !byId["ask-text"].textContent.includes("Wi-Fi: 2 SSID")) errors.push("wifi: dialog " + byId["ask-text"].textContent.slice(0, 60));
+      else { byId["ask-ok"].onclick(); await p; }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/wifi/plan"))) errors.push("wifi: plán");
+      if (byId["wifi-result"].children.length < 4) errors.push("wifi: přehled rádií");
+    }
     if (!byId["dg-rogue"].textContent.includes("E4:5F:01:00:00:09")) errors.push("DHCP: cizí server");
     if (!byId["dg-missing"].textContent.includes("192.168.30.10")) errors.push("DHCP: nedohledaný server");
     const dgRows = byId["dg-devices"].children;
@@ -220,6 +240,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         errors.push("řízení: jména/důvody portů");
       if (byId["ctl-vlans"].children.length !== 3 || byId["ctl-badge"].textContent !== "sledované") errors.push("řízení: VLAN/stav");
       if (byId["ctl-go"].disabled) errors.push("řízení: tlačítko převzetí");
+      if (byId["ctl-role"].children.length !== 2 || byId["ctl-role"].children[1].disabled) errors.push("řízení: role AP");
       const sel = byId["ctl-ports"].children[1].children[1].children[0];
       sel.value = "access:20"; await sel.fire("change");
       const n0 = requests.length;

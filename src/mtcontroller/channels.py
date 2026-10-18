@@ -131,8 +131,9 @@ def _span(f: int, w: int) -> tuple[int, int]:
     return start - 10, start - 10 + w
 
 
-def plan(radios: list[dict]) -> dict:
-    """radios: výstup wifi._radio (+ freq_now, width_now). Vrací {items, before, after, notes}."""
+def plan(radios: list[dict], max_width: int = 80, dfs: bool = True) -> dict:
+    """radios: výstup wifi._radio (+ freq_now, width_now). Vrací {items, before, after, notes}.
+    `max_width` a `dfs` = Wi-Fi politika lokality (řízený režim)."""
     aps = [r for r in radios if not r.get("disabled") and not r.get("master")
            and "station" not in str(r.get("mode") or "") and band_of(r) in ("2.4", "5")]
     items: list[dict] = []
@@ -147,8 +148,14 @@ def plan(radios: list[dict]) -> dict:
             width = 20
             channels = CH24
         else:
-            width = site_width(len(group))
+            width = min(site_width(len(group)), max_width if max_width in CH5 else 80)
             channels = CH5[width]
+            if not dfs:
+                # bez DFS je v 80 MHz jen jeden blok: zúžit, dokud se AP nevejdou vedle sebe
+                for w in [x for x in WIDTHS if x <= width]:
+                    width, channels = w, [c for c in CH5[w] if c not in DFS]
+                    if len(channels) >= len(group):
+                        break
 
         def cur(r: dict) -> int | None:
             f = r.get("freq_now")

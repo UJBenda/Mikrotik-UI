@@ -874,6 +874,66 @@ async def device_intent_put(request: Request, p: Principal, tid: str) -> Respons
     return json_response({"ok": True, "device_intent": new})
 
 
+@endpoint(MANAGE)
+async def site_ssid_create(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    data = await _json(request)
+    out = await run_in_threadpool(takeover.save_ssid, st.db, st.box, tid, sid, data, None, p.user_id, client_ip(request))
+    return json_response(out, 201)
+
+
+@endpoint(MANAGE)
+async def site_ssid_update(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    ssid_id = _uuid(request.path_params["ssid_id"])
+    data = await _json(request)
+    out = await run_in_threadpool(takeover.save_ssid, st.db, st.box, tid, sid, data, ssid_id, p.user_id,
+                                  client_ip(request))
+    return json_response(out)
+
+
+@endpoint(MANAGE)
+async def site_ssid_delete(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    await run_in_threadpool(takeover.delete_ssid, st.db, tid, _uuid(request.path_params["site_id"]),
+                            _uuid(request.path_params["ssid_id"]), p.user_id, client_ip(request))
+    return json_response({"ok": True})
+
+
+@endpoint(READ)
+async def site_wifi_preview(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            w = takeover.wifi_preview(tx, sid)
+        w.pop("host_inv", None)
+        return w
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def site_wifi_plan(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    out = await run_in_threadpool(takeover.create_wifi_plan, st.db, tid, sid, p.user_id, client_ip(request))
+    return json_response(out, 201)
+
+
 def routes() -> list[Route]:
     d = T + "/devices/{device_id}"
     s = T + "/sites/{site_id}"
@@ -902,6 +962,11 @@ def routes() -> list[Route]:
         Route(s + "/intent", site_intent_get, methods=["GET"]),
         Route(s + "/intent", site_intent_put, methods=["PUT"]),
         Route(s + "/intent/reconcile", site_intent_reconcile, methods=["POST"]),
+        Route(s + "/ssids", site_ssid_create, methods=["POST"]),
+        Route(s + "/ssids/{ssid_id}", site_ssid_update, methods=["PUT"]),
+        Route(s + "/ssids/{ssid_id}", site_ssid_delete, methods=["DELETE"]),
+        Route(s + "/wifi/preview", site_wifi_preview, methods=["GET"]),
+        Route(s + "/wifi/plan", site_wifi_plan, methods=["POST"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),

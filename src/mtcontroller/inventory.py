@@ -111,6 +111,12 @@ SECTIONS: list[Section] = [
             (("dst-address", "0.0.0.0/0"),)),
     Section("dhcp_client", "/ip/dhcp-client", "interface,address,gateway,dhcp-server,status,disabled,add-default-route"),
     Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
+    # řízený režim (F5b): rádia, stav CAPsMANu / CAP a provisioning (bez hesel)
+    Section("wifi_radios", "/interface/wifi/radio", "interface,radio-mac,bands,cap"),
+    Section("wifi_capsman", "/interface/wifi/capsman"),
+    Section("wifi_cap", "/interface/wifi/cap"),
+    Section("wifi_prov", "/interface/wifi/provisioning",
+            "radio-mac,action,master-configuration,slave-configurations,comment,disabled"),
     Section("capsman_caps_legacy", "/caps-man/remote-cap"),
 ]
 

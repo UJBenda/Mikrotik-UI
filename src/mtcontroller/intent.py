@@ -118,6 +118,7 @@ def validate(data: dict) -> dict:
         raise IntentError("výchozí síť portů musí být jedna z definovaných sítí")
     nets.sort(key=lambda n: n["vlan_id"])
     return {
+        "wifi": validate_wifi(data.get("wifi") or {}),
         "networks": nets,
         "mgmt_vlan": mgmt[0]["vlan_id"],
         # management bez tagu na trunkách: nové zařízení zapojené kamkoli hned dostane IP
@@ -137,7 +138,10 @@ def validate_device(data: dict, intent: dict | None, ports: set[str] | None = No
     "mgmt": {"mode": "dhcp"} | {"mode": "static", "address": "a.b.c.d/nn"}}."""
     if not isinstance(data, dict):
         raise IntentError("výjimky musí být objekt")
-    out: dict[str, Any] = {"ports": {}, "mgmt": {"mode": "dhcp"}}
+    out: dict[str, Any] = {"ports": {}, "mgmt": {"mode": "dhcp"}, "role": None}
+    if data.get("role") not in (None, "", "switch", "ap"):
+        raise IntentError("role: switch nebo ap (AP + switch)")
+    out["role"] = data.get("role") or None
     raw_ports = data.get("ports") or {}
     if not isinstance(raw_ports, dict) or len(raw_ports) > 128:
         raise IntentError("porty: neplatný seznam")
@@ -196,3 +200,58 @@ def from_observed(observed: list[dict]) -> dict:
         mg["purpose"] = "mgmt"
     return {"networks": nets, "mgmt_native": True, "auto_trunk": True,
             "access_vlan": next((n["vlan_id"] for n in nets if n["purpose"] == "lan"), nets[0]["vlan_id"] if nets else None)}
+
+
+# --- Wi-Fi (F5b) -----------------------------------------------------------------------------------
+
+COUNTRY_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]{1,39}$")
+SSID_BANDS = ("2.4", "5", "2.4,5")
+MAX_SSIDS = 8          # na lokalitě; na jedno rádio nejvýš 4 (beacony každého SSID zabírají vysílací čas)
+MAX_SSIDS_PER_BAND = 4
+
+
+def validate_wifi(raw: dict) -> dict:
+    """Wi-Fi politika lokality: zařízení s CAPsMANem, země, DFS, max. šířka v 5 GHz."""
+    if not isinstance(raw, dict):
+        raise IntentError("Wi-Fi: neplatné nastavení")
+    host = raw.get("capsman_device_id") or None
+    if host is not None:
+        host = str(host)
+        if not re.fullmatch(r"[0-9a-f-]{36}", host):
+            raise IntentError("Wi-Fi: neplatné zařízení pro CAPsMAN")
+    country = str(raw.get("country") or "Czech Republic").strip()
+    if not COUNTRY_RE.match(country):
+        raise IntentError("Wi-Fi: neplatná země (např. Czech Republic)")
+    try:
+        width = int(raw.get("max_width") or 80)
+    except (TypeError, ValueError):
+        width = 0
+    if width not in (20, 40, 80):
+        raise IntentError("Wi-Fi: max. šířka 20, 40 nebo 80 MHz")
+    return {"capsman_device_id": host, "country": country, "dfs": bool(raw.get("dfs", True)), "max_width": width}
+
+
+def validate_ssid(raw: dict, vids: set[int], need_psk: bool) -> dict:
+    """SSID z UI. Heslo (psk) je povinné u nového SSID; u úpravy prázdné = beze změny."""
+    if not isinstance(raw, dict):
+        raise IntentError("SSID musí být objekt")
+    ssid = str(raw.get("ssid") or "")
+    if not 1 <= len(ssid) <= 32 or not re.fullmatch(r"[\x20-\x7e]+", ssid) or ssid != ssid.strip():
+        raise IntentError("SSID: 1–32 znaků bez diakritiky, bez mezer na začátku a konci")
+    vid = _vid(raw.get("vlan_id"), f"SSID {ssid}")
+    if vid not in vids:
+        raise IntentError(f"SSID {ssid}: VLAN {vid} není v sítích lokality")
+    bands = str(raw.get("bands") or "2.4,5")
+    if bands not in SSID_BANDS:
+        raise IntentError(f"SSID {ssid}: pásma 2.4, 5 nebo 2.4,5")
+    psk = raw.get("psk")
+    if psk in (None, ""):
+        if need_psk:
+            raise IntentError(f"SSID {ssid}: zadej heslo (8–63 znaků)")
+        psk = None
+    else:
+        psk = str(psk)
+        if not 8 <= len(psk) <= 63 or not re.fullmatch(r"[\x20-\x7e]+", psk):
+            raise IntentError(f"SSID {ssid}: heslo 8–63 znaků bez diakritiky")
+    return {"ssid": ssid, "vlan_id": vid, "bands": bands, "isolation": bool(raw.get("isolation", False)),
+            "ft": bool(raw.get("ft", True)), "enabled": bool(raw.get("enabled", True)), "psk": psk}

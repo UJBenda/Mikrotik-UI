@@ -113,7 +113,7 @@ _TUNNEL_TYPES = {"pppoe-out", "pppoe-in", "l2tp-out", "l2tp-in", "sstp-out", "ss
                  "pptp-out", "pptp-in", "wg", "wireguard", "gre", "eoip", "ipip", "vxlan", "lte", "ipsec"}
 
 
-def classify(inv: dict) -> dict:
+def classify(inv: dict, role: str = "switch") -> dict:
     """Co na zařízení je a co převzetí načisto odstraní.
     class: factory (defconf/prázdné), simple (jeden bridge bez VLAN), conforming
     (jeden bridge s vlan-filtering), custom (router, firewall, tunely… – jen po potvrzení)."""
@@ -146,7 +146,8 @@ def classify(inv: dict) -> dict:
     radios = [w for w in _rows(inv, "wifi") if not _true(w.get("disabled"))] + \
              [w for w in _rows(inv, "wireless") if not _true(w.get("disabled"))]
     if radios:
-        removed.append(f"Wi-Fi: {len(radios)} rozhraní se vypne (Wi-Fi v řízeném režimu přijde s F5b)")
+        removed.append(f"Wi-Fi: {len(radios)} rozhraní – " + (
+            "rádia převezme CAPsMAN lokality" if role == "ap" else "vypne se (role switch)"))
     if any(not defconf(r) for r in fw):
         custom.append("vlastní pravidla firewallu")
     if any(not defconf(r) for r in nat):
@@ -262,11 +263,25 @@ def _infra_neighbor(n: dict) -> bool:
 
 
 def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name: str = "",
-          identity: str = "", ntp: dict | None = None) -> dict:
-    """Model cílové konfigurace. `blockers` = převzetí/sladění nelze provést."""
+          identity: str = "", ntp: dict | None = None, role: str = "switch", cap_manager: str | None = None) -> dict:
+    """Model cílové konfigurace. `blockers` = převzetí/sladění nelze provést.
+    role "ap" = AP + switch: rádia řídí CAPsMAN lokality (`cap_manager` = jeho identita)."""
+    from .wificfg import supports_wifi
+
     dev_intent = dev_intent or {}
     blockers: list[str] = []
     warnings: list[str] = []
+    cap = None
+    if role == "ap":
+        sw = supports_wifi(inv)
+        if sw is None:
+            blockers.append("zařízení nemá Wi-Fi rádia – role AP nedává smysl")
+        elif sw is False:
+            blockers.append("rádia mají jen starý balík wireless – řízený režim umí AP s balíkem wifi "
+                            "(wifi-qcom, wifi-qcom-ac); nech roli switch")
+        if not cap_manager:
+            blockers.append("lokalita nemá CAPsMAN – vyber ho v záměru lokality (Wi-Fi)")
+        cap = {"manager": ascii_text(cap_manager, 60) if cap_manager else ""}
     ports = physical_ports(inv)
     if not ports:
         blockers.append("inventura neobsahuje žádné ethernet/SFP porty")
@@ -359,7 +374,7 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         warnings.append("všechny porty jsou trunky")
     ntp = ntp or {}
     return {
-        "bridge": BRIDGE, "ports": out_ports, "vlans": vlans, "uplink": uplink,
+        "bridge": BRIDGE, "ports": out_ports, "vlans": vlans, "uplink": uplink, "role": role, "cap": cap,
         "mgmt": {"vid": mg_vid, "native": native, **mgmt}, "path": path,
         "snooping": snooping, "identity": ascii_text(identity, 60) or "mtc-switch",
         "timezone": ntp.get("timezone") or "Europe/Prague",
@@ -369,7 +384,7 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
 
 
 def model_sha(model: dict) -> str:
-    keep = {k: model[k] for k in ("ports", "vlans", "mgmt", "snooping", "identity")}
+    keep = {k: model.get(k) for k in ("ports", "vlans", "mgmt", "snooping", "identity", "cap")}
     return hashlib.sha256(json.dumps(keep, sort_keys=True).encode()).hexdigest()
 
 
@@ -414,6 +429,10 @@ def config_body(model: dict) -> str:
     else:
         lines.append(f"/ip dhcp-client add interface={BRIDGE} use-peer-dns=yes use-peer-ntp=no "
                      f"add-default-route=yes comment=\"mtc\" disabled=no")
+    if model.get("cap"):
+        from .wificfg import cap_body
+
+        lines.append(cap_body(model["cap"]["manager"]).rstrip())
     lines += [
         f"/system identity set name={q(model['identity'])}",
         f"/system clock set time-zone-autodetect=no time-zone-name={q(model['timezone'])}",
@@ -637,6 +656,27 @@ def reconcile(inv: dict, model: dict) -> dict:
         if e and cur_loop != want_loop and not (cur_loop == "default" and want_loop == "off"):
             apply.append(f"/interface ethernet set [find default-name={q(port)}] loop-protect={want_loop}")
             revert.append(f"/interface ethernet set [find default-name={q(port)}] loop-protect={cur_loop}")
+    # CAP (AP + switch): řídí ho CAPsMAN lokality
+    capcur = inv.get("wifi_cap") if isinstance(inv.get("wifi_cap"), dict) else None
+    if capcur is not None:
+        want = model.get("cap")
+        on = _true(capcur.get("enabled"))
+        cur_names = str(capcur.get("caps-man-names") or "")
+        if want and (not on or cur_names != want["manager"] or str(capcur.get("discovery-interfaces") or "") != BRIDGE
+                     or not _true(capcur.get("lock-to-caps-man"))):
+            from .wificfg import cap_body
+
+            apply.append(cap_body(want["manager"]).rstrip())
+            revert.append(f"/interface wifi cap set enabled={'yes' if on else 'no'} caps-man-names={q(cur_names)} "
+                          f"discovery-interfaces={q(str(capcur.get('discovery-interfaces') or ''))} "
+                          f"lock-to-caps-man={'yes' if _true(capcur.get('lock-to-caps-man')) else 'no'}")
+            changes.append(f"CAP → CAPsMAN {want['manager']}")
+            additive = False
+        elif not want and on:
+            apply.append("/interface wifi cap set enabled=no")
+            revert.append("/interface wifi cap set enabled=yes")
+            changes.append("CAP vypnout (role switch)")
+            additive = False
     # návrat v opačném pořadí
     revert.reverse()
     return {"apply": "\n".join(apply) + ("\n" if apply else ""), "revert": "\n".join(revert) + ("\n" if revert else ""),

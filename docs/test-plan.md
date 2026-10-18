@@ -381,6 +381,22 @@ uplink k routeru labu; do jiného portu notebook.
    „jen přidání VLAN – aplikuje se samo“ a na switchi `/interface bridge vlan print` řádek 30
    tagovaný na trunkách.
 
+## 9d. Řízený režim – Wi-Fi přes CAPsMAN (F5b)
+
+Potřebuješ převzatý switch (bod 9c) a aspoň jedno AP s balíkem `wifi` (cAP ax, hAP ax², cAP ac s wifi-qcom-ac).
+
+1. **CAPsMAN**: Lokalita → Sítě → Záměr → Wi-Fi: „CAPsMAN na“ = převzatý switch → Uložit nastavení Wi-Fi.
+2. **SSID**: + SSID – např. „Firma“ v síti Kancelář a „Hoste“ v síti Hosté s izolací klientů. Ulož každý řádek.
+3. **AP**: detail AP → Řízení → Role „AP + switch“ → Uložit výjimky → Vytvořit plán převzetí → schválit.
+   Po převzetí: `/interface wifi cap print` na AP (enabled, caps-man-names = identita switche).
+4. **Nasadit Wi-Fi** → přehled rádií a kanálů → plán → schválit. Na switchi:
+   `/interface wifi capsman remote-cap print`, `/interface wifi print` (dynamická rozhraní AP s SSID),
+   `/interface wifi steering print` (rrm, wnm – pošli výpis, kdyby příkaz hlásil chybu).
+5. **Provoz**: klient na „Firma“ dostane adresu z VLAN 10, na „Hoste“ z VLAN 20 a nevidí ostatní klienty.
+   Na AP `/interface bridge vlan print` – rádia jako netagovaní členové VLAN 10/20 (dynamicky).
+6. **Roaming**: se dvěma AP projdi s telefonem mezi nimi; na switchi
+   `/log print where topics~"wireless"` – čekám „roamed“/FT. Pošli výpis, hlavně u WPA3 klientů.
+
 ## 10. Řešení problémů
 
 | Příznak | Kde hledat |
