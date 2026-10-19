@@ -302,7 +302,7 @@ async def adoption_tokens(request: Request, p: Principal, tid: str) -> Response:
 
 # --- zařízení ----------------------------------------------------------------------
 
-_DEVICE_COLS = """d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state,
+_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model, d.ros_version, d.role, d.state,
                   host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
                   d.last_checkin_at, d.last_status, d.approved_at, d.adopted_at, d.created_at,
                   (SELECT i.data->>'latest-version' FROM device_inventory i

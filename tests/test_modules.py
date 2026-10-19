@@ -384,6 +384,9 @@ def test_device_update_site_role_note():
         assert r.status_code == 200, r.text
         d = c.get(url).json()["device"]
         assert d["site_id"] == str(s2["id"]) and d["role"] == "gateway" and d["note"] == "rack 2, U14"
+        # přehled zařízení ukazuje identitu i poznámku
+        row = next(x for x in c.get(f"/api/admin/tenants/{tid}/devices").json() if x["id"] == gw)
+        assert row["note"] == "rack 2, U14" and "identity" in row
         # lokalita cizího tenanta / neexistující, nepovolené pole, řídicí znaky
         other = services.create_tenant(db, settings, "Jina")
         foreign = services.create_site(db, other["id"], "Cizi")

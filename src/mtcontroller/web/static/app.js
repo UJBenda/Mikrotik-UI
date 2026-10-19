@@ -37,9 +37,9 @@ if (typeof document.addEventListener === "function") {
   document.addEventListener("keydown", (e) => { if (askDone && e.key === "Escape") askDone(false); });
 }
 // dotaz na krátký text (jméno skupiny…) ve stejném dialogu jako ask()
-async function askText(text, value = "", okLabel = "Uložit") {
+async function askText(text, value = "", okLabel = "Uložit", maxLength = 40) {
   const inp = $("ask-input");
-  inp.hidden = false; inp.value = value;
+  inp.hidden = false; inp.value = value; inp.maxLength = maxLength;
   const p = ask(text, okLabel);
   try { inp.focus(); if (inp.select) inp.select(); } catch (_e) { /* fokus není podstatný */ }
   inp.onkeydown = (e) => { if (e.key === "Enter") $("ask-ok").onclick(); };
@@ -348,7 +348,18 @@ async function loadDevices() {
     }
     withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
     tr.appendChild(el("td", d.state, "state " + d.state));
-    tr.appendChild(el("td", d.serial));
+    // identita z RouterOS a pod ní sériové číslo (identita může chybět u čekajících)
+    const who = el("td", null, "dev-who");
+    who.appendChild(el("b", d.identity || d.serial));
+    if (d.identity) who.appendChild(el("div", d.serial, "muted small mono"));
+    tr.appendChild(who);
+    const nt = el("td", d.note || "", "dev-note" + (d.note ? "" : " muted"));
+    if (d.note) nt.title = d.note;
+    if (d.state !== "pending" && d.state !== "removed") {
+      nt.title = (d.note ? d.note + "\n\n" : "") + "Dvojklik = upravit poznámku";
+      nt.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); editNote(d); });
+    }
+    tr.appendChild(nt);
     tr.appendChild(el("td", d.model));
     const verTd = el("td", d.ros_version);
     if (d.update_available) {
@@ -409,6 +420,8 @@ function deviceMenu(d) {
     { label: "Otevřít detail", key: "Enter", act: () => openDetail(d.id) },
     d.update_available && d.state === "adopted" ? { label: `Aktualizovat → ${d.latest_version}`, act: () => upgradeDevice(d) } : null,
     { sep: true },
+    { label: d.note ? "Upravit poznámku…" : "Přidat poznámku…", disabled: !canOperate(), act: () => editNote(d) },
+    { sep: true },
     { label: "Kopírovat sériové číslo", act: () => copyText(d.serial, "Sériové číslo") },
     d.tunnel_ip ? { label: "Kopírovat IP v tunelu", act: () => copyText(d.tunnel_ip, "IP") } : null,
     { sep: true },
@@ -418,6 +431,13 @@ function deviceMenu(d) {
     { label: "Odebrat", danger: true, disabled: !live, act: () => sendCommand(d, "deprovision", "Odebrat") },
     live ? { label: "Zapomenout", danger: true, act: () => forgetDevice(d) } : null,
   ];
+}
+
+async function editNote(d) {
+  const note = await askText(`Poznámka k ${d.identity || d.serial} (umístění, kontakt…):`, d.note || "", "Uložit", 500);
+  if (note === null) return;
+  try { await api("PATCH", `/tenants/${tenantId}/devices/${d.id}`, { note }); msg("Poznámka uložena"); loadDevices(); }
+  catch (e) { msg(e.message, true); }
 }
 
 async function forgetDevice(d) {
@@ -1645,6 +1665,19 @@ function drawTraffic() {
     for (const d of dots) d.setAttribute("visibility", "hidden");
   };
 }
+
+// úprava zařízení v detailu (lokalita, role, poznámka) – bez handleru by formulář odeslal stránku a vše zahodil
+$("d-edit").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!detailId) return;
+  try {
+    await api("PATCH", `/tenants/${tenantId}/devices/${detailId}`,
+              { site_id: $("d-edit-site").value, role: $("d-edit-role").value, note: $("d-edit-note").value });
+    msg("Uloženo");
+    loadDevices();
+    openDetail(detailId);
+  } catch (e) { msg(e.message, true); }
+});
 
 let resizeTimer = null;
 if (typeof window.addEventListener === "function") {

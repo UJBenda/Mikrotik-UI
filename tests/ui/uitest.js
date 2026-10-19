@@ -77,6 +77,16 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
     if (visible.join() !== "app") errors.push("po bootu je vidět " + visible.join());
     const devRows = byId["devices"].children.length;
+    {
+      const r0 = byId["devices"].children[0];
+      if (!r0.children[1].textContent.includes("GW1") || r0.children[2].textContent !== "rozvaděč 2. patro") errors.push("přehled: identita/poznámka " + r0.children[1].textContent + "|" + r0.children[2].textContent);
+      const n0 = requests.length;
+      const pn = r0.children[2].fire("dblclick", {});
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      if (byId["ask"].hidden || byId["ask-input"].value !== "rozvaděč 2. patro") errors.push("přehled: úprava poznámky");
+      else { byId["ask-input"].value = "nová"; byId["ask-ok"].onclick(); await pn; for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
+      if (!requests.slice(n0).some((r) => r.startsWith("PATCH") && /\/devices\/[^/]+$/.test(r))) errors.push("přehled: uložení poznámky");
+    }
     // levá navigace: sekce, odznaky, přepínání
     if (byId["nav"].children.length !== 7) errors.push("navigace: čekáno 7 sekcí, je " + byId["nav"].children.length);
     if (byId["view-overview"].hidden || !byId["view-alerts"].hidden) errors.push("navigace: výchozí pohled");
@@ -273,6 +283,15 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
+    {
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      // detail: poznámka v poli a uložení formuláře (PATCH, ne odeslání stránky)
+      if (byId["d-edit-note"].value !== "rozvaděč 2. patro") errors.push("detail: poznámka v poli " + byId["d-edit-note"].value);
+      const n0 = requests.length;
+      byId["d-edit-note"].value = "jinde";
+      await byId["d-edit"].fire("submit");
+      if (!requests.slice(n0).some((r) => r.startsWith("PATCH") && r.includes(api.gw))) errors.push("detail: uložení úprav");
+    }
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     if (byId["d-notes"].hidden || byId["d-notes-list"].children.length !== 2) errors.push("release notes se nezobrazily");
     if (byId["d-upgrade"].hidden) errors.push("tlačítko aktualizace chybí");
