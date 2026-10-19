@@ -3664,6 +3664,42 @@
     "model": null,
     "state": null
    }
+  ],
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/security": [
+   {
+    "id": "06813aef-ac70-438a-a7d6-7859862f16ed",
+    "serial": "GW1",
+    "identity": "gw",
+    "state": "adopted",
+    "site": "Stul",
+    "plan_open": false,
+    "findings": [
+     {
+      "severity": "warning",
+      "code": "service_telnet",
+      "text": "Telnet je zapnuté a dostupné odkudkoli – nešifrovaný provoz",
+      "fix": "/ip service set telnet disabled=yes",
+      "fixable": true,
+      "fix_label": "vypnout Telnet"
+     },
+     {
+      "severity": "warning",
+      "code": "service_ftp",
+      "text": "FTP je zapnuté – nešifrovaný provoz",
+      "fix": "/ip service set ftp disabled=yes",
+      "fixable": true,
+      "fix_label": "vypnout FTP"
+     },
+     {
+      "severity": "info",
+      "code": "default_admin",
+      "text": "výchozí uživatel „admin“ existuje",
+      "fix": "vytvoř vlastní účet, pak /user disable admin",
+      "fixable": false,
+      "fix_label": ""
+     }
+    ]
+   }
   ]
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

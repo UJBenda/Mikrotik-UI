@@ -741,6 +741,16 @@ změní až po potvrzení zařízením (do té doby `identity_pending`). Běží
 lokality, řízená AP nejdřív dostanou `caps-man-names` se starým i novým jménem (příkaz `cap_names`)
 a po přejmenování už jen nové – CAP se drží CAPsMANu podle jména, Wi-Fi tak nevypadne.
 
+### Přehled: proklik z dlaždic a reakce na problémy
+
+Dlaždice přehledu (online, offline, čekající, alerty, aktualizace, problémy verzí, bezpečnost) se
+rozkliknou na seznam zařízení s jejich problémy a s akcí k řešení přímo u problému: schválení se
+jménem, zálohování, výměna Wi-Fi balíčku, aktualizace, znovu provisioning, potvrzení alertu.
+Bezpečnostní nálezy (`GET /tenants/{id}/security`) s přesným vratným příkazem (vypnutí Telnetu, FTP,
+HTTP WebFigu, API bez TLS, SOCKS/HTTP proxy, bandwidth serveru – `hardening.FIXES`) jde opravit
+jedním klikem: plán `hardening` s commit-confirm (návrat po 5 min bez potvrzení); ostatní nálezy
+nabízí ke zkopírování příkazu. www-ssl/ssh/winbox controller nikdy nevypíná.
+
 ## Rychlé doručení změn
 
 Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem

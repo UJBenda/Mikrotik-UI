@@ -85,3 +85,49 @@ def test_alert_and_device_list_count():
             assert not any(a.kind == "security_exposed" for a in alerts.conditions(tx))
     finally:
         drop_db(name)
+
+
+def test_fix_scripts():
+    f = hardening.audit(DEFCONF)
+    apply, revert, labels = hardening.fix_scripts(["service_telnet", "bw_server", "default_admin", "service_telnet"], f)
+    assert apply == "/ip service set telnet disabled=yes\n/tool bandwidth-server set enabled=no\n"
+    assert revert == "/tool bandwidth-server set enabled=yes\n/ip service set telnet disabled=no\n"
+    assert labels == ["vypnout Telnet", "vypnout bandwidth-test server"]
+    # jen nálezy, které zařízení opravdu má; nic opravitelného = chyba
+    import pytest
+
+    with pytest.raises(ValueError):
+        hardening.fix_scripts(["socks_enabled", "default_admin"], f)
+    marked = {x["code"]: x["fixable"] for x in hardening.fixable(f)}
+    assert marked["service_telnet"] is True and marked["default_admin"] is False
+    # nikdy nevypnout cestu controlleru (www-ssl, ssh, winbox)
+    assert not any(c in hardening.FIXES for c in ("service_www-ssl", "service_ssh", "service_winbox"))
+
+
+def test_security_overview_and_fix_plan():
+    import re
+
+    from test_flow import _device_post
+
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _adopted(db, box, tid, sid, "GW1", "10.200.1.1", "gw")
+        inventory.store(db, tid, gw, dict(DEFCONF), [])
+        c = _login(app)
+        base = f"/api/admin/tenants/{tid}"
+        sec = c.get(base + "/security").json()
+        assert len(sec) == 1 and sec[0]["id"] == gw and sec[0]["plan_open"] is False
+        fx = {f["code"] for f in sec[0]["findings"] if f["fixable"]}
+        assert {"service_telnet", "service_ftp", "bw_server"} <= fx
+        assert c.post(base + f"/devices/{gw}/hardening-fix", json_body={"codes": ["default_admin"]}).status_code == 400
+        r = c.post(base + f"/devices/{gw}/hardening-fix", json_body={"codes": ["service_telnet", "service_ftp"]})
+        assert r.status_code == 201, r.text
+        pid = r.json()["plan_id"]
+        assert c.get(base + "/security").json()[0]["plan_open"] is True
+        # schválení bez režimu „správa“ modulu; doručení s automatickým návratem
+        assert c.post(base + f"/plans/{pid}/approve", json_body={}).status_code == 200
+        s = _device_post(app, "/api/checkin", "key-GW1", {"sstp": "up"}).text
+        assert "/ip service set telnet disabled=yes" in s and "mtc-revert" in s
+        assert re.search(r"ack\\\?id=\d+", s)
+    finally:
+        drop_db(name)

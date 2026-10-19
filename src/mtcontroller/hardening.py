@@ -126,3 +126,37 @@ def audit(inv: dict) -> list[dict]:
     order = {"critical": 0, "warning": 1, "info": 2}
     out.sort(key=lambda f: order[f["severity"]])
     return out
+
+
+# --- opravy jedním klikem ------------------------------------------------------------------------
+# Jen nálezy s přesným, vratným příkazem bez dosazování (žádné „<síť správy>“) a bez rizika ztráty
+# správy: controller jede přes www-ssl v tunelu, check-in přes fetch. Oprava je plán s commit-confirm.
+FIXES: dict[str, tuple[str, str, str]] = {
+    # kód: (popis, příkaz, návrat)
+    "service_telnet": ("vypnout Telnet", "/ip service set telnet disabled=yes", "/ip service set telnet disabled=no"),
+    "service_ftp": ("vypnout FTP", "/ip service set ftp disabled=yes", "/ip service set ftp disabled=no"),
+    "service_www": ("vypnout WebFig přes HTTP (zůstane HTTPS)", "/ip service set www disabled=yes",
+                    "/ip service set www disabled=no"),
+    "service_api": ("vypnout API bez TLS", "/ip service set api disabled=yes", "/ip service set api disabled=no"),
+    "socks_enabled": ("vypnout SOCKS proxy", "/ip socks set enabled=no", "/ip socks set enabled=yes"),
+    "proxy_enabled": ("vypnout HTTP proxy", "/ip proxy set enabled=no", "/ip proxy set enabled=yes"),
+    "bw_server": ("vypnout bandwidth-test server", "/tool bandwidth-server set enabled=no",
+                  "/tool bandwidth-server set enabled=yes"),
+}
+FIX_SECTIONS = ["ip_services", "socks", "proxy", "bw_server"]
+
+
+def fixable(findings: list[dict]) -> list[dict]:
+    """Nálezy doplněné o možnost opravy jedním klikem (fixable, fix_label)."""
+    return [dict(f, fixable=f.get("code") in FIXES, fix_label=FIXES.get(f.get("code"), ("",))[0]) for f in findings]
+
+
+def fix_scripts(codes: list[str], findings: list[dict]) -> tuple[str, str, list[str]]:
+    """(skript, návrat, popisy) pro vybrané kódy, které zařízení opravdu má jako nález."""
+    present = {f.get("code") for f in findings}
+    chosen = [c for c in dict.fromkeys(codes) if c in FIXES and c in present]
+    if not chosen:
+        raise ValueError("žádný z vybraných nálezů nejde opravit automaticky (nebo už je opravený)")
+    apply = "\n".join(FIXES[c][1] for c in chosen) + "\n"
+    revert = "\n".join(FIXES[c][2] for c in reversed(chosen)) + "\n"
+    return apply, revert, [FIXES[c][0] for c in chosen]

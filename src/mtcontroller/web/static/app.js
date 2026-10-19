@@ -269,30 +269,193 @@ async function loadTenant() {
 
 let alertsCache = [];
 
+// --- přehled: dlaždice s proklikem na seznam zařízení a problémů (s akcemi k řešení) ---
+let ovDrill = null;          // klíč otevřené dlaždice
+let securityCache = null;    // nálezy všech zařízení (načtou se při otevření dlaždice)
+const OV_TILES = [
+  // klíč, popis, výběr zařízení / problémů, třída podle počtu
+  ["online", "Online", () => devicesCache.filter((d) => d.state === "adopted"), ""],
+  ["offline", "Offline", () => devicesCache.filter((d) => d.state === "offline"), "bad"],
+  ["pending", "Čeká na schválení", () => devicesCache.filter((d) => d.state === "pending"), "warn"],
+  ["provisioning", "Provisioning", () => devicesCache.filter((d) => d.state === "provisioning"), ""],
+  ["critical", "Kritické alerty", () => alertsCache.filter((a) => a.severity === "critical"), "bad"],
+  ["warning", "Varování", () => alertsCache.filter((a) => a.severity === "warning"), "warn"],
+  ["updates", "Dostupná aktualizace", () => devicesCache.filter((d) => d.update_available), ""],
+  ["ros", "Známé problémy verzí", () => devicesCache.filter((d) => (d.warnings || []).some((w) => w.severity === "critical")), "bad"],
+  ["security", "Bezpečnostní nálezy", null, "warn"],
+];
+
 function renderOverview() {
   const box = $("overview"); box.textContent = "";
-  const n = (st) => devicesCache.filter((d) => d.state === st).length;
-  const tiles = [
-    ["Online", n("adopted"), ""],
-    ["Offline", n("offline"), n("offline") ? "bad" : ""],
-    ["Čeká na schválení", n("pending"), n("pending") ? "warn" : ""],
-    ["Provisioning", n("provisioning"), ""],
-    ["Kritické alerty", alertsCache.filter((a) => a.severity === "critical").length, ""],
-    ["Varování", alertsCache.filter((a) => a.severity === "warning").length, ""],
-    ["Dostupná aktualizace", devicesCache.filter((d) => d.update_available).length, ""],
-    ["Známé problémy verzí", devicesCache.filter((d) => (d.warnings || []).some((w) => w.severity === "critical")).length, ""],
-    ["Bezpečnostní nálezy", devicesCache.reduce((n, d) => n + (Number(d.security_issues) || 0), 0), ""],
-  ];
-  tiles[8][2] = tiles[8][1] ? "warn" : "";
-  tiles[4][2] = tiles[4][1] ? "bad" : "";
-  tiles[5][2] = tiles[5][1] ? "warn" : "";
-  tiles[7][2] = tiles[7][1] ? "bad" : "";
-  for (const [label, value, cls] of tiles) {
-    if (label === "Provisioning" && !value) continue;
-    const t = el("div", null, "tile" + (cls ? " " + cls : ""));
-    t.append(el("b", String(value)), el("span", label));
+  for (const [key, label, pick, cls] of OV_TILES) {
+    const n = pick ? pick().length : devicesCache.reduce((s, d) => s + (Number(d.security_issues) || 0), 0);
+    if (key === "provisioning" && !n) continue;
+    const t = el("button", null, "tile" + (n && cls ? " " + cls : "") + (ovDrill === key ? " open" : ""));
+    t.type = "button"; t.title = n ? "Klikni pro seznam" : "";
+    t.setAttribute("aria-expanded", ovDrill === key ? "true" : "false");
+    t.append(el("b", String(n)), el("span", label));
+    t.addEventListener("click", () => { ovDrill = ovDrill === key ? null : key; renderOverview(); });
     box.appendChild(t);
   }
+  renderDrill();
+}
+
+const devName = (d) => d.identity || d.serial;
+function devOf(id) { return devicesCache.find((d) => d.id === id) || { id }; }
+
+// tlačítko akce v řádku problému
+function actBtn(label, fn, cls = "secondary") {
+  const b = el("button", label, "small " + cls); b.type = "button";
+  b.addEventListener("click", async (ev) => { if (ev.stopPropagation) ev.stopPropagation(); b.disabled = true; try { await fn(); } finally { b.disabled = false; } });
+  return b;
+}
+
+// skupina „zařízení + jeho problémy“
+function drillDevice(d, lines) {
+  const g = el("div", null, "dr-dev");
+  const h = el("div", null, "dr-head");
+  h.append(el("span", "", "dr-dot " + (d.state || "")), el("b", devName(d)));
+  if (d.identity && d.serial) h.appendChild(el("span", d.serial, "muted small mono"));
+  if (d.site) h.appendChild(el("span", d.site, "wpill"));
+  if (d.state !== "pending") {
+    const open = actBtn("Detail", () => openDetail(d.id), "secondary"); h.appendChild(open);
+    if (d.serial) h.appendChild(moreButton(devName(d), () => deviceMenu(devOf(d.id).serial ? devOf(d.id) : d)));
+    withCtx(g, devName(d), () => deviceMenu(devOf(d.id).serial ? devOf(d.id) : d));
+  }
+  g.appendChild(h);
+  for (const ln of lines) g.appendChild(ln);
+  return g;
+}
+// řádek problému: závažnost, text, rada, akce
+function drillLine(sev, text, hint, actions) {
+  const r = el("div", null, "dr-line");
+  r.appendChild(el("span", { critical: "kritické", warning: "varování", info: "info" }[sev] || "", "dr-sev " + (sev || "none")));
+  const t = el("div", null, "dr-text"); t.appendChild(el("span", text));
+  if (hint) t.appendChild(el("div", hint, "dr-hint"));
+  r.appendChild(t);
+  const a = el("div", null, "dr-acts"); for (const b of actions || []) if (b) a.appendChild(b);
+  r.appendChild(a);
+  return r;
+}
+
+// co dělat u alertu podle druhu
+function alertReactions(a) {
+  const d = devOf(a.device_id);
+  const cmd = (kind, label) => actBtn(label, () => sendCommand(d, kind, label), "small");
+  const ack = a.acknowledged_at ? null : actBtn("Potvrdit", async () => {
+    try { await api("POST", `/tenants/${tenantId}/alerts/${a.id}/ack`); await loadAlerts(); renderOverview(); } catch (e) { msg(e.message, true); }
+  });
+  const R = {
+    offline: ["Zkontroluj napájení a připojení k internetu – zařízení se po obnovení ozve samo.", []],
+    tunnel_down: ["Tunel ke controlleru nejede; zařízení se přepne na záložní koncentrátor samo.", []],
+    backup_stale: ["Záloha je stará – vyžádej novou.", [actBtn("Zálohovat teď", async () => {
+      try { await api("POST", `/tenants/${tenantId}/devices/${a.device_id}/backup`, {}); msg("Záloha vyžádána"); } catch (e) { msg(e.message, true); } }, "small")]],
+    wifi_package: ["Rádio potřebuje jiný Wi-Fi balíček.", [cmd("wifi_package", "Vyměnit Wi-Fi balíček")]],
+    package_version: ["Balíčky mají různé verze – RouterOS je po restartu vypne.", [d.update_available ? actBtn(`Aktualizovat → ${d.latest_version}`, () => upgradeDevice(d), "small") : null]],
+    ros_issue: ["Verze RouterOS má známý problém.", [d.update_available ? actBtn(`Aktualizovat → ${d.latest_version}`, () => upgradeDevice(d), "small") : null]],
+    upgrade_failed: ["Aktualizace se nepovedla – zkus ji znovu, případně ručně přes Winbox.", [d.update_available ? actBtn("Zkusit znovu", () => upgradeDevice(d), "small") : null]],
+    security_exposed: ["Router je otevřený z internetu.", [actBtn("Bezpečnostní nálezy", () => { ovDrill = "security"; renderOverview(); }, "small")]],
+    rest_unreachable: ["Controller se k zařízení nedostane přes REST – obnov provisioning.", [cmd("provision", "Znovu provisioning")]],
+    rest_pin_mismatch: ["Certifikát REST se změnil – obnov provisioning (nový otisk).", [cmd("provision", "Znovu provisioning")]],
+    cert_changed: ["Certifikát zařízení se změnil – pokud jsi ho neměnil, prověř to.", [cmd("provision", "Znovu provisioning")]],
+    change_unconfirmed: ["Změna čeká na potvrzení.", [actBtn("Plány změn", () => showView("plans"), "small")]],
+    change_rolled_back: ["Zařízení změnu samo vrátilo (nepotvrdila se).", [actBtn("Plány změn", () => showView("plans"), "small")]],
+    rogue_dhcp: ["Na síti odpovídá cizí DHCP server – Lokalita → Sítě a DHCP.", []],
+    port_loop: ["Smyčka na portu – v detailu port vypni nebo zapni STP.", []],
+    port_flapping: ["Port často padá – zkontroluj kabel a protějšek.", []],
+    port_errors: ["Chyby na portu – kabel, konektor nebo duplex.", []],
+    port_half_duplex: ["Port jede v half-duplexu – zkontroluj autonegociaci.", []],
+    cpu_high: ["Vysoké vytížení CPU.", []], memory_high: ["Málo volné paměti.", []],
+    ntp_unsynced: ["Čas není synchronizovaný – Lokalita → NTP.", []],
+    dhcp_pool_full: ["DHCP pool je skoro plný – zvětši rozsah nebo zkrať lease.", []],
+    config_drift: ["Konfigurace se liší od záměru – Lokalita → Sítě → Sladit řízená zařízení.", []],
+  }[a.kind] || ["", []];
+  return [R[0], [...R[1], ack]];
+}
+
+async function renderDrill() {
+  const box = $("ov-drill");
+  if (!ovDrill) { box.hidden = true; return; }
+  const tile = OV_TILES.find((t) => t[0] === ovDrill);
+  box.hidden = false; box.textContent = "";
+  const head = el("div", null, "dr-title");
+  head.appendChild(el("h2", tile[1]));
+  const close = el("button", "×", "icon-btn"); close.type = "button"; close.title = "Zavřít";
+  close.addEventListener("click", () => { ovDrill = null; renderOverview(); });
+  head.appendChild(close);
+  box.appendChild(head);
+  const list = el("div", null, "dr-list");
+  box.appendChild(list);
+  const empty = (t) => list.appendChild(el("p", t, "muted"));
+  const key = ovDrill;
+  if (["online", "offline", "pending", "provisioning"].includes(key)) {
+    const devs = tile[2]();
+    for (const d of devs) {
+      let line;
+      if (key === "pending") line = drillLine(null, `${d.model || ""} · ${d.ros_version || ""}`, "Schval a rovnou zadej jméno, lokalitu a roli:", [approveControls(d), forgetButton(d)]);
+      else if (key === "offline") line = drillLine("warning", `Naposledy ${fmtTime(d.last_checkin_at)} · tunel ${d.tunnel_ip || "–"}`,
+        "Zkontroluj napájení a internet. Pokud zařízení už neexistuje, zapomeň ho.", [forgetButton(d)]);
+      else if (key === "provisioning") line = drillLine(null, "Čeká na první check-in po schválení", "Zařízení si nastavení vyzvedne do minuty.", []);
+      else line = drillLine(null, `${d.model || ""} · RouterOS ${d.ros_version || "?"} · check-in ${fmtTime(d.last_checkin_at)}`, d.note || "", []);
+      list.appendChild(drillDevice(d, [line]));
+    }
+    if (!devs.length) empty("Žádné zařízení.");
+  } else if (key === "critical" || key === "warning") {
+    const by = {};
+    for (const a of tile[2]()) (by[a.device_id] = by[a.device_id] || []).push(a);
+    for (const [id, as] of Object.entries(by)) {
+      const d = { ...devOf(id), identity: as[0].identity, serial: as[0].serial, site: as[0].site };
+      list.appendChild(drillDevice(d, as.map((a) => { const [hint, acts] = alertReactions(a); return drillLine(a.severity, a.message, hint, acts); })));
+    }
+    if (!Object.keys(by).length) empty("Žádné otevřené alerty. 🎉");
+  } else if (key === "updates") {
+    const devs = tile[2]();
+    for (const d of devs) {
+      const crit = (d.warnings || []).filter((w) => w.severity === "critical");
+      list.appendChild(drillDevice(d, [drillLine(crit.length ? "critical" : "info", `RouterOS ${d.ros_version} → ${d.latest_version} (kanál ${d.update_channel || "?"})`,
+        crit.length ? crit.map((w) => w.text).join(" · ") : "Před aktualizací se udělá záloha; zařízení se restartuje.",
+        [actBtn(`Aktualizovat → ${d.latest_version}`, () => upgradeDevice(d), "small")])]));
+    }
+    if (devs.length > 1) list.appendChild(el("p", "Víc zařízení na lokalitě? Lokalita → Aktualizace postupuje od konce sítě k bráně.", "muted small"));
+    if (!devs.length) empty("Všechna zařízení jsou aktuální.");
+  } else if (key === "ros") {
+    const devs = tile[2]();
+    for (const d of devs) {
+      list.appendChild(drillDevice(d, (d.warnings || []).map((w) => drillLine(w.severity, w.text, w.source ? `zdroj: ${w.source}` : "",
+        [d.update_available ? actBtn(`Aktualizovat → ${d.latest_version}`, () => upgradeDevice(d), "small") : null]))));
+    }
+    if (!devs.length) empty("Žádná zařízení se známým problémem verze.");
+  } else if (key === "security") {
+    list.appendChild(el("p", "Načítám nálezy…", "muted"));
+    try { securityCache = await api("GET", `/tenants/${tenantId}/security`); } catch (e) { list.textContent = ""; return empty(e.message); }
+    if (ovDrill !== key) return;
+    list.textContent = "";
+    for (const d of securityCache) {
+      const fix = d.findings.filter((f) => f.fixable).map((f) => f.code);
+      const lines = d.findings.map((f) => drillLine(f.severity, f.text, f.fix ? "Oprava: " + f.fix : "", [
+        f.fixable ? actBtn(f.fix_label, () => hardeningFix(d, [f.code]), "small") : null,
+        f.fix && !f.fixable ? actBtn("Kopírovat příkaz", () => copyText(f.fix, "Příkaz"), "small secondary") : null,
+      ]));
+      if (fix.length > 1) lines.push(drillLine(null, `Opravit vše automaticky (${fix.length})`, "Jeden plán s automatickým návratem, když se zařízení neozve.",
+        [actBtn("Opravit vše", () => hardeningFix(d, fix), "small")]));
+      if (d.plan_open) lines.unshift(drillLine("info", "Oprava už čeká v Plánech změn", "", [actBtn("Plány změn", () => showView("plans"), "small")]));
+      list.appendChild(drillDevice(d, lines));
+    }
+    if (!securityCache.length) empty("Bez nálezů ✓");
+  }
+}
+
+// oprava nálezu: plán s návratem → schválit hned (nebo čeká na druhého schvalovatele)
+async function hardeningFix(d, codes) {
+  if (!(await ask(`${devName(d)}: opravit ${codes.length === 1 ? "nález" : codes.length + " nálezy"}?\n\nVznikne plán změny s automatickým návratem: když se zařízení po změně do 5 minut neozve, vrátí se samo.`, "Opravit"))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/hardening-fix`, { codes });
+    try {
+      await api("POST", `/tenants/${tenantId}/plans/${r.plan_id}/approve`);
+      msg(`${devName(d)}: ${r.labels.join(", ")} – posílám na zařízení`); watchDevice(d.id, devName(d));
+    } catch (e) { msg(`Plán #${r.plan_id} vytvořen, čeká na schválení: ${e.message}`); }
+    loadPlans(); renderDrill();
+  } catch (e) { msg(e.message, true); }
 }
 
 async function loadSites() {
@@ -407,9 +570,10 @@ async function loadDevices() {
     tb.appendChild(tr);
   }
   if (!list.length) {
-    const tr = el("tr"); const td = el("td", "Žádná zařízení", "muted"); td.colSpan = 9;
+    const tr = el("tr"); const td = el("td", "Žádná zařízení", "muted"); td.colSpan = 10;
     tr.appendChild(td); tb.appendChild(tr);
   }
+  if (ovDrill) renderOverview();  // otevřený proklik z přehledu ukazuje aktuální stav
 }
 
 // odebrání jen v controlleru – když zařízení „Odebrat“ neprovede (nedostupné, zaseknuté)
@@ -720,6 +884,7 @@ async function loadAlerts() {
     tr.appendChild(act);
     tb.appendChild(tr);
   }
+  if (ovDrill) renderOverview();
 }
 $("alerts-refresh").addEventListener("click", () => loadAlerts());
 

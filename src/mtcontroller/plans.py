@@ -36,6 +36,10 @@ def basis_for(module: str, inv: dict) -> str:
         from .wificfg import basis
 
         return basis(inv)
+    if module == "hardening":
+        from .hardening import FIX_SECTIONS
+
+        return inventory.basis_sha(inv, FIX_SECTIONS)
     if module == "wifitable":
         from .wificfg import table_basis
 
@@ -218,6 +222,8 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
                 raise ServiceError("převzetí lze spustit jen u zařízení, které je online")
         elif p["module"] in ("switch", "capsman", "wifitable") and p["managed_at"] is not None:
             pass  # řízené zařízení: konfiguraci určuje záměr lokality
+        elif p["module"] == "hardening":
+            pass  # oprava bezpečnostního nálezu – výslovná volba uživatele, s automatickým návratem
         elif p["module"] == "switch":
             raise ServiceError("sladění se záměrem je jen pro řízená zařízení")
         elif module_modes(tx, p["device_id"]).get(p["module"]) != "manage":
@@ -392,3 +398,36 @@ def set_client_note(db: Database, tenant_id: Any, mac: str, note: str, user_id: 
         audit(tx, "client.note", tenant_id=tenant_id, user_id=user_id, target=f"mac:{m}",
               before={"note": old["note"]} if old else None, after={"note": note}, ip=ip)
     return {"mac": m, "note": note}
+
+
+def create_hardening_plan(db: Database, tenant_id: Any, device_id: Any, codes: list[str], user_id: Any = None,
+                          ip: str | None = None) -> dict:
+    """Plán opravy bezpečnostních nálezů (vypnutí nešifrovaných služeb, proxy…) s automatickým návratem.
+    Oprava je výslovná akce uživatele, proto nepotřebuje režim „správa“ modulu."""
+    from . import hardening
+
+    if not isinstance(codes, list) or not codes or not all(isinstance(c, str) for c in codes):
+        raise ServiceError("vyber nálezy k opravě")
+    with tenant_scope(db, tenant_id) as tx:
+        dev = tx.fetchone("SELECT state FROM device WHERE id = %(d)s", {"d": str(device_id)})
+        if not dev:
+            raise NotFound("zařízení neexistuje")
+        if dev["state"] not in ("adopted", "offline"):
+            raise ServiceError("opravu lze poslat jen adoptovanému zařízení")
+        inv = inventory.load(tx, device_id)
+        try:
+            apply, revert, labels = hardening.fix_scripts(codes, inv.get("hardening") or [])
+        except ValueError as e:
+            raise ServiceError(str(e)) from e
+        tx.execute("""UPDATE config_plan SET status = 'superseded' WHERE device_id = %(d)s
+                      AND module = 'hardening' AND status = 'draft'""", {"d": str(device_id)})
+        row = tx.fetchone(
+            """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, revert_script,
+                                        confirm_minutes, basis_sha, created_by)
+               VALUES (%(t)s, %(d)s, 'hardening', %(sum)s, %(chg)s, %(sc)s, %(rv)s, %(cm)s, %(b)s, %(u)s) RETURNING id""",
+            {"t": str(tenant_id), "d": str(device_id), "sum": "Bezpečnost: " + ", ".join(labels),
+             "chg": {"codes": codes, "labels": labels}, "sc": apply, "rv": revert, "cm": CONFIRM_MINUTES,
+             "b": basis_for("hardening", inv), "u": _s(user_id)})
+        audit(tx, "plan.create", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+              after={"plan_id": row["id"], "module": "hardening", "labels": labels}, ip=ip)
+    return {"plan_id": row["id"], "labels": labels}

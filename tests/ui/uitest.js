@@ -105,6 +105,28 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const tiles = byId["overview"].children.length;
     if (tiles < 7) errors.push("přehled: čekáno aspoň 7 dlaždic, je " + tiles);
     if (byId["overview"].children[0].textContent !== "2Online") errors.push("přehled: " + byId["overview"].children[0].textContent);
+    // proklik z dlaždic přehledu: seznam zařízení a problémů s akcemi
+    {
+      const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      const tile = (label) => byId["overview"].children.find((t) => t.textContent.includes(label));
+      await tile("Varování").fire("click"); await tick();
+      if (byId["ov-drill"].hidden || !byId["ov-drill"].textContent.includes("Potvrdit")) errors.push("přehled: proklik varování " + byId["ov-drill"].textContent.slice(0, 120));
+      await tile("Dostupná aktualizace").fire("click"); await tick();
+      if (!find(byId["ov-drill"], (n) => n.tagName === "BUTTON" && n.textContent.startsWith("Aktualizovat →"))) errors.push("přehled: proklik aktualizace");
+      const n0 = requests.length;
+      await tile("Bezpečnostní nálezy").fire("click"); await tick();
+      const fixAll = find(byId["ov-drill"], (n) => n.tagName === "BUTTON" && n.textContent === "Opravit vše");
+      if (!fixAll || !byId["ov-drill"].textContent.includes("Kopírovat příkaz")) errors.push("přehled: bezpečnostní nálezy " + byId["ov-drill"].textContent.slice(0, 160));
+      else {
+        const p = fixAll.fire("click"); await tick();
+        if (byId["ask"].hidden) errors.push("přehled: dialog opravy");
+        else { byId["ask-ok"].onclick(); await p; await tick(); }
+        if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/hardening-fix"))) errors.push("přehled: oprava nálezů");
+      }
+      await tile("Bezpečnostní nálezy").fire("click"); await tick();
+      if (!byId["ov-drill"].hidden) errors.push("přehled: druhý klik má proklik zavřít");
+    }
     const alertRows = byId["alerts"].children.length;
     const plansN = byId["plans"].children.length;
     // lokalita: topologie a klienti

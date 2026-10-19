@@ -996,6 +996,45 @@ async def site_ap_group(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def tenant_security(request: Request, p: Principal, tid: str) -> Response:
+    """Bezpečnostní nálezy všech zařízení tenanta (pro proklik z přehledu) s možností opravy."""
+    from .. import hardening
+
+    st = get_state(request)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            rows = tx.fetchall(
+                """SELECT d.id, d.serial, d.identity, d.state, s.name AS site, i.data AS findings
+                   FROM device d JOIN device_inventory i ON i.device_id = d.id AND i.section = 'hardening'
+                   LEFT JOIN site s ON s.id = d.site_id
+                   WHERE d.state <> 'removed' ORDER BY s.name, d.identity, d.serial""")
+            plans_open = {str(r["device_id"]) for r in tx.fetchall(
+                """SELECT device_id FROM config_plan WHERE module = 'hardening'
+                   AND status IN ('draft', 'queued', 'confirming')""")}
+        out = []
+        for r in rows:
+            f = [x for x in (r["findings"] if isinstance(r["findings"], list) else []) if isinstance(x, dict)]
+            if f:
+                out.append({"id": str(r["id"]), "serial": r["serial"], "identity": r["identity"], "state": r["state"],
+                            "site": r["site"], "findings": hardening.fixable(f), "plan_open": str(r["id"]) in plans_open})
+        return out
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def device_hardening_fix(request: Request, p: Principal, tid: str) -> Response:
+    """Plán opravy vybraných bezpečnostních nálezů (s automatickým návratem)."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    out = await run_in_threadpool(plans.create_hardening_plan, st.db, tid, did, data.get("codes"), p.user_id,
+                                  client_ip(request))
+    return json_response(out, 201)
+
+
+@endpoint(READ)
 async def device_activity(request: Request, p: Principal, tid: str) -> Response:
     """Rozpracované plány a příkazy zařízení – UI podle toho sleduje průběh změny."""
     st = get_state(request)
@@ -1119,6 +1158,8 @@ def routes() -> list[Route]:
         Route(d, device_update, methods=["PATCH"]),
         Route(d + "/modules", device_module, methods=["POST"]),
         Route(d + "/activity", device_activity, methods=["GET"]),
+        Route(d + "/hardening-fix", device_hardening_fix, methods=["POST"]),
+        Route(T + "/security", tenant_security, methods=["GET"]),
         Route(d + "/takeover", device_takeover_get, methods=["GET"]),
         Route(d + "/takeover", device_takeover_post, methods=["POST"]),
         Route(d + "/intent", device_intent_put, methods=["PUT"]),
