@@ -381,6 +381,8 @@
         <button id="dt-vlan" type="button">VLAN a rozhraní</button>
         <button id="dt-hist" type="button">Zálohy a historie</button>
         <button id="dt-ctl" type="button">Řízení</button>
+        <button id="dt-logs" type="button">Logy</button>
+        <button id="dt-bw" type="button">Test rychlosti</button>
       </div>
       <div id="dp-ports" class="dpane">
       <div class="ports-head">
@@ -464,6 +466,41 @@
           <button id="ctl-go" type="button" class="small">Vytvořit plán převzetí</button>
         </div>
       </div>
+      </div>
+      <div id="dp-logs" class="dpane" hidden>
+        <div class="logs-head">
+          <h3>Logy ze zařízení</h3>
+          <span id="lg-level" class="seg"></span>
+          <span id="lg-volume" class="muted small"></span>
+        </div>
+        <p id="lg-hint" class="muted small"></p>
+        <div class="traffic-bar">
+          <input id="lg-q" placeholder="Hledat ve zprávách a tématech…" size="30">
+          <span id="lg-sev" class="seg"></span>
+          <button id="lg-refresh" type="button" class="small secondary">Obnovit</button>
+          <label class="check"><input type="checkbox" id="lg-live"> průběžně</label>
+        </div>
+        <div id="lg-chart" class="lg-chart"></div>
+        <table class="ptable logs"><thead><tr><th>Čas</th><th>Závažnost</th><th>Témata</th><th>Zpráva</th></tr></thead>
+        <tbody id="lg-rows"></tbody></table>
+        <button id="lg-more" type="button" class="small secondary" hidden>Starší…</button>
+      </div>
+      <div id="dp-bw" class="dpane" hidden>
+        <h3>Test rychlosti k jinému zařízení</h3>
+        <p class="muted small">RouterOS bandwidth-test: na cíli se na dobu testu zapne bandwidth-server s dočasným účtem, pak se
+          vše vrátí. Test vytíží linku i CPU – na malých routerech je limitem spíš CPU než linka.</p>
+        <div class="bw-form">
+          <label class="pe-field"><span>Cíl</span><select id="bw-to"></select></label>
+          <label class="pe-field"><span>Adresa cíle</span><select id="bw-addr"></select></label>
+          <div class="pe-field"><span>Doba</span><span id="bw-dur" class="seg"></span></div>
+          <div class="pe-field"><span>Směr</span><span id="bw-dir" class="seg"></span></div>
+          <div class="pe-field"><span>Protokol</span><span id="bw-proto" class="seg"></span></div>
+          <button id="bw-start" type="button">Spustit test</button>
+        </div>
+        <p id="bw-est" class="muted small"></p>
+        <div id="bw-live" class="bw-live" hidden></div>
+        <h4>Historie</h4>
+        <div id="bw-hist" class="bw-hist"></div>
       </div>
       <div id="dp-hist" class="dpane" hidden>
       <h3>Zálohy</h3>

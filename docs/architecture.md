@@ -762,6 +762,24 @@ nabízí ke zkopírování příkazu. www-ssl/ssh/winbox controller nikdy nevyp�
 | Globální DHCP options | sekce inventury `dhcp_networks`; `leases.network_plan` mění na `/ip dhcp-server network` DNS, NTP, doménu a `dhcp-option` pro všechny klienty – plán modulu `dhcp` s návratem; nová option se rovnou založí |
 | Infrastruktura | `GET …/infra` vrací u zařízení klienty z posledních 10 min (MAC, popisek, logo); seznam zařízení je rozbalí, strom je s volbou „klienti“ kreslí jako listy (max. 10 na zařízení, zbytek „+N“ do Klientů) |
 
+### Logy ze zařízení a test rychlosti
+
+**Logy (syslog přes tunel)** – služba `mtc-syslog` (`python3 -m mtcontroller.devlog`) poslouchá UDP
+`syslog.port` (5514) na `tunnel.controller_ip`. Zařízení IP controlleru nevidí: posílá na tunelovou
+adresu koncentrátoru, ten paket dst-natuje na controller a zdroj (tunelová IP zařízení) zůstane –
+podle něj se log přiřadí; logy od adres bez zapnutých logů se zahodí. Úroveň po zařízení nebo pro celou
+lokalitu: vypnuto / chyby a varování / vše (info bez debug); na zařízení jen `/system logging action`
+„mtc“ a pravidla s ní (příkaz `syslog`). Pojistka `syslog.max_lines_per_minute` (600), úklid po
+`syslog.retention_days` (14), objem po dnech (`device_log_day`: řádky, bajty, zahozené) – UI ukazuje
+průměr za den včetně režie tunelu. Volitelné přeposlání do SIEM (`syslog.forward = "host:port"`).
+Tabulky `device_log`, `device_log_day` s RLS (migrace 0018, checks 25).
+
+**Test rychlosti** (`bwtest.py`) – RouterOS bandwidth-test mezi dvěma online zařízeními přes REST v tunelu:
+na cíli dočasný uživatel `mtc-btest` (náhodné heslo jen v paměti, povolený jen ze zdrojové adresy podle
+`/ip route check`) a bandwidth-server zapnutý jen na dobu testu; po testu (i po chybě) uživatel pryč a server
+v původním stavu. Výsledek (průběh po sekundách, průměr/max, CPU obou stran, ztráty) v `bw_test`;
+cíl jen na adresu, kterou cíl podle inventury má. UI předem ukáže odhad spotřeby dat.
+
 ## Rychlé doručení změn
 
 Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem

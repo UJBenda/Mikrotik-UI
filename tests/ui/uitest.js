@@ -357,6 +357,32 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
+    // detail: logy a test rychlosti
+    {
+      const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      await byId["dt-logs"].fire("click"); await tick();
+      if (byId["dp-logs"].hidden || byId["lg-rows"].children.length !== 2 || !byId["lg-rows"].textContent.includes("login failure"))
+        errors.push("logy: tabulka " + byId["lg-rows"].children.length);
+      if (!byId["lg-volume"].textContent.includes("5 kB denně") || byId["lg-level"].children.length !== 3) errors.push("logy: objem " + byId["lg-volume"].textContent);
+      let n0 = requests.length;
+      const pl = byId["lg-level"].children[2].fire("click"); await tick();
+      if (byId["ask"].hidden || !byId["ask-text"].textContent.includes("MB")) errors.push("logy: dialog úrovně");
+      else { byId["ask-ok"].onclick(); await pl; await tick(); }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/syslog"))) errors.push("logy: změna úrovně");
+      await byId["dt-bw"].fire("click"); await tick();
+      if (byId["bw-to"].children.length !== 1 || byId["bw-addr"].children[0].value !== "192.168.77.2") errors.push("test rychlosti: cíle");
+      if (byId["bw-hist"].children.length !== 2 || !byId["bw-hist"].textContent.includes("912 Mb/s") || !byId["bw-hist"].textContent.includes("limitem je CPU"))
+        errors.push("test rychlosti: historie " + byId["bw-hist"].textContent.slice(0, 160));
+      if (!find(byId["bw-hist"], (n) => n.tagName === "POLYLINE")) errors.push("test rychlosti: graf");
+      if (!byId["bw-est"].textContent.includes("250 MB")) errors.push("test rychlosti: odhad dat " + byId["bw-est"].textContent);
+      n0 = requests.length;
+      const pb = byId["bw-start"].fire("click"); await tick();
+      if (byId["ask"].hidden) errors.push("test rychlosti: dialog");
+      else { byId["ask-ok"].onclick(); await pb; await tick(); }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/bwtest"))) errors.push("test rychlosti: spuštění");
+      await byId["dt-ports"].fire("click");
+    }
     {
       for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
       // detail: poznámka v poli a uložení formuláře (PATCH, ne odeslání stránky)

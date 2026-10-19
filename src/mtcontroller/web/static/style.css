@@ -634,3 +634,36 @@ table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-
 #infra-svg .more { cursor: pointer; } #infra-svg .more .t1 { fill: var(--accent); }
 .lease-net { margin: 8px 0; }
 .lease-net .pe-grid { margin-top: 8px; }
+
+/* --- detail: logy --- */
+.logs-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.logs-head h3 { margin: 0; }
+.lg-chart { margin: 6px 0; }
+.lg-bars rect { fill: var(--accent); opacity: .75; } .lg-bars rect:hover { opacity: 1; }
+.lg-bars text { font-size: 9px; fill: var(--muted); text-anchor: middle; }
+.logs td { vertical-align: top; }
+.logs .lg-sev { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.logs tr.lg-err .lg-sev { color: var(--bad); } .logs tr.lg-warn .lg-sev { color: var(--warn); } .logs tr.lg-info .lg-sev { color: var(--muted); }
+.logs tr.lg-err { background: var(--bad-weak); }
+/* --- detail: test rychlosti --- */
+.bw-form { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.bw-form .pe-field { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.bw-form .pe-field > span:first-child { font-size: 12px; color: var(--muted); }
+.bw-live { margin: 10px 0; display: flex; align-items: center; gap: 12px; }
+.bw-bar { flex: 1; max-width: 360px; height: 8px; border-radius: 4px; background: var(--hover); overflow: hidden; }
+.bw-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--rx), var(--tx)); transition: width 1.8s linear; }
+.bw-hist { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.bw-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--card); }
+.bw-card.failed { border-left: 4px solid var(--bad); }
+.bw-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-bottom: 6px; }
+.bw-head span:last-child { margin-left: auto; }
+.bw-nums { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }
+.bw-num { display: flex; flex-direction: column; }
+.bw-num span { font-size: 11px; color: var(--muted); } .bw-num b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.bw-num small { font-size: 11px; color: var(--muted); }
+.bw-num.tx b { color: var(--tx); } .bw-num.rx b { color: var(--rx); } .bw-num.warn b, .bw-num.warn small { color: var(--warn); }
+.bw-chart { width: 100%; height: auto; display: block; }
+.bw-chart .grid { stroke: var(--line); stroke-dasharray: 3 3; }
+.bw-chart .ax { font-size: 9px; fill: var(--muted); } .bw-chart .ax.end { text-anchor: end; }
+.bw-chart .ln { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.bw-chart .ln.tx { stroke: var(--tx); } .bw-chart .ln.rx { stroke: var(--rx); }

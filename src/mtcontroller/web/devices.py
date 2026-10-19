@@ -1142,6 +1142,110 @@ async def device_hardening_fix(request: Request, p: Principal, tid: str) -> Resp
 
 
 @endpoint(READ)
+async def device_logs(request: Request, p: Principal, tid: str) -> Response:
+    """Logy zařízení (syslog) + úroveň a objem dat po dnech."""
+    from .. import devlog
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    qp = request.query_params
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            d = tx.fetchone("SELECT syslog_level FROM device WHERE id = %(d)s", {"d": did})
+            if not d:
+                raise NotFound("zařízení neexistuje")
+            before = _int(qp.get("before"), 0, 0, 2 ** 62) or None
+            logs = devlog.query(tx, did, str(qp.get("q") or "")[:100], _int(qp.get("sev"), 7, 0, 7),
+                                _int(qp.get("limit"), 300, 1, 1000), before)
+            return {"level": d["syslog_level"], "logs": logs, "volume": devlog.volume(tx, did),
+                    "retention_days": st.settings.syslog.retention_days}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def device_syslog(request: Request, p: Principal, tid: str) -> Response:
+    from .. import devlog
+    from ..services import kick
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    out = await run_in_threadpool(devlog.set_level, st.db, st.settings, tid, did, str(data.get("level") or ""),
+                                  p.user_id, client_ip(request))
+    kick(st.db, st.settings, st.box, tid, did)
+    return json_response(out)
+
+
+@endpoint(MANAGE)
+async def site_syslog(request: Request, p: Principal, tid: str) -> Response:
+    """Úroveň logů pro všechna spravovaná zařízení lokality."""
+    from .. import devlog
+    from ..services import kick
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    data = await _json(request)
+    level = str(data.get("level") or "")
+
+    def run():
+        with tenant_scope(st.db, tid) as tx:
+            ids = [str(r["id"]) for r in tx.fetchall(
+                "SELECT id FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline')", {"s": sid})]
+        for d in ids:
+            devlog.set_level(st.db, st.settings, tid, d, level, p.user_id, client_ip(request))
+        return ids
+
+    ids = await run_in_threadpool(run)
+    for d in ids:
+        kick(st.db, st.settings, st.box, tid, d)
+    return json_response({"level": level, "devices": len(ids)})
+
+
+@endpoint(READ)
+async def device_bwtests(request: Request, p: Principal, tid: str) -> Response:
+    """Testy rychlosti zařízení a možné cíle (online zařízení tenanta s jejich adresami)."""
+    from .. import bwtest
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            tests = bwtest.list_tests(tx, did)
+            devs = tx.fetchall(
+                """SELECT d.id, d.identity, d.serial, d.model, s.name AS site, d.site_id FROM device d
+                   LEFT JOIN site s ON s.id = d.site_id WHERE d.state = 'adopted' AND d.id <> %(d)s
+                   ORDER BY s.name, d.identity""", {"d": did})
+            me = tx.fetchone("SELECT site_id FROM device WHERE id = %(d)s", {"d": did})
+            targets = []
+            for d in devs:
+                addrs = bwtest.target_addresses(inventory.load(tx, d["id"], ["addresses"]))
+                if addrs:
+                    targets.append({"id": str(d["id"]), "name": d["identity"] or d["serial"], "model": d["model"],
+                                    "site": d["site"], "same_site": bool(me) and d["site_id"] == me["site_id"],
+                                    "addresses": addrs})
+        return {"tests": tests, "targets": targets, "durations": list(bwtest.DURATIONS)}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def device_bwtest_start(request: Request, p: Principal, tid: str) -> Response:
+    from .. import bwtest
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    out = await run_in_threadpool(
+        bwtest.start, st.db, st.box, tid, did, _uuid(data.get("to")), str(data.get("address") or ""),
+        _int(data.get("duration"), 10, 1, 60), str(data.get("direction") or "both"), str(data.get("protocol") or "tcp"),
+        p.user_id, client_ip(request))
+    return json_response(out, 201)
+
+
+@endpoint(READ)
 async def device_activity(request: Request, p: Principal, tid: str) -> Response:
     """Rozpracované plány a příkazy zařízení – UI podle toho sleduje průběh změny."""
     st = get_state(request)
@@ -1265,6 +1369,11 @@ def routes() -> list[Route]:
         Route(d, device_update, methods=["PATCH"]),
         Route(d + "/modules", device_module, methods=["POST"]),
         Route(d + "/activity", device_activity, methods=["GET"]),
+        Route(d + "/logs", device_logs, methods=["GET"]),
+        Route(d + "/syslog", device_syslog, methods=["POST"]),
+        Route(s + "/syslog", site_syslog, methods=["POST"]),
+        Route(d + "/bwtest", device_bwtests, methods=["GET"]),
+        Route(d + "/bwtest", device_bwtest_start, methods=["POST"]),
         Route(d + "/hardening-fix", device_hardening_fix, methods=["POST"]),
         Route(T + "/security", tenant_security, methods=["GET"]),
         Route(d + "/takeover", device_takeover_get, methods=["GET"]),

@@ -242,3 +242,14 @@ def test_identity_scripts():
     for bad in ('x"; /system reset', "Sklad přízemí", "a b", "", "-x", "x" * 64):
         with pytest.raises(services.ServiceError):
             services.identity_body(bad)
+
+
+def test_syslog_scripts():
+    """Logy ze zařízení: skript akce mtc (všechny úrovně) – ASCII, vyvážený."""
+    from mtcontroller import devlog
+
+    for level in devlog.LEVELS:
+        s = routeros.wrap_command("https://c.example/api/checkin/ack?id=13", "KEY",
+                                  devlog.config_body(level, "10.200.0.1", 5514, "10.200.1.2"), OPTS)
+        assert _balanced(s), s
+        s.encode("ascii")

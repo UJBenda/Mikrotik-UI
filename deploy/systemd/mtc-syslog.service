@@ -1,0 +1,44 @@
+[Unit]
+Description=MikroTik Controller – příjem logů ze zařízení (syslog přes tunel)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=mtcontroller
+Group=mtcontroller
+Environment=MTC_CONFIG=/etc/mtcontroller/config.toml
+Environment=PYTHONPATH=/opt/mtcontroller/app
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m mtcontroller.devlog
+Restart=on-failure
+RestartSec=5
+
+# sandbox (kontrola: systemd-analyze security mtc-syslog)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+ReadOnlyPaths=/etc/mtcontroller
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

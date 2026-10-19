@@ -547,7 +547,7 @@ def _identity_done(tx: Tx, tenant_id: Any, device_id: Any, command_id: int) -> N
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
-                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names"}
+                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog"}
 USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package"}
 
 
@@ -700,6 +700,10 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         inv = inventory.load(tx, dev["id"], ["packages", "resource", "wifi", "wireless", "wifi_radios"])
         return routeros.wrap_command(ack_url, key, packages.switch_body(inv, opts.check_certificate), opts,
                                      tail=packages.SWITCH_TAIL)
+    if kind == "syslog":
+        from . import devlog
+
+        return routeros.wrap_command(ack_url, key, devlog.render(settings, cmd, dev), opts)
     if kind == "set_identity":
         return routeros.wrap_command(ack_url, key, identity_body(cmd["params"].get("name")), opts)
     if kind == "cap_names":
@@ -759,7 +763,7 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
     st = _parse_status(body)
     with tenant_scope(db, device_ref["tenant_id"]) as tx:
         dev = tx.fetchone(
-            """SELECT id, serial, state, api_cert_fingerprint, concentrator, last_status
+            """SELECT id, serial, state, api_cert_fingerprint, concentrator, last_status, host(tunnel_ip) AS tunnel_ip
                FROM device WHERE id = %(d)s FOR UPDATE""",
             {"d": str(device_ref["id"])},
         )

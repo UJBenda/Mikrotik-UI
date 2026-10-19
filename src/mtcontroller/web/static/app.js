@@ -1339,12 +1339,13 @@ function openSiteTab(key) {
   if (loaders[key]) loaders[key]();
 }
 
-const DETAIL_TABS = ["ports", "sec", "vlan", "hist", "ctl"];
+const DETAIL_TABS = ["ports", "sec", "vlan", "hist", "ctl", "logs", "bw"];
+const DETAIL_LOADERS = { ctl: (id) => loadControl(id), logs: (id) => loadLogs(id), bw: (id) => loadBw(id) };
 function showDetailTab(key) {
   prefs.detailTab = key; savePrefs();
   for (const k of DETAIL_TABS) { $("dp-" + k).hidden = k !== key; $("dt-" + k).className = k === key ? "active" : ""; }
 }
-for (const k of DETAIL_TABS) $("dt-" + k).addEventListener("click", () => { showDetailTab(k); if (k === "ctl") loadControl(detailId); });
+for (const k of DETAIL_TABS) $("dt-" + k).addEventListener("click", () => { showDetailTab(k); if (DETAIL_LOADERS[k]) DETAIL_LOADERS[k](detailId); });
 
 // přepínač ve stylu segmented control: options = [[hodnota, popisek], …]
 function segmented(box, options, value, onChange) {
@@ -2865,7 +2866,7 @@ async function openDetail(id) {
   try { d = await api("GET", `/tenants/${tenantId}/devices/${id}`); } catch (e) { return msg(e.message, true); }
   show("detail");
   showDetailTab(DETAIL_TABS.includes(prefs.detailTab) ? prefs.detailTab : "ports");
-  if (prefs.detailTab === "ctl") loadControl(id);
+  if (DETAIL_LOADERS[prefs.detailTab]) DETAIL_LOADERS[prefs.detailTab](id);
   if (!watch || watch.id !== id) { $("d-live").hidden = true; watchDevice(id, null, true); }
   const dev = d.device, sm = d.summary;
   $("d-title").textContent = `${dev.identity || dev.serial} – ${dev.model || ""} (${dev.state})`;
@@ -3051,6 +3052,208 @@ $("d-vlan-plan").addEventListener("click", async () => {
 setInterval(() => {
   if (!$("app").hidden && tenantId) Promise.all([loadDevices(), loadAlerts()]).then(renderOverview).catch(() => {});
 }, 15000);
+
+// --- detail: logy ze zařízení (syslog přes tunel) ----------------------------------------------
+const LOG_LEVELS = [["off", "Vypnuto"], ["errors", "Chyby a varování"], ["info", "Vše (info)"]];
+const LOG_HINT = {
+  off: "Zařízení logy neposílá.",
+  errors: "Jen kritické, chyby a varování – obvykle jednotky kB denně.",
+  info: "I informační zprávy (přihlášení, DHCP, Wi-Fi připojení, linky) – obvykle desítky kB až jednotky MB denně, " +
+        "podle provozu. Nad 600 řádků za minutu se zbytek zahodí.",
+};
+const SEV_NAME = ["emerg", "alert", "kritické", "chyba", "varování", "notice", "info", "debug"];
+const logState = { id: null, q: "", sev: 7, live: false, timer: null, data: null };
+
+function fmtBytes(n) {
+  if (n == null) return "–";
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
+  if (n >= 1e3) return Math.round(n / 1e3) + " kB";
+  return n + " B";
+}
+
+async function loadLogs(id, more) {
+  if (!id) return;
+  let qs = `q=${encodeURIComponent(logState.q)}&sev=${logState.sev}`;
+  if (more && logState.data && logState.data.logs.length) qs += `&before=${logState.data.logs[logState.data.logs.length - 1].id}`;
+  let v;
+  try { v = await api("GET", `/tenants/${tenantId}/devices/${id}/logs?${qs}`); } catch (e) { return msg(e.message, true); }
+  if (detailId !== id) return;
+  if (more && logState.data) v.logs = logState.data.logs.concat(v.logs);
+  logState.id = id; logState.data = v;
+  renderLogs();
+}
+
+function renderLogs() {
+  const v = logState.data, id = logState.id;
+  segmented($("lg-level"), LOG_LEVELS.map(([k, l]) => [k, l, !canManage()]), v.level, async (lvl) => {
+    if (!(await ask(`${LOG_HINT[lvl]}\n\nZměnit logy zařízení na „${LOG_LEVELS.find((x) => x[0] === lvl)[1]}“?`, "Změnit"))) return;
+    try { await api("POST", `/tenants/${tenantId}/devices/${id}/syslog`, { level: lvl }); msg("Nastavení logů posláno na zařízení"); loadLogs(id); }
+    catch (e) { msg(e.message, true); }
+  });
+  const vol = v.volume;
+  $("lg-volume").textContent = vol.days.length
+    ? `≈ ${fmtBytes(vol.avg_bytes_per_day)} denně · ${vol.avg_lines_per_day} řádků/den${vol.dropped ? ` · zahozeno ${vol.dropped}` : ""} · uchovává se ${v.retention_days} dní`
+    : `uchovává se ${v.retention_days} dní`;
+  $("lg-hint").textContent = LOG_HINT[v.level];
+  segmented($("lg-sev"), [[7, "vše"], [4, "varování+"], [3, "chyby+"]], logState.sev, (s) => { logState.sev = s; loadLogs(id); });
+  drawLogVolume(vol.days);
+  const tb = $("lg-rows"); tb.textContent = "";
+  for (const r of v.logs) {
+    const tr = el("tr", null, "lg-" + (r.severity <= 3 ? "err" : r.severity === 4 ? "warn" : "info"));
+    const t = new Date(r.at);
+    tr.append(el("td", t.toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }), "mono small"),
+              el("td", SEV_NAME[r.severity] || r.severity, "lg-sev"), el("td", r.topics, "muted small"), el("td", r.message, "wrap"));
+    tb.appendChild(tr);
+  }
+  if (!v.logs.length) {
+    const tr = el("tr"); const td = el("td", v.level === "off" ? "Logy jsou vypnuté – zapni je nahoře." : "Zatím žádné logy.", "muted");
+    td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
+  }
+  $("lg-more").hidden = v.logs.length < 300;
+}
+
+// objem logů po dnech – sloupce (bajty), řádky v popisku
+function drawLogVolume(days) {
+  const box = $("lg-chart"); box.textContent = "";
+  if (!days.length) return;
+  const W = 280, H = 56, max = Math.max(...days.map((d) => d.bytes), 1), bw = W / days.length;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H + 14}`, width: W, height: H + 14, class: "lg-bars" });
+  days.forEach((d, i) => {
+    const h = Math.max(2, (d.bytes / max) * H);
+    const r = svgEl("rect", { x: i * bw + 3, y: H - h, width: bw - 6, height: h, rx: 2 });
+    r.appendChild(svgEl("title", {}, `${d.day}: ${fmtBytes(d.bytes)}, ${d.lines} řádků${d.dropped ? `, zahozeno ${d.dropped}` : ""}`));
+    svg.appendChild(r);
+    svg.appendChild(svgEl("text", { x: i * bw + bw / 2, y: H + 12 }, d.day.slice(8) + "."));
+  });
+  box.appendChild(svg);
+}
+
+$("lg-q").addEventListener("input", () => {
+  clearTimeout(logState.qt);
+  logState.qt = setTimeout(() => { logState.q = $("lg-q").value.trim(); loadLogs(detailId); }, 300);
+});
+$("lg-refresh").addEventListener("click", () => loadLogs(detailId));
+$("lg-more").addEventListener("click", () => loadLogs(detailId, true));
+$("lg-live").addEventListener("change", () => {
+  clearInterval(logState.timer);
+  if ($("lg-live").checked) logState.timer = setInterval(() => {
+    if (detailId && !$("dp-logs").hidden && !$("detail").hidden) loadLogs(detailId); else { clearInterval(logState.timer); $("lg-live").checked = false; }
+  }, 5000);
+});
+
+// --- detail: test rychlosti mezi zařízeními ----------------------------------------------------
+const bwState = { id: null, v: null, dur: 10, dir: "both", proto: "tcp", poll: null };
+const BW_DIR = [["both", "oba směry"], ["transmit", "odesílání"], ["receive", "příjem"]];
+
+async function loadBw(id) {
+  if (!id) return;
+  let v;
+  try { v = await api("GET", `/tenants/${tenantId}/devices/${id}/bwtest`); } catch (e) { return msg(e.message, true); }
+  if (detailId !== id) return;
+  bwState.id = id; bwState.v = v;
+  renderBw();
+  const run = v.tests.find((t) => t.status === "running");
+  if (run) bwPoll(run.id);
+}
+
+function renderBw() {
+  const v = bwState.v;
+  const to = $("bw-to"), prev = to.value; to.textContent = "";
+  const sorted = [...v.targets].sort((a, b) => (b.same_site - a.same_site) || (a.site || "").localeCompare(b.site || ""));
+  for (const t of sorted) { const o = el("option", `${t.name}${t.same_site ? "" : " · " + (t.site || "jiná lokalita")}`); o.value = t.id; to.appendChild(o); }
+  to.value = sorted.some((t) => t.id === prev) ? prev : (sorted[0] ? sorted[0].id : "");
+  if (!sorted.length) { const o = el("option", "— žádné jiné online zařízení —"); o.value = ""; to.appendChild(o); }
+  bwAddrs();
+  segmented($("bw-dur"), v.durations.map((d) => [d, `${d} s`]), bwState.dur, (d) => { bwState.dur = d; renderBw(); });
+  segmented($("bw-dir"), BW_DIR, bwState.dir, (d) => { bwState.dir = d; renderBw(); });
+  segmented($("bw-proto"), [["tcp", "TCP"], ["udp", "UDP"]], bwState.proto, (p) => { bwState.proto = p; renderBw(); });
+  // odhad dat: na každých 100 Mb/s rychlosti
+  const mb = bwState.dur * 100e6 / 8 / 1e6 * (bwState.dir === "both" ? 2 : 1);
+  $("bw-est").textContent = `Spotřeba dat ≈ ${Math.round(mb)} MB na každých 100 Mb/s rychlosti linky (pozor na LTE a měřené linky).`;
+  $("bw-start").disabled = !canOperate() || !sorted.length;
+  const h = $("bw-hist"); h.textContent = "";
+  for (const t of v.tests) h.appendChild(bwCard(t));
+  if (!v.tests.length) h.appendChild(el("p", "Zatím žádný test.", "muted"));
+}
+function bwAddrs() {
+  const t = bwState.v.targets.find((x) => x.id === $("bw-to").value);
+  const a = $("bw-addr"); a.textContent = "";
+  for (const x of (t ? t.addresses : [])) { const o = el("option", `${x.address} (${x.interface})`); o.value = x.address; a.appendChild(o); }
+  a.value = t && t.addresses.length ? t.addresses[0].address : "";
+}
+$("bw-to").addEventListener("change", bwAddrs);
+
+$("bw-start").addEventListener("click", async () => {
+  const t = bwState.v.targets.find((x) => x.id === $("bw-to").value);
+  if (!t) return;
+  if (!(await ask(`Test rychlosti ${bwState.dur} s k ${t.name} (${$("bw-addr").value})?\n\n${$("bw-est").textContent}`, "Spustit"))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${bwState.id}/bwtest`,
+      { to: t.id, address: $("bw-addr").value, duration: bwState.dur, direction: bwState.dir, protocol: bwState.proto });
+    bwPoll(r.id, Date.now());
+  } catch (e) { msg(e.message, true); }
+});
+
+function bwPoll(testId, started) {
+  clearInterval(bwState.poll);
+  const live = $("bw-live"); live.hidden = false;
+  const t0 = started || Date.now();
+  const tick = async () => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    live.textContent = "";
+    const bar = el("div", null, "bw-bar"); const fill = el("i"); fill.style.width = Math.min(100, (s / (bwState.dur + 6)) * 100) + "%";
+    bar.appendChild(fill);
+    live.append(el("b", `Test běží… ${s} s`), bar);
+    let v;
+    try { v = await api("GET", `/tenants/${tenantId}/devices/${bwState.id}/bwtest`); } catch (_e) { return; }
+    const t = v.tests.find((x) => x.id === testId);
+    if (t && t.status !== "running") {
+      clearInterval(bwState.poll); live.hidden = true; bwState.v = v; renderBw();
+      msg(t.status === "done" ? `Test hotový: ↑ ${fmtBps(t.result.tx_avg)} / ↓ ${fmtBps(t.result.rx_avg)}` : `Test selhal: ${t.error}`, t.status !== "done");
+    }
+  };
+  bwState.poll = setInterval(tick, 2000);
+  tick();
+}
+
+function bwCard(t) {
+  const c = el("div", null, "bw-card " + t.status);
+  const head = el("div", null, "bw-head");
+  head.append(el("b", `${t.from_name || "?"} → ${t.to_name || "?"}`), el("span", `${t.address} · ${t.params.duration} s · ${t.params.protocol.toUpperCase()}`, "muted small"),
+              el("span", fmtTime(t.started_at), "muted small"));
+  c.appendChild(head);
+  if (t.status === "running") { c.appendChild(el("div", "běží…", "muted")); return c; }
+  if (t.status === "failed") { c.appendChild(el("div", t.error || "selhalo", "sev-error")); return c; }
+  const r = t.result;
+  const nums = el("div", null, "bw-nums");
+  const num = (label, val, sub, cls) => { const d = el("div", null, "bw-num " + (cls || "")); d.append(el("span", label), el("b", val), el("small", sub || "")); nums.appendChild(d); };
+  num("↑ odesílání", fmtBps(r.tx_avg), r.tx_max ? `max ${fmtBps(r.tx_max)}` : "", "tx");
+  num("↓ příjem", fmtBps(r.rx_avg), r.rx_max ? `max ${fmtBps(r.rx_max)}` : "", "rx");
+  num("CPU zdroj / cíl", `${r.cpu_local ?? "–"} % / ${r.cpu_remote ?? "–"} %`, (r.cpu_local >= 90 || r.cpu_remote >= 90) ? "limitem je CPU" : "", (r.cpu_local >= 90 || r.cpu_remote >= 90) ? "warn" : "");
+  if (r.lost && r.lost !== "0") num("ztracené pakety", r.lost, "", "warn");
+  c.append(nums, bwChart(r.samples));
+  return c;
+}
+
+// průběh testu: odesílání a příjem po sekundách
+function bwChart(samples) {
+  const W = 560, H = 120, P = 28;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "bw-chart" });
+  const max = Math.max(1, ...samples.map((s) => Math.max(s.tx || 0, s.rx || 0)));
+  const n = Math.max(1, samples.length - 1);
+  const x = (i) => P + (i / n) * (W - P - 6), y = (v) => H - 16 - (v / max) * (H - 26);
+  for (const f of [0.5, 1]) {
+    svg.appendChild(svgEl("line", { x1: P, x2: W - 6, y1: y(max * f), y2: y(max * f), class: "grid" }));
+    svg.appendChild(svgEl("text", { x: 2, y: y(max * f) + 4, class: "ax" }, fmtBps(max * f).replace(" ", "")));
+  }
+  for (const [k, cls] of [["tx", "tx"], ["rx", "rx"]]) {
+    const pts = samples.map((s, i) => (s[k] == null ? null : `${x(i).toFixed(1)},${y(s[k]).toFixed(1)}`)).filter(Boolean);
+    if (pts.length > 1) svg.appendChild(svgEl("polyline", { points: pts.join(" "), class: "ln " + cls }));
+  }
+  svg.appendChild(svgEl("text", { x: W - 6, y: H - 2, class: "ax end" }, `${samples.length} s`));
+  return svg;
+}
 
 boot();
 

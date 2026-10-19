@@ -3777,6 +3777,187 @@
    "server": "dhcp10",
    "device": "gw",
    "mac": "B0:BE:76:12:34:56"
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/logs?q=&sev=7": {
+   "level": "errors",
+   "retention_days": 14,
+   "volume": {
+    "days": [
+     {
+      "day": "2026-10-18",
+      "lines": 40,
+      "bytes": 4200,
+      "dropped": 0
+     },
+     {
+      "day": "2026-10-19",
+      "lines": 12,
+      "bytes": 1300,
+      "dropped": 0
+     }
+    ],
+    "avg_bytes_per_day": 5090,
+    "avg_lines_per_day": 26,
+    "dropped": 0
+   },
+   "logs": [
+    {
+     "id": 2,
+     "at": "2026-10-19T18:01:02+02:00",
+     "severity": 3,
+     "topics": "system,error,critical",
+     "message": "login failure for user admin from 10.0.0.9 via ssh"
+    },
+    {
+     "id": 1,
+     "at": "2026-10-19T17:55:00+02:00",
+     "severity": 4,
+     "topics": "interface,warning",
+     "message": "ether3 link down"
+    }
+   ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/bwtest": {
+   "durations": [
+    5,
+    10,
+    20,
+    30
+   ],
+   "targets": [
+    {
+     "id": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
+     "name": "sw",
+     "model": "CRS326",
+     "site": "Stul",
+     "same_site": true,
+     "addresses": [
+      {
+       "address": "192.168.77.2",
+       "interface": "bridge"
+      }
+     ]
+    }
+   ],
+   "tests": [
+    {
+     "id": 7,
+     "from_device": "06813aef-ac70-438a-a7d6-7859862f16ed",
+     "to_device": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
+     "address": "192.168.77.2",
+     "params": {
+      "duration": 10,
+      "direction": "both",
+      "protocol": "tcp"
+     },
+     "status": "done",
+     "result": {
+      "samples": [
+       {
+        "t": 1,
+        "tx": 880000000.0,
+        "rx": 420000000.0,
+        "cpu_l": 40,
+        "cpu_r": 70
+       },
+       {
+        "t": 2,
+        "tx": 887000000.0,
+        "rx": 450000000.0,
+        "cpu_l": 41,
+        "cpu_r": 72
+       },
+       {
+        "t": 3,
+        "tx": 894000000.0,
+        "rx": 480000000.0,
+        "cpu_l": 42,
+        "cpu_r": 74
+       },
+       {
+        "t": 4,
+        "tx": 901000000.0,
+        "rx": 420000000.0,
+        "cpu_l": 43,
+        "cpu_r": 76
+       },
+       {
+        "t": 5,
+        "tx": 908000000.0,
+        "rx": 450000000.0,
+        "cpu_l": 44,
+        "cpu_r": 78
+       },
+       {
+        "t": 6,
+        "tx": 915000000.0,
+        "rx": 480000000.0,
+        "cpu_l": 45,
+        "cpu_r": 80
+       },
+       {
+        "t": 7,
+        "tx": 922000000.0,
+        "rx": 420000000.0,
+        "cpu_l": 46,
+        "cpu_r": 82
+       },
+       {
+        "t": 8,
+        "tx": 929000000.0,
+        "rx": 450000000.0,
+        "cpu_l": 47,
+        "cpu_r": 84
+       },
+       {
+        "t": 9,
+        "tx": 936000000.0,
+        "rx": 480000000.0,
+        "cpu_l": 48,
+        "cpu_r": 86
+       },
+       {
+        "t": 10,
+        "tx": 943000000.0,
+        "rx": 420000000.0,
+        "cpu_l": 49,
+        "cpu_r": 88
+       }
+      ],
+      "tx_avg": 912000000.0,
+      "rx_avg": 446000000.0,
+      "tx_max": 943000000.0,
+      "rx_max": 480000000.0,
+      "cpu_local": 49,
+      "cpu_remote": 92,
+      "lost": "0",
+      "status": "done"
+     },
+     "error": null,
+     "started_at": "2026-10-19T18:10:00+02:00",
+     "finished_at": "2026-10-19T18:10:12+02:00",
+     "from_name": "gw",
+     "to_name": "sw"
+    },
+    {
+     "id": 6,
+     "from_device": "06813aef-ac70-438a-a7d6-7859862f16ed",
+     "to_device": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
+     "address": "192.168.77.2",
+     "params": {
+      "duration": 10,
+      "direction": "both",
+      "protocol": "tcp"
+     },
+     "status": "failed",
+     "result": null,
+     "error": "connection refused – zkontroluj firewall na cíli (bandwidth-test TCP 2000, UDP 2001+)",
+     "started_at": "2026-10-19T18:00:00+02:00",
+     "finished_at": null,
+     "from_name": "gw",
+     "to_name": "sw"
+    }
+   ]
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

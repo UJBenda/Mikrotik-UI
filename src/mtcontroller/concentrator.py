@@ -83,18 +83,21 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 /ip firewall filter add chain=forward in-interface-list="TUNNELS" connection-state=established,related action=accept comment="mtc: odpovedi z tunelu"
 /ip firewall filter add chain=forward src-address-list="mtc-controller" out-interface-list="TUNNELS" protocol=tcp dst-port=443 action=accept comment="mtc: controller REST do tunelu"
 /ip firewall filter add chain=forward src-address-list="mtc-controller" out-interface-list="TUNNELS" protocol=icmp action=accept comment="mtc: controller ping do tunelu"
+/ip firewall filter add chain=forward in-interface-list="TUNNELS" dst-address-list="mtc-controller" protocol=udp dst-port={settings.syslog.port} action=accept comment="mtc: syslog ze zarizeni"
 /ip firewall filter add chain=forward in-interface-list="TUNNELS" action=drop comment="mtc: drop z tunelu"
 /ip firewall filter add chain=forward out-interface-list="TUNNELS" action=drop comment="mtc: drop do tunelu"
 # sprava z controlleru do tunelu se preklada na tunelovou adresu koncentratoru:
 # zarizeni nepotrebuje zadnou routu a skutecnou IP controlleru nevidi
 /ip firewall nat remove [find comment~"^mtc:"]
 /ip firewall nat add chain=srcnat src-address-list="mtc-controller" out-interface-list="TUNNELS" action=src-nat to-addresses={q(local)} comment="mtc: controller do tunelu"
+# logy ze zarizeni (syslog na tunelovou adresu koncentratoru) jdou na controller se zdrojem zarizeni
+/ip firewall nat add chain=dstnat in-interface-list="TUNNELS" dst-address={q(local)} protocol=udp dst-port={settings.syslog.port} action=dst-nat to-addresses=$ctrl to-ports={settings.syslog.port} comment="mtc: syslog na controller"
 :if ([:len [/ip firewall nat find dynamic=no]] > 1) do={{
   /ip firewall nat move [find comment="mtc: controller do tunelu"] destination=([/ip firewall nat find dynamic=no]->0)
 }}
 # dynamicka pravidla (fasttrack dummy) preskocit - pred ne nejde presouvat
-:if ([:len [/ip firewall filter find dynamic=no]] > 8) do={{
-  :foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
+:if ([:len [/ip firewall filter find dynamic=no]] > 9) do={{
+  :foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: syslog ze zarizeni";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
     /ip firewall filter move [find comment=$c] destination=([/ip firewall filter find dynamic=no]->0)
   }}
 }}

@@ -209,6 +209,39 @@ class NotifyTarget(BaseModel):
         return self.secret_file.read_text().strip()
 
 
+class SyslogConfig(BaseModel):
+    """Příjem logů ze zařízení (UDP syslog přes tunel; služba mtc-syslog)."""
+    port: int = 5514
+    # adresa, na které služba poslouchá; prázdné = tunnel.controller_ip
+    listen: str = ""
+    retention_days: int = 14
+    # pojistka proti zahlcení: víc řádků za minutu od jednoho zařízení se zahodí (a započítá)
+    max_lines_per_minute: int = 600
+    # volitelně přeposlat (UDP syslog) dál, např. do SIEM: "host:port"
+    forward: str = ""
+
+    @field_validator("port")
+    @classmethod
+    def _port(cls, v: int) -> int:
+        if not 1024 <= v <= 65535:
+            raise ValueError("syslog.port: 1024–65535 (služba neběží jako root)")
+        return v
+
+    @field_validator("retention_days")
+    @classmethod
+    def _ret(cls, v: int) -> int:
+        if not 1 <= v <= 365:
+            raise ValueError("syslog.retention_days: 1–365")
+        return v
+
+    @field_validator("forward")
+    @classmethod
+    def _fwd(cls, v: str) -> str:
+        if v and not re.fullmatch(r"[A-Za-z0-9.:\[\]-]+:\d{1,5}", v):
+            raise ValueError("syslog.forward: host:port")
+        return v
+
+
 class Settings(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     web: WebConfig = Field(default_factory=WebConfig)
@@ -216,6 +249,7 @@ class Settings(BaseModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     notify: list[NotifyTarget] = Field(default_factory=list)
+    syslog: SyslogConfig = Field(default_factory=SyslogConfig)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, dict[str, Any]]:

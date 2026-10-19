@@ -120,7 +120,7 @@ say "Migrace"
 mtc-admin migrate
 
 say "systemd"
-install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" "$SRC/deploy/systemd/mtc-syslog.service" /etc/systemd/system/
 # ICMP redirecty: koncentrátor je pošle, když tunel zařízení zrovna neběží – kernel by si pak
 # cachoval routu na pool přes výchozí bránu a správa do tunelu by přestala chodit
 say "sysctl (ignorovat ICMP redirecty)"
@@ -140,10 +140,10 @@ else
   rm -f /etc/systemd/system/mtc-worker.service.d/routes.conf
 fi
 systemctl daemon-reload
-systemctl enable mtc-web mtc-worker >/dev/null
-systemctl restart mtc-web mtc-worker
+systemctl enable mtc-web mtc-worker mtc-syslog >/dev/null
+systemctl restart mtc-web mtc-worker mtc-syslog
 sleep 2
-systemctl --no-pager --lines=5 status mtc-web mtc-worker || true
+systemctl --no-pager --lines=5 status mtc-web mtc-worker mtc-syslog || true
 
 say "nginx"
 NGX=/etc/nginx/sites-available/mtcontroller.conf
@@ -191,7 +191,7 @@ fi
 say "Hotovo"
 cat <<EOF
 Další kroky (viz docs/test-plan.md):
-  1. doplň [[tunnel.concentrators]] v $ETC/config.toml a restartuj: systemctl restart mtc-web mtc-worker
+  1. doplň [[tunnel.concentrators]] v $ETC/config.toml a restartuj: systemctl restart mtc-web mtc-worker mtc-syslog
   2. první admin:            mtc-admin create-superadmin admin@...
   3. skript pro koncentrátor: mtc-admin concentrator-script vpn1
   4. kontrola celé instalace: mtc-admin doctor

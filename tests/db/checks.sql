@@ -514,5 +514,38 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 25) logy zařízení a testy rychlosti izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_log (tenant_id, device_id, severity, message)
+  SELECT tenant_id, id, 6, 'log B' FROM device WHERE serial = 'SER-B1';
+INSERT INTO device_log_day (tenant_id, device_id, day, lines, bytes)
+  SELECT tenant_id, id, current_date, 1, 10 FROM device WHERE serial = 'SER-B1';
+INSERT INTO bw_test (tenant_id, from_device, to_device, address)
+  SELECT tenant_id, id, id, '10.0.0.1' FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_log) + (SELECT count(*) FROM device_log_day) + (SELECT count(*) FROM bw_test) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí logy nebo testy tenanta B'; END IF;
+  DELETE FROM device_log; DELETE FROM bw_test; DELETE FROM device_log_day;
+  BEGIN
+    INSERT INTO device_log (tenant_id, device_id, severity, message)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', (SELECT id FROM device LIMIT 1), 6, 'podvrh');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal log tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation OR not_null_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 25 logy a testy rychlosti izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_log) <> 1 OR (SELECT count(*) FROM bw_test) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: tenant A smazal logy nebo testy B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED
