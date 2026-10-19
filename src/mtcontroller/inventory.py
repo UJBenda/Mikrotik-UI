@@ -57,6 +57,7 @@ SECTIONS: list[Section] = [
     Section("ntp_server", "/system/ntp/server"),
     Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled,address-pool,lease-time"),
     Section("dhcp_options", "/ip/dhcp-server/option", "name,code,value,comment"),
+    Section("dhcp_networks", "/ip/dhcp-server/network", "address,gateway,dns-server,ntp-server,domain,dhcp-option,comment"),
     Section("ip_pools", "/ip/pool", "name,ranges,next-pool"),
     Section("dhcp_relays", "/ip/dhcp-relay", "name,interface,dhcp-server,local-address,disabled"),
     # DHCP alert = detekce cizích DHCP serverů (unknown-server)

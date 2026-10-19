@@ -232,7 +232,7 @@ async def dhcp_server_view(request: Request, p: Principal, tid: str) -> Response
             clients = {r["mac"]: r for r in tx.fetchall(
                 """SELECT mac, hostname, device, port, ssid, signal, last_seen FROM client
                    WHERE site_id = %(s)s""", {"s": str(d["site_id"])})} if d["site_id"] else {}
-            notes = {r["mac"]: r["note"] for r in tx.fetchall("SELECT mac, note FROM client_note")}
+            notes = {r["mac"]: r["note"] for r in tx.fetchall("SELECT mac, note FROM client_note WHERE note <> ''")}
             pending = tx.fetchall(
                 """SELECT id, status::text AS status, summary, changes->>'mac' AS mac, created_at FROM config_plan
                    WHERE device_id = %(d)s AND module = 'dhcp' AND changes->>'server' = %(s)s
@@ -270,12 +270,107 @@ async def dhcp_lease_plan(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(OPERATE)
+async def dhcp_network_plan(request: Request, p: Principal, tid: str) -> Response:
+    """Plán změny nastavení sítě DHCP (DNS, NTP, doména, globální DHCP options); s "apply" rovnou schválí."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    server = str(request.path_params["server"])[:64]
+    data = await _json(request)
+    desired = data.get("desired") if isinstance(data.get("desired"), dict) else {}
+    ip = client_ip(request)
+
+    def run():
+        res = plans.create_network_plan(st.db, tid, did, server, desired, p.user_id, ip)
+        if data.get("apply"):
+            if not p.can(tid, MANAGE):
+                raise ServiceError("plán je uložený – schválit ho musí správce tenanta")
+            res["command_id"] = plans.approve_plan(st.db, st.settings, tid, res["plan_id"], p.user_id, ip)
+        return res
+
+    return json_response(await run_in_threadpool(run), 201)
+
+
+@endpoint(READ)
+async def client_dhcp(request: Request, p: Principal, tid: str) -> Response:
+    """Který DHCP server klienta obsluhuje (pro rezervaci a options přímo ze seznamu klientů)."""
+    from .. import leases
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    mac = leases.norm_mac(request.path_params["mac"])
+    if not mac:
+        raise ServiceError("neplatná MAC adresa")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            devs = tx.fetchall("""SELECT id, identity, serial FROM device WHERE site_id = %(s)s
+                                  AND state IN ('adopted', 'offline')""", {"s": sid})
+            invs = {str(d["id"]): inventory.load(tx, d["id"], ["dhcp_leases", "dhcp_servers", "addresses"]) for d in devs}
+            c = tx.fetchone("SELECT ip FROM client WHERE site_id = %(s)s AND mac = %(m)s", {"s": sid, "m": mac})
+        found = leases.server_for_client(invs, mac, (c or {}).get("ip"))
+        if not found:
+            raise NotFound("klienta neobsluhuje žádný DHCP server na spravovaných zařízeních lokality")
+        d = next(x for x in devs if str(x["id"]) == found[0])
+        return {"device_id": found[0], "server": found[1], "device": d["identity"] or d["serial"], "mac": mac}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
 async def client_note(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     data = await _json(request)
-    res = await run_in_threadpool(plans.set_client_note, st.db, tid, request.path_params["mac"],
-                                  str(data.get("note") or ""), p.user_id, client_ip(request))
+    from .. import clientmeta
+
+    fields = {k: data[k] for k in ("note", "label", "icon") if k in data}
+    if not fields:
+        raise ServiceError("nic ke změně (note, label, icon)")
+    res = await run_in_threadpool(clientmeta.set_client, st.db, tid, request.path_params["mac"], fields, p.user_id,
+                                  client_ip(request))
     return json_response(res)
+
+
+@endpoint(READ)
+async def client_logos(request: Request, p: Principal, tid: str) -> Response:
+    from .. import clientmeta
+
+    st = get_state(request)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return {"logos": clientmeta.list_logos(tx), "icons": list(clientmeta.ICONS)}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def client_logo(request: Request, p: Principal, tid: str) -> Response:
+    """Logo (obrázek) – GET čte kdokoli z tenanta, PUT/DELETE technik a výš."""
+    from .. import clientmeta
+
+    st = get_state(request)
+    scope, key = str(request.path_params["scope"]), str(request.path_params["key"])[:200]
+    if request.method in ("PUT", "DELETE"):
+        if not p.can(tid, OPERATE):
+            return _err(403, "nedostatečná oprávnění")
+        if request.method == "DELETE":
+            await run_in_threadpool(clientmeta.delete_logo, st.db, tid, scope, key, p.user_id, client_ip(request))
+            return json_response({"ok": True})
+        data = await _json(request, limit=96 * 1024)
+        return json_response(await run_in_threadpool(clientmeta.put_logo, st.db, tid, scope, key, data.get("data"),
+                                                     p.user_id, client_ip(request)))
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return clientmeta.get_logo(tx, scope, key)
+
+    lg = await run_in_threadpool(q)
+    if not lg:
+        raise NotFound("logo neexistuje")
+    # obrázek podle ověřené hlavičky; nosniff a sandbox CSP – prohlížeč ho nikdy nespustí jako stránku
+    return Response(lg["data"], media_type=lg["mime"], headers={
+        "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox", "Content-Disposition": "inline"})
 
 
 @endpoint(READ)
@@ -644,7 +739,7 @@ async def topology(request: Request, p: Principal, tid: str) -> Response:
 
 @endpoint(READ)
 async def site_clients(request: Request, p: Principal, tid: str) -> Response:
-    from .. import clients
+    from .. import clientmeta, clients
 
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
@@ -654,17 +749,16 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
     def q():
         with tenant_scope(st.db, tid) as tx:
             if history:
-                return clients.history(tx, sid, _int(request.query_params.get("days"), 30, 1, 90))
+                return clientmeta.annotate(tx, [dict(r) for r in clients.history(
+                    tx, sid, _int(request.query_params.get("days"), 30, 1, 90))])
             devs = tx.fetchall("""SELECT id, serial, identity FROM device
                                   WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
             invs = {str(d["id"]): inventory.load(tx, d["id"], clients.SECTIONS) for d in devs}
             seen = {r["mac"]: r for r in tx.fetchall(
                 "SELECT mac, first_seen, last_seen FROM client WHERE site_id = %(s)s", {"s": sid})}
-            notes = {r["mac"]: r["note"] for r in tx.fetchall("SELECT mac, note FROM client_note")}
-        out = clients.correlate(devs, invs)
+            out = clients.correlate(devs, invs)
+            clientmeta.annotate(tx, out)
         for c in out:
-            c["vendor"] = oui.vendor(c["mac"])
-            c["note"] = notes.get(c["mac"], "")
             h = seen.get(c["mac"])
             c["first_seen"] = h["first_seen"] if h else None
             c["last_seen"] = h["last_seen"] if h else None
@@ -708,7 +802,7 @@ async def site_wifi(request: Request, p: Principal, tid: str) -> Response:
 
 @endpoint(READ)
 async def site_infra(request: Request, p: Principal, tid: str) -> Response:
-    from .. import infra
+    from .. import clientmeta, infra
 
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
@@ -719,7 +813,20 @@ async def site_infra(request: Request, p: Principal, tid: str) -> Response:
                                   FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline', 'provisioning')""",
                                {"s": sid})
             invs = {str(d["id"]): inventory.load(tx, d["id"], INFRA_SECTIONS) for d in devs}
-        return infra.site_infra(devs, invs)
+            # připojení klienti (poslední inventura klientů do 10 min) s MAC, popiskem a logem
+            cl = [dict(r) for r in tx.fetchall(
+                """SELECT mac, ip, hostname, device_id, port, vlan, ssid, signal FROM client
+                   WHERE site_id = %(s)s AND last_seen > now() - interval '10 minutes' AND device_id IS NOT NULL
+                   ORDER BY port, mac""", {"s": sid})]
+            clientmeta.annotate(tx, cl)
+        out = infra.site_infra(devs, invs)
+        by_dev: dict[str, list] = {}
+        for c in cl:
+            c["device_id"] = str(c["device_id"])
+            by_dev.setdefault(c["device_id"], []).append(c)
+        for n in out["nodes"]:
+            n["clients"] = by_dev.get(n["id"], [])
+        return out
 
     return json_response(await run_in_threadpool(q))
 
@@ -1175,6 +1282,8 @@ def routes() -> list[Route]:
         Route(d + "/ports/{port}/plan", port_plan, methods=["POST"]),
         Route(d + "/dhcp/{server}", dhcp_server_view, methods=["GET"]),
         Route(d + "/dhcp/{server}/lease", dhcp_lease_plan, methods=["POST"]),
+        Route(d + "/dhcp/{server}/network", dhcp_network_plan, methods=["POST"]),
+        Route(s + "/clients/{mac}/dhcp", client_dhcp, methods=["GET"]),
         Route(s + "/policy/ntp", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/policy/{module}", site_ntp_policy, methods=["GET", "POST"]),
         Route(s + "/networks", site_networks, methods=["GET"]),
@@ -1205,6 +1314,8 @@ def routes() -> list[Route]:
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/port-profiles", port_profiles, methods=["GET", "POST"]),
         Route(T + "/client-notes/{mac}", client_note, methods=["PUT"]),
+        Route(T + "/client-logos", client_logos, methods=["GET"]),
+        Route(T + "/client-logos/{scope}/{key}", client_logo, methods=["GET", "PUT", "DELETE"]),
         Route(T + "/port-profiles/{profile_id}", port_profile_delete, methods=["DELETE"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),

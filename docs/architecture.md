@@ -751,6 +751,17 @@ HTTP WebFigu, API bez TLS, SOCKS/HTTP proxy, bandwidth serveru – `hardening.FI
 jedním klikem: plán `hardening` s commit-confirm (návrat po 5 min bez potvrzení); ostatní nálezy
 nabízí ke zkopírování příkazu. www-ssl/ssh/winbox controller nikdy nevypíná.
 
+### Klienti: popisek, ikona, logo; DHCP ze seznamu klientů; klienti v infrastruktuře
+
+| Téma | Implementace |
+| --- | --- |
+| Popisek, ikona, poznámka | `client_note` (migrace 0017: `label`, `icon`), jen v controlleru; `PUT …/client-notes/{mac}` mění jen poslané klíče |
+| Loga | `client_logo` (RLS, checks 24): logo výrobce (klíč = normalizované jméno z OUI, platí pro všechny jeho klienty) nebo klienta (MAC, má přednost); jen PNG/JPEG/WebP do 64 KiB s kontrolou hlavičky souboru, SVG ne. UI obrázek zmenší na 128 px. Výdej s `Content-Security-Policy: default-src 'none'; sandbox`, `nosniff` a soukromou cache |
+| Bez loga | ikona z nabídky, jinak odznak s iniciálami výrobce (barva podle jména) – loga značek nedodáváme, nahrává je uživatel |
+| Statická IP z Klientů | `GET …/sites/{id}/clients/{mac}/dhcp` najde DHCP server (lease s MAC, jinak podsíť IP klienta) a UI otevře editor rezervace se všemi options klienta |
+| Globální DHCP options | sekce inventury `dhcp_networks`; `leases.network_plan` mění na `/ip dhcp-server network` DNS, NTP, doménu a `dhcp-option` pro všechny klienty – plán modulu `dhcp` s návratem; nová option se rovnou založí |
+| Infrastruktura | `GET …/infra` vrací u zařízení klienty z posledních 10 min (MAC, popisek, logo); seznam zařízení je rozbalí, strom je s volbou „klienti“ kreslí jako listy (max. 10 na zařízení, zbytek „+N“ do Klientů) |
+
 ## Rychlé doručení změn
 
 Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem

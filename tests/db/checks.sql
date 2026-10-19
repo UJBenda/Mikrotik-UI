@@ -480,5 +480,39 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 24) loga klientů izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO client_logo (tenant_id, scope, key, mime, data, sha)
+  VALUES ('00000000-0000-0000-0000-0000000000b1', 'vendor', 'apple', 'image/png', '\x89504e47', 'abcdefabcdefabcd');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM client_logo) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí loga tenanta B'; END IF;
+  UPDATE client_logo SET sha = 'xxxxxxxxxxxxxxxx';
+  DELETE FROM client_logo;
+  BEGIN
+    INSERT INTO client_logo (tenant_id, scope, key, mime, data, sha)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', 'vendor', 'evil', 'image/png', '\x00', 'abcdefabcdefabcd');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal logo tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO client_logo (tenant_id, scope, key, mime, data, sha)
+      VALUES ('00000000-0000-0000-0000-0000000000a1', 'vendor', 'svg', 'image/svg+xml', '\x00', 'abcdefabcdefabcd');
+    RAISE EXCEPTION 'FAIL: SVG logo prošlo';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 24 loga klientů izolovaná, jen rastrové obrázky';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT sha FROM client_logo WHERE key = 'apple') <> 'abcdefabcdefabcd' THEN RAISE EXCEPTION 'FAIL: tenant A změnil logo B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

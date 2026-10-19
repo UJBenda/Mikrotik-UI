@@ -54,9 +54,9 @@ def _err(status: int, detail: str) -> Response:
     return json_response({"detail": detail}, status)
 
 
-async def _json(request: Request) -> dict:
+async def _json(request: Request, limit: int = 65536) -> dict:
     raw = await request.body()
-    return services.parse_json_body(raw, 65536)
+    return services.parse_json_body(raw, limit)
 
 
 def _uuid(v: Any) -> str:

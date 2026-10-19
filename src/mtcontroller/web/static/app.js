@@ -924,29 +924,183 @@ $("csearch").addEventListener("input", () => {
 });
 $("clients-filter").addEventListener("input", () => renderClients());
 
+// --- klienti: popisek, ikona, logo (výrobce nebo vlastní) -------------------------------------------
+const CLIENT_ICONS = { phone: "📱", tablet: "📲", laptop: "💻", desktop: "🖥️", printer: "🖨️", camera: "📷", tv: "📺",
+  nas: "🗄️", server: "🧮", iot: "🔌", voip: "☎️", speaker: "🔊", game: "🎮", watch: "⌚", car: "🚗", ap: "📡",
+  router: "🛜", switch: "🔀", light: "💡", sensor: "🌡️", lock: "🔒", other: "❔" };
+const ICON_LABEL = { phone: "telefon", tablet: "tablet", laptop: "notebook", desktop: "počítač", printer: "tiskárna", camera: "kamera",
+  tv: "TV", nas: "NAS", server: "server", iot: "IoT", voip: "IP telefon", speaker: "reproduktor", game: "konzole", watch: "hodinky",
+  car: "auto", ap: "AP", router: "router", switch: "switch", light: "světlo", sensor: "senzor", lock: "zámek", other: "jiné" };
+
+const logoUrl = (ref) => `/api/admin/tenants/${tenantId}/client-logos/${ref}`;
+function vendorInitials(v) {
+  const w = String(v || "").replace(/[,.].*$/, "").split(/\s+/).filter(Boolean);
+  return (w.length > 1 ? w[0][0] + w[1][0] : (w[0] || "?").slice(0, 2)).toUpperCase();
+}
+function vendorHue(v) { let h = 0; for (const ch of String(v || "")) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; }
+// avatar klienta: logo klienta → logo výrobce → ikona → iniciály výrobce
+function clientAvatar(c, size) {
+  const a = el("span", null, "cav" + (size ? " " + size : ""));
+  if (c.logo) {
+    const img = el("img"); img.src = logoUrl(c.logo); img.alt = ""; img.loading = "lazy"; a.appendChild(img);
+  } else if (c.icon && CLIENT_ICONS[c.icon]) {
+    a.textContent = CLIENT_ICONS[c.icon]; a.className += " ico";
+  } else {
+    a.textContent = c.vendor && !/náhodná|random/i.test(c.vendor) ? vendorInitials(c.vendor) : "?";
+    a.className += " ini"; a.style.setProperty && a.style.setProperty("--h", vendorHue(c.vendor_key || c.vendor));
+  }
+  a.title = [c.vendor, c.icon ? ICON_LABEL[c.icon] : ""].filter(Boolean).join(" · ");
+  return a;
+}
+const clientName = (c) => c.label || c.hostname || c.ip || c.mac;
+
+function clientMenu(c) {
+  return [
+    { label: "Upravit popisek, ikonu a logo…", key: "Enter", act: () => openClient(c) },
+    { label: "Statická IP a DHCP options…", disabled: !canOperate(), act: () => clientDhcp(c) },
+    { sep: true },
+    { label: "Kopírovat MAC", act: () => copyText(c.mac, "MAC") },
+    c.ip ? { label: "Kopírovat IP", act: () => copyText(c.ip, "IP") } : null,
+    c.device_id ? { label: `Otevřít ${c.device || "zařízení"}`, act: () => openDetail(c.device_id) } : null,
+  ];
+}
+
 function renderClients() {
   const q = $("clients-filter").value.trim().toLowerCase();
   const tb = $("clients");
   tb.textContent = "";
-  const list = clientsCache.filter((c) => !q || [c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, c.wifi && c.wifi.ssid, c.ssid,
+  const list = clientsCache.filter((c) => !q || [c.label, c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, c.wifi && c.wifi.ssid, c.ssid,
     c.vendor, c.note]
     .some((v) => v && String(v).toLowerCase().includes(q)));
   for (const c of list.slice(0, 1000)) {
-    const tr = el("tr");
-    if (c.online === false) tr.className = "muted";
+    const tr = el("tr", null, "clickable" + (c.online === false ? " muted" : ""));
     const ssid = c.wifi ? c.wifi.ssid : c.ssid, signal = c.wifi ? c.wifi.signal : c.signal;
     const wifi = ssid || signal ? `${ssid || ""} ${signal ? signal + " dBm" : ""}` : "";
-    const name = el("td", c.hostname || "");
+    const av = el("td", null, "cav-td"); av.appendChild(clientAvatar(c));
+    const name = el("td");
+    name.appendChild(el("b", clientName(c)));
     if (isNew(c)) name.appendChild(el("span", " nový", "badge"));
+    if (c.label && c.hostname && c.label !== c.hostname) name.appendChild(el("div", c.hostname, "muted small"));
     if (c.note) name.appendChild(el("div", c.note, "muted small"));
     const macTd = el("td", c.mac, "mono");
     if (c.vendor) macTd.appendChild(el("div", c.vendor, "muted small"));
-    tr.append(name, el("td", c.ip || ""), macTd, el("td", c.device || "?"),
+    const more = el("td"); more.appendChild(moreButton(clientName(c), () => clientMenu(c)));
+    tr.append(av, name, el("td", c.ip || ""), macTd, el("td", c.device || "?"),
               el("td", (c.port || "") + (c.uncertain ? " ?" : "")), el("td", c.vlan || ""), el("td", wifi),
-              el("td", c.first_seen ? fmtTime(c.first_seen) : "–"), el("td", c.online ? "teď" : fmtTime(c.last_seen)));
+              el("td", c.first_seen ? fmtTime(c.first_seen) : "–"), el("td", c.online ? "teď" : fmtTime(c.last_seen)), more);
+    tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON") openClient(c); });
+    withCtx(tr, clientName(c), () => clientMenu(c));
     tb.appendChild(tr);
   }
-  if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 9; tr.appendChild(td); tb.appendChild(tr); }
+  if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 11; tr.appendChild(td); tb.appendChild(tr); }
+}
+
+// --- editor klienta ---
+let clEdit = null;   // {c, icon, upload: "client"|"vendor"}
+function openClient(c) {
+  clEdit = { c, icon: c.icon || "" };
+  $("cl-title").textContent = clientName(c);
+  $("cl-sub").textContent = `${c.mac}${c.vendor ? " · " + c.vendor : ""}`;
+  $("cl-avatar").textContent = ""; $("cl-avatar").appendChild(clientAvatar(c, "big"));
+  $("cl-label").value = c.label || ""; $("cl-label").placeholder = c.hostname || "např. Tiskárna 2. patro";
+  $("cl-note").value = c.note || "";
+  $("cl-addr").textContent = [c.ip ? `IP ${c.ip}` : "IP zatím neznámá", c.vlan ? `VLAN ${c.vlan}` : "",
+    c.device ? `${c.device}${c.port ? " · " + c.port : ""}` : ""].filter(Boolean).join(" · ");
+  $("cl-logo-vendor").hidden = !c.vendor_key;
+  $("cl-logo-vendor").textContent = c.vendor_key ? `Nahrát logo výrobce (${c.vendor.replace(/[,.].*$/, "")})…` : "";
+  $("cl-logo-del").hidden = !c.logo;
+  $("cl-warn").textContent = "";
+  for (const id of ["cl-save", "cl-logo-client", "cl-logo-vendor", "cl-logo-del", "cl-dhcp"]) $(id).disabled = !canOperate();
+  clIcons();
+  $("cl-dlg").hidden = false;
+  try { $("cl-label").focus(); } catch (_e) { /* fokus není podstatný */ }
+}
+function clIcons() {
+  const g = $("cl-icons"); g.textContent = "";
+  const none = el("button", "auto", "icon-pick" + (clEdit.icon ? "" : " on")); none.type = "button"; none.title = "podle výrobce / loga";
+  none.addEventListener("click", () => { clEdit.icon = ""; clIcons(); });
+  g.appendChild(none);
+  for (const [k, e] of Object.entries(CLIENT_ICONS)) {
+    const b = el("button", e, "icon-pick" + (clEdit.icon === k ? " on" : "")); b.type = "button"; b.title = ICON_LABEL[k];
+    b.setAttribute("aria-label", ICON_LABEL[k]);
+    b.addEventListener("click", () => { clEdit.icon = k; clIcons(); });
+    g.appendChild(b);
+  }
+}
+function clClose() { $("cl-dlg").hidden = true; clEdit = null; }
+$("cl-close").addEventListener("click", clClose);
+$("cl-cancel").addEventListener("click", clClose);
+$("cl-save").addEventListener("click", async () => {
+  const c = clEdit.c;
+  try {
+    await api("PUT", `/tenants/${tenantId}/client-notes/${encodeURIComponent(c.mac)}`,
+              { label: $("cl-label").value, note: $("cl-note").value, icon: clEdit.icon });
+    msg(`${c.mac}: uloženo`); clClose(); reloadClientViews();
+  } catch (e) { $("cl-warn").textContent = ""; $("cl-warn").appendChild(el("li", e.message, "sev-error")); }
+});
+$("cl-dhcp").addEventListener("click", () => { const c = clEdit.c; clClose(); clientDhcp(c); });
+$("cl-logo-client").addEventListener("click", () => { clEdit.upload = "client"; $("cl-file").click(); });
+$("cl-logo-vendor").addEventListener("click", () => { clEdit.upload = "vendor"; $("cl-file").click(); });
+$("cl-logo-del").addEventListener("click", async () => {
+  const c = clEdit.c, ref = String(c.logo || "").split("?")[0];
+  if (!ref) return;
+  const isVendor = ref.startsWith("vendor/");
+  if (!(await ask(isVendor ? `Odebrat logo výrobce ${c.vendor}? Zmizí u všech jeho klientů.` : "Odebrat logo tohoto klienta?", "Odebrat"))) return;
+  try { await api("DELETE", logoUrl(ref).replace("/api/admin", "")); msg("Logo odebráno"); clClose(); reloadClientViews(); }
+  catch (e) { msg(e.message, true); }
+});
+$("cl-file").addEventListener("change", async () => {
+  const f = $("cl-file").files && $("cl-file").files[0];
+  $("cl-file").value = "";
+  if (!f || !clEdit) return;
+  const c = clEdit.c, scope = clEdit.upload;
+  try {
+    const data = await shrinkImage(f);
+    const key = scope === "client" ? c.mac : c.vendor;
+    await api("PUT", `/tenants/${tenantId}/client-logos/${scope}/${encodeURIComponent(key)}`, { data });
+    msg(scope === "vendor" ? `Logo výrobce ${c.vendor} nahráno` : "Logo klienta nahráno");
+    clClose(); reloadClientViews();
+  } catch (e) { msg(e.message, true); }
+});
+// obrázek zmenšit na max. 128 px (PNG, nebo WebP když by byl PNG velký) – na server jde base64 bez hlavičky
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 5 * 1024 * 1024) return reject(new Error("obrázek je moc velký (max. 5 MB)"));
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 128 / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(img.width * k)); cv.height = Math.max(1, Math.round(img.height * k));
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      let out = cv.toDataURL("image/png");
+      if (out.length > 80000) out = cv.toDataURL("image/webp", 0.85);
+      resolve(out.split(",")[1]);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("soubor není obrázek")); };
+    img.src = url;
+  });
+}
+function reloadClientViews() {
+  if (!$("clients-wrap").hidden) loadClients();
+  if (!$("infra-wrap").hidden) loadInfra();
+}
+
+// statická IP a DHCP options klienta: najít jeho DHCP server a otevřít editor leasu na záložce Sítě
+async function clientDhcp(c) {
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients/${encodeURIComponent(c.mac)}/dhcp`); }
+  catch (e) { return msg(e.message, true); }
+  activateSiteTab("net");
+  if (typeof loadNetworks === "function") await loadNetworks();
+  await loadLeases(r.device_id, r.server);
+  if (!leaseCtx) return;
+  $("lease-q").value = c.mac;
+  leaseCtx.filter = "all";
+  leaseCtx.edit = leaseCtx.v.leases.some((x) => x.mac === c.mac) ? { mac: c.mac } : { mac: "", ip: leaseCtx.v.suggest, presetMac: c.mac };
+  renderLeases();
+  try { $("lease-wrap").scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_e) { /* jen posun */ }
 }
 
 // --- Wi-Fi lokality --------------------------------------------------------------------
@@ -2008,6 +2162,12 @@ async function loadInfra() {
 }
 $("infra-btn").addEventListener("click", loadInfra);
 $("infra-ext").addEventListener("change", () => { if (infraData) renderInfra(); });
+$("infra-clients").addEventListener("change", () => {
+  try { localStorage.setItem("mtc.infraClients", $("infra-clients").checked ? "1" : ""); } catch (_e) { /* jen pohodlí */ }
+  if (infraData) renderInfra();
+});
+try { $("infra-clients").checked = localStorage.getItem("mtc.infraClients") === "1"; } catch (_e) { /* jen pohodlí */ }
+const INFRA_CLIENTS_MAX = 10;  // na zařízení; zbytek jako „+N dalších“
 
 function miniPorts(ports) {
   const strip = el("div", null, "strip");
@@ -2037,6 +2197,24 @@ function renderInfra() {
     foot.append(el("span", (n.version || "").split(" ")[0]), el("span", n.poe_w ? `⚡ ${n.poe_w} W` : ""),
                 el("span", `CPU ${n.cpu != null ? n.cpu + " %" : "–"}`), el("span", `RAM ${n.mem != null ? n.mem + " %" : "–"}`));
     c.appendChild(foot);
+    // klienti zařízení s MAC (rozbalí se klikem na počet)
+    const cl = n.clients || [];
+    if (cl.length) {
+      const t = el("button", `👥 ${cl.length} ${cl.length === 1 ? "klient" : cl.length < 5 ? "klienti" : "klientů"}`, "linkbtn infra-ccount");
+      t.type = "button";
+      const ul = el("ul", null, "infra-clients"); ul.hidden = true;
+      for (const x of cl) {
+        const li = el("li", null, "clickable");
+        li.append(clientAvatar(x, "sm"), el("span", clientName(x), "nm"), el("span", x.mac, "mono muted"),
+                  el("span", x.ssid || x.port || "", "muted"));
+        li.title = [x.vendor, x.ip, x.vlan ? "VLAN " + x.vlan : "", x.note].filter(Boolean).join(" · ");
+        li.addEventListener("click", (ev) => { if (ev.stopPropagation) ev.stopPropagation(); openClient(x); });
+        withCtx(li, clientName(x), () => clientMenu(x));
+        ul.appendChild(li);
+      }
+      t.addEventListener("click", (ev) => { if (ev.stopPropagation) ev.stopPropagation(); ul.hidden = !ul.hidden; });
+      c.append(t, ul);
+    }
     c.addEventListener("click", () => openDetail(n.id));
     list.appendChild(c);
   }
@@ -2045,7 +2223,7 @@ function renderInfra() {
 
 function drawInfra() {
   const d = infraData, svg = $("infra-svg"); svg.textContent = "";
-  const NW = 250, NH = 66, GX = 76, LV = 180, WH = 56, TOP = 20, EW = 150, EH = 40;
+  const NW = 250, NH = 66, GX = 76, LV = 180, WH = 56, TOP = 20, EW = 172, EH = 40;
   const showExt = $("infra-ext").checked;
   const byId = {}, kids = {};
   for (const n of d.nodes) { byId[n.id] = n; kids[n.id] = []; }
@@ -2058,14 +2236,25 @@ function drawInfra() {
                             level: byId[e.parent].level + 1, parent: e.parent });
     });
   }
-  const all = [...d.nodes, ...Object.values(kids).flat().filter((x) => x.ext)];
+  if ($("infra-clients").checked) {
+    // klienti jako listy pod svým zařízením (port / SSID na spoji), nejvýš INFRA_CLIENTS_MAX na zařízení
+    for (const n of d.nodes) {
+      const cl = n.clients || [];
+      cl.slice(0, INFRA_CLIENTS_MAX).forEach((c, k) => kids[n.id].push({ id: `cl-${n.id}-${k}`, client: c, parent_port: c.port,
+        level: n.level + 1, parent: n.id }));
+      if (cl.length > INFRA_CLIENTS_MAX) kids[n.id].push({ id: `clm-${n.id}`, more: cl.length - INFRA_CLIENTS_MAX, dev: n,
+        level: n.level + 1, parent: n.id });
+    }
+  }
+  const leaf = (x) => x.ext || x.client || x.more;
+  const all = [...d.nodes, ...Object.values(kids).flat().filter(leaf)];
   for (const n of all) kids[n.id] = kids[n.id] || [];
   // rozložení: listy dostanou sloupce, rodič je uprostřed nad dětmi
   let slot = 0;
   const pos = {};
   const place = (n) => {
     const ch = kids[n.id];
-    if (!ch.length) { pos[n.id] = slot; slot += n.ext ? 0.7 : 1; return; }
+    if (!ch.length) { pos[n.id] = slot; slot += leaf(n) ? 0.7 : 1; return; }
     ch.forEach(place);
     pos[n.id] = (pos[ch[0].id] + pos[ch[ch.length - 1].id]) / 2;
   };
@@ -2114,10 +2303,35 @@ function drawInfra() {
     const ch = kids[n.id];
     ch.forEach((c, k) => {
       const bx = x + (k - (ch.length - 1) / 2) * 70, by = top + NH + 26;
-      links.appendChild(curve(bx, by + 14, cx(c), c.ext ? y(c) : y(c) - 40, c.ext ? "ext" : c.state === "offline" ? "down" : "up"));
-      nodes.appendChild(badge(bx, by, num(c.parent_port), "down"));
-      if (!c.ext) nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));
+      links.appendChild(curve(bx, by + 14, cx(c), leaf(c) ? y(c) : y(c) - 40, leaf(c) ? (c.client ? "client" : "ext") : c.state === "offline" ? "down" : "up"));
+      if (!c.more) nodes.appendChild(badge(bx, by, c.client && c.client.ssid ? "≋" : num(c.parent_port), "down"));
+      if (!leaf(c)) nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));
     });
+    if (n.client) {
+      // klient: avatar (logo / ikona / iniciály výrobce), jméno a MAC
+      const c = n.client, pill = g("client");
+      pill.appendChild(svgEl("title", {}, [clientName(c), c.mac, c.vendor, c.ip, c.ssid ? `${c.ssid} ${c.signal || ""}` : c.port].filter(Boolean).join("\n")));
+      pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH + 6, rx: 8 }));
+      if (c.logo) pill.appendChild(svgEl("image", { href: logoUrl(c.logo), x: x - EW / 2 + 6, y: top + 7, width: 32, height: 32, preserveAspectRatio: "xMidYMid meet" }));
+      else {
+        pill.appendChild(svgEl("circle", { cx: x - EW / 2 + 22, cy: top + 23, r: 15, class: "cav-c", style: `--h:${vendorHue(c.vendor_key || c.vendor)}` }));
+        pill.appendChild(svgEl("text", { x: x - EW / 2 + 22, y: top + 28, class: c.icon ? "cav-e" : "cav-t" },
+          c.icon && CLIENT_ICONS[c.icon] ? CLIENT_ICONS[c.icon] : vendorInitials(c.vendor)));
+      }
+      pill.appendChild(svgEl("text", { x: x - EW / 2 + 44, y: top + 20, class: "t1 l" }, shortName(clientName(c), 14)));
+      pill.appendChild(svgEl("text", { x: x - EW / 2 + 44, y: top + 36, class: "t2 l mono" }, c.mac));
+      pill.addEventListener("click", () => openClient(c));
+      nodes.appendChild(pill);
+      continue;
+    }
+    if (n.more) {
+      const pill = g("ext more");
+      pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH, rx: 8 }));
+      pill.appendChild(svgEl("text", { x, y: top + 25, class: "t1" }, `+ ${n.more} dalších klientů`));
+      pill.addEventListener("click", () => { activateSiteTab("clients"); $("clients-filter").value = n.dev.label || ""; loadClients(); });
+      nodes.appendChild(pill);
+      continue;
+    }
     if (n.ext) {
       const pill = g("ext");
       pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH, rx: 8 }));
@@ -2276,10 +2490,85 @@ function renderLeases() {
   }
   if (!v.oui) bn.appendChild(el("div", "Výrobce podle MAC: na serveru chybí balík ieee-data (apt install ieee-data).", "banner"));
   for (const p of v.pending) bn.appendChild(el("div", `Čeká na aplikaci (${p.status}): ${p.summary}`, "banner warn"));
+  drawLeaseNet();
   drawLeaseMap();
   segmented($("lease-filter"), LEASE_FILTERS, c.filter, (f) => { c.filter = f; renderLeases(); });
   drawLeaseRows();
 }
+
+// nastavení sítě DHCP pro všechny klienty: DNS, NTP, doména, globální DHCP options (/ip dhcp-server network)
+function drawLeaseNet() {
+  const c = leaseCtx, v = c.v, n = v.network;
+  const box = $("lease-net-body"); box.textContent = "";
+  $("lease-net").hidden = false;
+  if (!n) {
+    $("lease-net-sum").textContent = "– síť DHCP serveru nenalezena";
+    box.appendChild(el("p", `Pro podsíť ${v.subnet || "?"} na zařízení chybí /ip dhcp-server network – klienti nedostanou bránu ani DNS.`, "sev-warning"));
+    return;
+  }
+  $("lease-net-sum").textContent = `– DNS ${n.dns.join(", ") || "z routeru"}${n.options.length ? " · options " + n.options.join(", ") : ""}`;
+  const f = el("div", null, "pe-grid");
+  const field = (label, input, hint) => {
+    const l = el("label", null, "pe-field"); l.append(el("span", label), input);
+    if (hint) l.appendChild(el("small", hint, "muted"));
+    f.appendChild(l); return input;
+  };
+  const dns = field("DNS servery", el("input"), "prázdné = router sám (brána)"); dns.value = n.dns.join(", "); dns.placeholder = "např. 192.168.10.1, 1.1.1.1";
+  const ntp = field("NTP servery", el("input")); ntp.value = n.ntp.join(", "); ntp.placeholder = "volitelné";
+  const dom = field("Doména", el("input")); dom.value = n.domain; dom.placeholder = "např. firma.local";
+  const optBox = el("div", null, "pe-tags");
+  const checks = [];
+  for (const o of v.options) {
+    const l = el("label", null, "check"); const cb = el("input"); cb.type = "checkbox"; cb.value = o.name;
+    cb.checked = n.options.includes(o.name); checks.push(cb);
+    l.title = `kód ${o.code} = ${o.value}`; l.append(cb, document.createTextNode(` ${o.name} (${o.code})`)); optBox.appendChild(l);
+  }
+  if (!v.options.length) optBox.appendChild(el("span", "na zařízení zatím nejsou žádné – přidej novou níže", "muted"));
+  field("DHCP options pro všechny klienty", optBox, "konkrétnímu klientovi přidáš options v jeho rezervaci");
+  // nová option rovnou přiřazená síti
+  const nb = el("div", null, "inline newopt");
+  const preset = el("select");
+  const o0 = el("option", "+ nová option…"); o0.value = ""; preset.appendChild(o0);
+  for (const p of v.presets) { const o = el("option", `${p.code} – ${p.label}`); o.value = String(p.code); preset.appendChild(o); }
+  const oc = el("option", "vlastní kód"); oc.value = "custom"; preset.appendChild(oc);
+  const oName = el("input"); oName.placeholder = "jméno"; oName.size = 10;
+  const oCode = el("input"); oCode.type = "number"; oCode.min = 1; oCode.max = 254; oCode.placeholder = "kód"; oCode.size = 4;
+  const oType = el("select");
+  for (const [t, l] of [["ip", "IP"], ["text", "text"], ["hex", "hex"]]) { const o = el("option", l); o.value = t; oType.appendChild(o); }
+  const oVal = el("input"); oVal.placeholder = "hodnota"; oVal.size = 18;
+  for (const x of [oName, oCode, oType, oVal]) x.hidden = true;
+  preset.addEventListener("change", () => {
+    const p = v.presets.find((x) => String(x.code) === preset.value);
+    for (const x of [oName, oCode, oType, oVal]) x.hidden = !preset.value;
+    if (p) { oCode.value = p.code; oType.value = p.type; oName.value = `opt${p.code}`; }
+    else if (preset.value === "custom") { oCode.value = ""; oName.value = ""; }
+  });
+  nb.append(preset, oName, oCode, oType, oVal);
+  field("Přidat DHCP option", nb);
+  box.appendChild(f);
+  const res = el("div", null, "muted");
+  const save = el("button", "Uložit nastavení sítě" + (canManage() ? " a použít" : " jako plán"), "small"); save.type = "button";
+  save.disabled = !canOperate();
+  save.addEventListener("click", async () => {
+    const list = (s) => s.split(/[,\s]+/).filter(Boolean);
+    const desired = { dns: list(dns.value), ntp: list(ntp.value), domain: dom.value.trim(),
+      options: checks.filter((x) => x.checked).map((x) => x.value) };
+    if (preset.value && oVal.value.trim()) {
+      desired.new_options = [{ name: oName.value.trim(), code: Number(oCode.value), type: oType.value, value: oVal.value.trim() }];
+      desired.options.push(oName.value.trim());
+    }
+    try {
+      const out = await api("POST", `/tenants/${tenantId}/devices/${c.devId}/dhcp/${encodeURIComponent(c.server)}/network`,
+        { desired, apply: canManage() });
+      msg((out.command_id ? "Nastavení sítě odesláno – aplikuje se s automatickým návratem" : "Plán uložen ke schválení") +
+          (out.warnings && out.warnings.length ? " · " + out.warnings.join(" · ") : ""));
+      loadLeases(c.devId, c.server);
+    } catch (e) { res.textContent = e.message; res.className = "sev-error"; }
+  });
+  const bar = el("div", null, "pe-actions"); bar.appendChild(save);
+  box.append(bar, res);
+}
+
 
 function drawLeaseMap() {
   const v = leaseCtx.v, box = $("lease-map"); box.textContent = "";
@@ -2357,7 +2646,7 @@ function leaseEditRow(r) {
   const f = el("div", null, "pe-grid");
   const field = (label, input) => { const l = el("label", null, "pe-field"); l.append(el("span", label), input); f.appendChild(l); return input; };
   let mac = null;
-  if (!r) { mac = field("MAC adresa", el("input")); mac.placeholder = "AA:BB:CC:DD:EE:FF"; mac.size = 18; }
+  if (!r) { mac = field("MAC adresa", el("input")); mac.placeholder = "AA:BB:CC:DD:EE:FF"; mac.size = 18; mac.value = (c.edit && c.edit.presetMac) || ""; }
   const ipBox = el("span", null, "ipbox");
   const ip = el("input"); ip.size = 13; ip.value = (r ? (r.reserved_ip || r.ip) : c.edit.ip) || "";
   const sug = el("button", "volná mimo pool", "small secondary"); sug.type = "button";

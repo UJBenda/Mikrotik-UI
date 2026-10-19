@@ -173,6 +173,7 @@ def server_view(inv: dict, server: str, clients: dict[str, dict], notes: dict[st
                     for o in _rows(inv, "dhcp_options")],
         "presets": [{"code": c, "label": l, "type": t} for c, l, t in OPTION_PRESETS],
         "suggest": suggest_ip(net, ranges, used, gw_ip),
+        "network": network_view(inv, net),
         "map": None,
     }
     if net and net.prefixlen >= MAP_MIN_PREFIX:
@@ -256,6 +257,8 @@ def config_basis(inv: dict) -> str:
                      str(l.get("block-access") or "")) for l in _rows(inv, "dhcp_leases") if not _true(l.get("dynamic"))),
         "o": sorted((str(o.get("name")), str(o.get("code")), str(o.get("value"))) for o in _rows(inv, "dhcp_options")),
         "s": sorted(str(s.get("name")) for s in _rows(inv, "dhcp_servers")),
+        "n": sorted((str(n.get("address")), str(n.get("dns-server") or ""), str(n.get("ntp-server") or ""),
+                     str(n.get("domain") or ""), str(n.get("dhcp-option") or "")) for n in _rows(inv, "dhcp_networks")),
     }
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
@@ -409,3 +412,132 @@ def _fmt(v: Any) -> str:
     if isinstance(v, bool):
         return "ano" if v else "ne"
     return str(v) if v not in (None, "") else "–"
+
+
+# --- nastavení sítě DHCP (platí pro všechny klienty serveru) ------------------------------------------
+
+DOMAIN_RE = re.compile(r"^([A-Za-z0-9-]{1,63}\.)*[A-Za-z0-9-]{1,63}$")
+
+
+def find_network(inv: dict, net: ipaddress.IPv4Network | None) -> dict | None:
+    if net is None:
+        return None
+    for n in _rows(inv, "dhcp_networks"):
+        try:
+            if ipaddress.ip_network(str(n.get("address")), strict=False) == net:
+                return n
+        except ValueError:
+            continue
+    return None
+
+
+def network_view(inv: dict, net) -> dict | None:
+    n = find_network(inv, net)
+    if not n:
+        return None
+    return {"address": n.get("address"), "gateway": n.get("gateway") or "",
+            "dns": [x for x in str(n.get("dns-server") or "").split(",") if x],
+            "ntp": [x for x in str(n.get("ntp-server") or "").split(",") if x],
+            "domain": n.get("domain") or "", "options": _members(n.get("dhcp-option"))}
+
+
+def _ip_list(v: Any, label: str) -> list[str]:
+    items = v if isinstance(v, list) else [x for x in re.split(r"[,\s]+", str(v or "")) if x]
+    if len(items) > 4:
+        raise LeaseError(f"{label}: nejvýš 4 adresy")
+    out = []
+    for x in items:
+        try:
+            out.append(str(ipaddress.IPv4Address(str(x).strip())))
+        except ValueError:
+            raise LeaseError(f"{label}: neplatná IP {x!r}") from None
+    return out
+
+
+def network_plan(inv: dict, server: str, desired: dict) -> dict:
+    """Globální nastavení sítě DHCP serveru: DNS, NTP, doména a DHCP options pro všechny klienty
+    (/ip dhcp-server network). desired: dns, ntp, domain, options, new_options. Nic nemění."""
+    srv = find_server(inv, server)
+    addr, _ranges = server_network(inv, srv)
+    if not addr:
+        raise LeaseError("rozhraní DHCP serveru nemá IPv4 adresu")
+    n = find_network(inv, addr.network)
+    if not n:
+        raise LeaseError(f"pro síť {addr.network} není /ip dhcp-server network")
+    A = q(str(n.get("address")))
+    find = f"[find address={A}]"
+    apply: list[str] = []
+    revert: list[str] = []
+    changes: list[dict] = []
+    known_opts = {str(o.get("name")) for o in _rows(inv, "dhcp_options")}
+    for o in desired.get("new_options") or []:
+        name, code = str(o.get("name") or ""), o.get("code")
+        if not OPT_NAME_RE.match(name):
+            raise LeaseError("jméno DHCP option: písmena, číslice, _ . - (max. 40)")
+        if name in known_opts:
+            raise LeaseError(f"DHCP option {name} už existuje")
+        try:
+            code = int(code)
+        except (TypeError, ValueError):
+            raise LeaseError("kód DHCP option musí být číslo") from None
+        if not 1 <= code <= 254:
+            raise LeaseError("kód DHCP option 1–254")
+        val = option_value(str(o.get("type") or ""), str(o.get("value") or ""))
+        apply.append(f'/ip dhcp-server option add name={q(name)} code={code} value={q(val)} comment="mtc"')
+        revert.append(f'/ip dhcp-server option remove [find name={q(name)} comment="mtc"]')
+        changes.append({"field": "option", "before": None, "after": f"{name} ({code}) = {val}"})
+        known_opts.add(name)
+    sets, olds = [], []
+
+    def field(ros: str, new: str, old: str, label: str) -> None:
+        if new != old:
+            sets.append(f"{ros}={q(new)}")
+            olds.append(f"{ros}={q(old)}")
+            changes.append({"field": label, "before": old or None, "after": new or None})
+
+    if "dns" in desired:
+        field("dns-server", ",".join(_ip_list(desired.get("dns"), "DNS")), str(n.get("dns-server") or ""), "DNS")
+    if "ntp" in desired:
+        field("ntp-server", ",".join(_ip_list(desired.get("ntp"), "NTP")), str(n.get("ntp-server") or ""), "NTP")
+    if "domain" in desired:
+        d = str(desired.get("domain") or "").strip()
+        if d and (len(d) > 100 or not DOMAIN_RE.match(d)):
+            raise LeaseError("doména: např. firma.local")
+        field("domain", d, str(n.get("domain") or ""), "doména")
+    if "options" in desired:
+        opts = [str(o) for o in desired.get("options") or []]
+        if len(opts) > 20:
+            raise LeaseError("nejvýš 20 DHCP options")
+        for o in opts:
+            if o not in known_opts:
+                raise LeaseError(f"DHCP option {o} na zařízení není")
+        field("dhcp-option", ",".join(opts), str(n.get("dhcp-option") or ""), "DHCP options sítě")
+    if sets:
+        apply.append(f"/ip dhcp-server network set {find} " + " ".join(sets))
+        revert.append(f"/ip dhcp-server network set {find} " + " ".join(olds))
+    if not changes:
+        return {"changes": [], "apply": "", "revert": "", "warnings": [], "summary": "beze změny"}
+    desc = ", ".join(f"{c['field']} {_fmt(c['before'])} → {_fmt(c['after'])}" for c in changes)
+    return {"changes": changes, "apply": "\n".join(apply) + "\n", "revert": "\n".join(reversed(revert)) + "\n",
+            "warnings": ["klienti dostanou nové nastavení při obnovení leasu"],
+            "summary": f"DHCP síť {n.get('address')} ({srv.get('name')}): {desc}"}
+
+
+def server_for_client(invs: dict[str, dict], mac: str, ip: str | None) -> tuple[str, str] | None:
+    """(id zařízení, jméno DHCP serveru) pro klienta: podle leasu s jeho MAC, jinak podle podsítě jeho IP."""
+    m = norm_mac(mac)
+    for did, inv in invs.items():
+        for l in _rows(inv, "dhcp_leases"):
+            if norm_mac(l.get("active-mac-address") or l.get("mac-address")) == m and l.get("server"):
+                return did, str(l["server"])
+    try:
+        cip = ipaddress.IPv4Address(str(ip)) if ip else None
+    except ValueError:
+        cip = None
+    if cip:
+        for did, inv in invs.items():
+            for srv in _rows(inv, "dhcp_servers"):
+                addr, _r = server_network(inv, srv)
+                if addr and cip in addr.network and not _true(srv.get("disabled")):
+                    return did, str(srv.get("name"))
+    return None

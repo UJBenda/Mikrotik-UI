@@ -240,7 +240,8 @@ def test_site_clients_endpoint():
         assert r.json() == [{"mac": "11:11:11:11:11:11", "ip": "10.0.10.5", "hostname": "pc-ucetni", "device_id": gw,
                              "device": "gw", "port": "ether3", "vlan": "10", "wifi": None, "dhcp_status": None,
                              "candidates": 1, "first_seen": None, "last_seen": None, "online": True,
-                         "vendor": r.json()[0]["vendor"], "note": ""}]
+                         "vendor": r.json()[0]["vendor"], "note": "", "label": "", "icon": "", "logo": None,
+                         "vendor_key": r.json()[0]["vendor_key"]}]
     finally:
         drop_db(name)
 

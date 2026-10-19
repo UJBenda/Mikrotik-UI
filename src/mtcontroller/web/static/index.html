@@ -103,6 +103,7 @@
       <div id="infra-wrap" hidden class="pane">
         <div id="infra-warn"></div>
         <div class="infra-bar">
+          <label class="check"><input type="checkbox" id="infra-clients"> klienti (MAC)</label>
           <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
         </div>
         <div class="infra">
@@ -117,7 +118,8 @@
       <div id="clients-wrap" hidden class="pane">
         <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
         <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
-        <table><thead><tr><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th></tr></thead>
+        <span class="ctx-hint" title="Klik na klienta = popisek, ikona, logo; pravé tlačítko = další akce">klik = upravit · pravé tlačítko = akce</span>
+        <table class="clients-t"><thead><tr><th></th><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th><th></th></tr></thead>
         <tbody id="clients"></tbody></table>
       </div>
       <div id="wifi-wrap" hidden class="pane">
@@ -190,6 +192,10 @@
             <button id="lease-close" type="button" class="small secondary">Zavřít</button></div>
           <div id="lease-sum" class="lease-sum"></div>
           <div id="lease-banner"></div>
+          <details id="lease-net" class="fold lease-net" hidden>
+            <summary>Nastavení sítě pro všechny klienty <span id="lease-net-sum" class="muted"></span></summary>
+            <div id="lease-net-body"></div>
+          </details>
           <div id="lease-map" class="ipmap"></div>
           <div id="lease-map-legend" class="ports-legend"></div>
           <div class="traffic-bar">
@@ -504,6 +510,36 @@
         <button id="sd-cancel" type="button" class="secondary">Zrušit</button>
         <button id="sd-save" type="button">Uložit</button>
       </div>
+    </div>
+  </div>
+  <div id="cl-dlg" class="modal" hidden>
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="cl-title">
+      <div class="sd-head"><div class="cl-headl"><span id="cl-avatar"></span><div><h3 id="cl-title">Klient</h3>
+        <div id="cl-sub" class="muted small mono"></div></div></div>
+        <button id="cl-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <div class="sd-grid">
+        <label class="pe-field"><span>Popisek (místo hostname)</span><input id="cl-label" maxlength="64" placeholder="např. Tiskárna 2. patro"></label>
+        <label class="pe-field"><span>Poznámka</span><input id="cl-note" maxlength="500" placeholder="umístění, kontakt, inventární číslo…"></label>
+      </div>
+      <div class="sd-sec"><span class="sd-label">Ikona</span><div id="cl-icons" class="icon-grid"></div></div>
+      <div class="sd-sec"><span class="sd-label">Logo</span>
+        <p class="muted small">Vlastní obrázek (PNG, JPEG, WebP – zmenší se na 128 px). Logo výrobce platí pro všechny jeho klienty;
+          logo klienta má přednost.</p>
+        <div class="intent-acts" id="cl-logo-acts">
+          <button id="cl-logo-client" type="button" class="small secondary">Nahrát logo klienta…</button>
+          <button id="cl-logo-vendor" type="button" class="small secondary">Nahrát logo výrobce…</button>
+          <button id="cl-logo-del" type="button" class="small secondary">Odebrat logo</button>
+        </div>
+        <input id="cl-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+      <div class="sd-sec"><span class="sd-label">Adresa</span>
+        <p id="cl-addr" class="muted small"></p>
+        <button id="cl-dhcp" type="button" class="small secondary">Statická IP a DHCP options…</button>
+      </div>
+      <ul id="cl-warn"></ul>
+      <div class="modal-acts"><span class="grow"></span>
+        <button id="cl-cancel" type="button" class="secondary">Zrušit</button>
+        <button id="cl-save" type="button">Uložit</button></div>
     </div>
   </div>
   <div id="ctx" class="ctx" role="menu" hidden></div>

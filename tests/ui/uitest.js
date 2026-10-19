@@ -297,6 +297,52 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     byId["infra-ext"].checked = true;
     await byId["infra-ext"].fire("change");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    // infrastruktura: klienti s MAC u zařízení (seznam i strom)
+    {
+      const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      const card = byId["infra-list"].children[0];
+      if (!card.textContent.includes("👥 2 klienti") || !card.textContent.includes("B0:BE:76:12:34:56")) errors.push("infrastruktura: klienti v seznamu " + card.textContent.slice(0, 200));
+      const before = JSON.stringify(byId["infra-svg"].children[1].children.length);
+      byId["infra-clients"].checked = true;
+      await byId["infra-clients"].fire("change"); await tick();
+      const pill = find(byId["infra-svg"], (n) => n.attrs && n.attrs.class === "client");
+      if (!pill || !pill.textContent.includes("NAS kancelář") || !find(byId["infra-svg"], (n) => n.tagName === "IMAGE"))
+        errors.push("infrastruktura: klienti ve stromu " + before);
+      // klik na klienta → editor klienta
+      await pill.fire("click");
+      if (byId["cl-dlg"].hidden || byId["cl-label"].value !== "NAS kancelář") errors.push("infrastruktura: editor klienta");
+      byId["cl-dlg"].hidden = true;
+    }
+    // klienti: avatar, editor (popisek, ikona), statická IP a nastavení sítě DHCP
+    {
+      const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      await byId["clients-btn"].fire("click"); await tick();
+      const rows = byId["clients"].children;
+      if (rows.length !== 2 || rows[0].children[0].children[0].textContent !== "🗄️" || !rows[1].textContent.includes("TP-LINK"))
+        errors.push("klienti: avatar " + rows.length + " " + (rows[0] && rows[0].children[0].textContent));
+      if (!find(rows[1], (n) => n.tagName === "IMG")) errors.push("klienti: logo výrobce");
+      await rows[1].fire("click", { target: rows[1] });
+      if (byId["cl-dlg"].hidden || byId["cl-icons"].children.length < 20) errors.push("klienti: editor");
+      byId["cl-label"].value = "Tiskárna";
+      await byId["cl-icons"].children[5].fire("click");
+      let n0 = requests.length;
+      await byId["cl-save"].fire("click"); await tick();
+      if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.includes("/client-notes/B0%3ABE"))) errors.push("klienti: uložení " + requests.slice(n0));
+      n0 = requests.length;
+      await rows[1].fire("contextmenu", {});
+      const it = find(byId["ctx"], (n) => n.tagName === "BUTTON" && n.textContent.includes("Statická IP"));
+      if (!it) errors.push("klienti: menu");
+      else { await it.fire("click"); await tick(); }
+      if (!requests.slice(n0).some((r) => r.endsWith("/clients/B0%3ABE%3A76%3A12%3A34%3A56/dhcp"))) errors.push("klienti: hledání DHCP serveru " + requests.slice(n0));
+      if (byId["lease-wrap"].hidden || !byId["lease-rows"].children.some((r) => r.className === "lease-edit-row")) errors.push("klienti: editor rezervace");
+      if (byId["lease-net"].hidden || !byId["lease-net-sum"].textContent.includes("192.168.10.1")) errors.push("DHCP síť: přehled");
+      const save = find(byId["lease-net-body"], (n) => n.tagName === "BUTTON" && n.textContent.startsWith("Uložit nastavení sítě"));
+      n0 = requests.length;
+      if (save) { await save.fire("click"); await tick(); }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/dhcp/dhcp10/network"))) errors.push("DHCP síť: uložení");
+    }
     const topoEls = byId["topo"].children.length;
     const clientRows = byId["clients"].children.length;
     const wifiRows = byId["wifi-radios"].children.length;

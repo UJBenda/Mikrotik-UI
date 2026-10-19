@@ -70,13 +70,17 @@ def create_app(state: AppState) -> Starlette:
                 return json_response({"detail": "not found"}, 404)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Cache-Control"] = "no-store"
+        # výjimka jen pro obrázky (loga klientů): soukromá cache a vlastní přísnější CSP
+        if "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
-        if not is_checkin:
+        if not is_checkin and "content-security-policy" not in response.headers:
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
                 "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        elif not is_checkin:
+            response.headers["X-Frame-Options"] = "DENY"
         return response
 
     async def healthz(request: Request) -> Response:

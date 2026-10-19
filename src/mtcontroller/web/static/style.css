@@ -591,3 +591,46 @@ table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-
 .dr-hint { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .dr-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
 @media (max-width: 640px) { .dr-line { grid-template-columns: 1fr; gap: 4px; } .dr-acts { justify-content: flex-start; } }
+
+/* --- klienti: avatar (logo / ikona / iniciály výrobce) --- */
+.cav { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
+       flex: none; overflow: hidden; font-size: 11px; font-weight: 700; letter-spacing: .02em; vertical-align: middle;
+       background: var(--hover); border: 1px solid var(--line); }
+.cav img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.cav.ico { font-size: 15px; background: var(--card); }
+.cav.ini { --h: 210; background: hsl(var(--h) 70% 92%); color: hsl(var(--h) 55% 32%); border-color: transparent; }
+@media (prefers-color-scheme: dark) { .cav.ini { background: hsl(var(--h) 35% 24%); color: hsl(var(--h) 70% 80%); } }
+.cav.sm { width: 22px; height: 22px; font-size: 9.5px; } .cav.sm.ico { font-size: 12px; }
+.cav.big { width: 48px; height: 48px; font-size: 16px; } .cav.big.ico { font-size: 26px; }
+.cav-td { width: 36px; }
+.clients-t tr.clickable { cursor: pointer; }
+.clients-t tr.clickable:hover { background: var(--hover); }
+.cl-headl { display: flex; align-items: center; gap: 12px; }
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 6px; }
+.icon-pick { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font-size: 18px;
+             padding: 4px 0; font-weight: 400; }
+.icon-pick:first-child { font-size: 11px; }
+.icon-pick:hover { border-color: var(--accent); filter: none; }
+.icon-pick.on { border-color: var(--accent); background: var(--accent-weak); box-shadow: 0 0 0 1px var(--accent); }
+/* infrastruktura: klienti */
+.infra-ccount { font-size: 12px; margin-top: 4px; }
+.infra-clients { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.infra-clients li { display: grid; grid-template-columns: 22px 1fr auto; gap: 2px 6px; align-items: center; font-size: 12px;
+                    padding: 2px 4px; border-radius: 6px; }
+.infra-clients li:hover { background: var(--hover); }
+.infra-clients li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.infra-clients li .mono { grid-column: 2; font-size: 11px; }
+.infra-clients li > .muted:last-child { grid-column: 3; grid-row: 1 / span 2; font-size: 11px; }
+#infra-svg .client { cursor: pointer; }
+#infra-svg .client rect { fill: var(--card); stroke: var(--line); }
+#infra-svg .client:hover rect { stroke: var(--accent); }
+#infra-svg .client .l { text-anchor: start; }
+#infra-svg .client .t1 { font-size: 11.5px; font-weight: 600; } #infra-svg .client .t2 { font-size: 10px; fill: var(--muted); }
+#infra-svg .client .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#infra-svg .cav-c { --h: 210; fill: hsl(var(--h) 70% 92%); }
+#infra-svg .cav-t { text-anchor: middle; font-size: 10px; font-weight: 700; fill: hsl(210 40% 30%); }
+#infra-svg .cav-e { text-anchor: middle; font-size: 15px; }
+#infra-svg .link.client { stroke: var(--line); stroke-width: 1.2; }
+#infra-svg .more { cursor: pointer; } #infra-svg .more .t1 { fill: var(--accent); }
+.lease-net { margin: 8px 0; }
+.lease-net .pe-grid { margin-top: 8px; }

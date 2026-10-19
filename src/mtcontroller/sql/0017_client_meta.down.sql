@@ -1,0 +1,2 @@
+DROP TABLE client_logo;
+ALTER TABLE client_note ALTER COLUMN note DROP DEFAULT, DROP COLUMN icon, DROP COLUMN label;
