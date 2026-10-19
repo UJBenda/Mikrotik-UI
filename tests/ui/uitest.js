@@ -86,6 +86,12 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["ask"].hidden || byId["ask-input"].value !== "rozvaděč 2. patro") errors.push("přehled: úprava poznámky");
       else { byId["ask-input"].value = "nová"; byId["ask-ok"].onclick(); await pn; for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
       if (!requests.slice(n0).some((r) => r.startsWith("PATCH") && /\/devices\/[^/]+$/.test(r))) errors.push("přehled: uložení poznámky");
+      const n1 = requests.length;
+      const pr = r0.children[1].fire("dblclick", {});
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      if (byId["ask"].hidden || byId["ask-input"].value !== "gw" || byId["ask-input"].maxLength !== 63) errors.push("přehled: přejmenování " + byId["ask-input"].value);
+      else { byId["ask-input"].value = "GW-praha"; byId["ask-ok"].onclick(); await pr; for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
+      if (!requests.slice(n1).some((r) => r.startsWith("POST") && r.endsWith("/identity"))) errors.push("přehled: odeslání jména");
     }
     // levá navigace: sekce, odznaky, přepínání
     if (byId["nav"].children.length !== 7) errors.push("navigace: čekáno 7 sekcí, je " + byId["nav"].children.length);
@@ -287,6 +293,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
       // detail: poznámka v poli a uložení formuláře (PATCH, ne odeslání stránky)
       if (byId["d-edit-note"].value !== "rozvaděč 2. patro") errors.push("detail: poznámka v poli " + byId["d-edit-note"].value);
+      if (byId["d-edit-name"].value !== "gw") errors.push("detail: jméno v poli " + byId["d-edit-name"].value);
       const n0 = requests.length;
       byId["d-edit-note"].value = "jinde";
       await byId["d-edit"].fire("submit");

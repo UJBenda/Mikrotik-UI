@@ -732,6 +732,15 @@ K ověření v labu: že CAPsMAN v inventuře `/interface/wifi` ukazuje rozhran�
 a `configuration`, syntaxe `multi-passphrase` (verze RouterOS), chování `slaves-static` po restartu
 CAPu, FT s více hesly na ax (podle provozní zkušenosti funguje).
 
+### Jméno zařízení (identity)
+
+Jméno (`/system identity`) se zadává v controlleru: při schválení adopce (pošle se hned po
+provisioningu) nebo později v přehledu (dvojklik, pravé tlačítko) a v detailu. Jen ASCII
+`[A-Za-z0-9][A-Za-z0-9._-]{0,62}`, na lokalitě jedinečné. Příkaz `set_identity`; v DB se jméno
+změní až po potvrzení zařízením (do té doby `identity_pending`). Běží-li na zařízení CAPsMAN
+lokality, řízená AP nejdřív dostanou `caps-man-names` se starým i novým jménem (příkaz `cap_names`)
+a po přejmenování už jen nové – CAP se drží CAPsMANu podle jména, Wi-Fi tak nevypadne.
+
 ## Rychlé doručení změn
 
 Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem

@@ -302,7 +302,9 @@ async def adoption_tokens(request: Request, p: Principal, tid: str) -> Response:
 
 # --- zařízení ----------------------------------------------------------------------
 
-_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model, d.ros_version, d.role, d.state,
+_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model,
+                  (SELECT c.params->>'name' FROM device_command c WHERE c.device_id = d.id AND c.kind = 'set_identity'
+                    AND c.status IN ('queued', 'sent') ORDER BY c.id DESC LIMIT 1) AS identity_pending, d.ros_version, d.role, d.state,
                   host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
                   d.last_checkin_at, d.last_status, d.approved_at, d.adopted_at, d.created_at,
                   (SELECT i.data->>'latest-version' FROM device_inventory i
@@ -341,8 +343,25 @@ async def approve(request: Request, p: Principal, tid: str) -> Response:
     did = _uuid(request.path_params["device_id"])
     errors = await run_in_threadpool(
         services.approve_device, st.db, st.settings, st.box, st.providers, tid, did,
-        _uuid(data.get("site_id")), str(data.get("role", "unknown")), p.user_id, client_ip(request))
+        _uuid(data.get("site_id")), str(data.get("role", "unknown")), p.user_id, client_ip(request),
+        data.get("identity") or None)
     return json_response({"ok": True, "concentrator_errors": errors})
+
+
+@endpoint(OPERATE)
+async def device_identity(request: Request, p: Principal, tid: str) -> Response:
+    """Přejmenování zařízení v RouterOS ({"name": "..."})."""
+    st = get_state(request)
+    data = await _json(request)
+    did = _uuid(request.path_params["device_id"])
+    out = await run_in_threadpool(services.set_identity, st.db, tid, did, data.get("name"), p.user_id,
+                                  client_ip(request))
+    if not out.get("unchanged"):
+        # AP nejdřív (dostanou staré i nové jméno CAPsMANu), samotné zařízení o chvilku později
+        for ap in out.get("aps") or []:
+            services.kick(st.db, st.settings, st.box, tid, ap)
+        services.kick(st.db, st.settings, st.box, tid, did, delay=8.0 if out.get("aps") else 0.0)
+    return json_response(out)
 
 
 @endpoint(OPERATE)
@@ -426,6 +445,7 @@ def routes() -> list[Route]:
         Route(t + "/devices/{device_id}/approve", approve, methods=["POST"]),
         Route(t + "/devices/{device_id}/forget", forget, methods=["POST"]),
         Route(t + "/devices/{device_id}/commands", command, methods=["POST"]),
+        Route(t + "/devices/{device_id}/identity", device_identity, methods=["POST"]),
         Route(t + "/devices/{device_id}/commands", device_commands, methods=["GET"]),
         Route(t + "/audit", audit_log, methods=["GET"]),
     ]

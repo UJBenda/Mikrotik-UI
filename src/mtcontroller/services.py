@@ -328,7 +328,7 @@ def sstp_username(serial: str) -> str:
 
 def approve_device(db: Database, settings: Settings, box: SecretBox, providers: list[TunnelProvider],
                    tenant_id: Any, device_id: Any, site_id: Any, role: str = "unknown",
-                   user_id: Any = None, ip: str | None = None) -> list[str]:
+                   user_id: Any = None, ip: str | None = None, identity: str | None = None) -> list[str]:
     """Přidělí tunelovou IP, vygeneruje hesla, naplánuje provisioning a založí
     účty na koncentrátorech. Vrací seznam chyb koncentrátorů (worker je později
     dorovná), schválení samotné tím neselže."""
@@ -336,9 +336,10 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
         raise ServiceError("v konfiguraci není žádný koncentrátor (tunnel.concentrators)")
     if role not in DEVICE_ROLES:
         raise ServiceError("neplatná role zařízení")
+    identity = check_identity(identity) if identity not in (None, "") else None
     with tenant_scope(db, tenant_id) as tx:
         dev = tx.fetchone(
-            "SELECT id, serial, state, host(tunnel_ip) AS tunnel_ip FROM device WHERE id = %(d)s FOR UPDATE",
+            "SELECT id, serial, state, identity, host(tunnel_ip) AS tunnel_ip FROM device WHERE id = %(d)s FOR UPDATE",
             {"d": str(device_id)},
         )
         if not dev:
@@ -364,8 +365,12 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
              "d": str(device_id)},
         )
         enqueue(tx, tenant_id, device_id, "provision", {}, user_id)
+        if identity and identity != dev["identity"]:
+            _identity_unique(tx, site_id, device_id, identity)
+            # jméno až po provisioningu (fronta jde po pořadí)
+            enqueue(tx, tenant_id, device_id, "set_identity", {"name": identity, "old": dev["identity"]}, user_id)
         audit(tx, "device.approve", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
-              after={"site_id": str(site_id), "role": role, "tunnel_ip": tunnel_ip}, ip=ip)
+              after={"site_id": str(site_id), "role": role, "tunnel_ip": tunnel_ip, "identity": identity}, ip=ip)
         serial = dev["serial"]
         comment = f"{tenant_id}/{site_id}"
     account = TunnelAccount(sstp_username(serial), sstp_pw, tunnel_ip, comment)
@@ -454,10 +459,95 @@ def forget_device(db: Database, tenant_id: Any, device_id: Any, user_id: Any = N
     return {"serial": dev["serial"], "previous_state": dev["state"]}
 
 
+# --- identita (jméno zařízení v RouterOS) ------------------------------------------
+
+IDENTITY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
+
+
+def check_identity(name: Any) -> str:
+    """Jméno zařízení: ASCII písmena, číslice, tečka, pomlčka, podtržítko (skripty jsou čisté ASCII,
+    jméno se používá v CAPsMANu a v DNS/LLDP), 1–63 znaků."""
+    name = str(name or "").strip()
+    if not IDENTITY_RE.fullmatch(name):
+        raise ServiceError("jméno zařízení: 1–63 znaků, písmena bez diakritiky, číslice, . - _ (bez mezer)")
+    return name
+
+
+def identity_body(name: Any) -> str:
+    return f"/system identity set name={routeros.q(check_identity(name))}\n"
+
+
+def cap_names_body(names: list) -> str:
+    """CAP se drží CAPsMANu podle jména – při přejmenování hostitele dočasně obě jména."""
+    names = [check_identity(n) for n in names]
+    if not names:
+        raise ServiceError("cap_names bez jmen")
+    return f"/interface wifi cap set caps-man-names={routeros.q(','.join(names))}\n"
+
+
+def _identity_unique(tx: Tx, site_id: Any, device_id: Any, name: str) -> None:
+    if tx.fetchone("""SELECT 1 FROM device WHERE site_id = %(s)s AND id <> %(d)s AND state <> 'removed'
+                      AND lower(identity) = lower(%(n)s)""", {"s": str(site_id), "d": str(device_id), "n": name}):
+        raise ServiceError(f"jméno {name} už na lokalitě má jiné zařízení")
+
+
+def _capsman_aps(tx: Tx, device_id: Any) -> list[str]:
+    """Řízená AP lokality, jejichž CAPsMAN běží na tomto zařízení (CAP se drží jeho jména)."""
+    r = tx.fetchone("""SELECT p.site_id FROM site_policy p JOIN device d ON d.site_id = p.site_id
+                       WHERE d.id = %(d)s AND p.module = 'intent'
+                         AND p.data->'wifi'->>'capsman_device_id' = %(ds)s::text""",
+                    {"d": str(device_id), "ds": str(device_id)})
+    if not r:
+        return []
+    return [str(x["id"]) for x in tx.fetchall(
+        """SELECT id FROM device WHERE site_id = %(s)s AND role = 'ap' AND managed_at IS NOT NULL
+             AND state IN ('adopted', 'offline') AND id <> %(d)s""", {"s": str(r["site_id"]), "d": str(device_id)})]
+
+
+def set_identity(db: Database, tenant_id: Any, device_id: Any, name: Any, user_id: Any = None,
+                 ip: str | None = None) -> dict:
+    """Přejmenování zařízení v RouterOS (/system identity). V DB se jméno změní až po potvrzení
+    zařízením. Běží-li na něm CAPsMAN, AP nejdřív dostanou staré i nové jméno (bez výpadku Wi-Fi)
+    a po přejmenování už jen nové."""
+    name = check_identity(name)
+    with tenant_scope(db, tenant_id) as tx:
+        dev = tx.fetchone("SELECT state, identity, site_id FROM device WHERE id = %(d)s", {"d": str(device_id)})
+        if not dev:
+            raise NotFound("zařízení neexistuje")
+        if dev["state"] not in ("provisioning", "adopted", "offline"):
+            raise ServiceError(f"jméno nelze poslat zařízení ve stavu {dev['state']}")
+        if dev["site_id"]:
+            _identity_unique(tx, dev["site_id"], device_id, name)
+        if name == dev["identity"]:
+            return {"name": name, "unchanged": True}
+        # starší čekající přejmenování nahradit
+        tx.execute("""UPDATE device_command SET status = 'cancelled', finished_at = now() WHERE device_id = %(d)s
+                      AND kind = 'set_identity' AND status = 'queued'""", {"d": str(device_id)})
+        aps = _capsman_aps(tx, device_id)
+        for ap in aps:
+            enqueue(tx, tenant_id, ap, "cap_names", {"names": [n for n in (dev["identity"], name) if n]}, user_id)
+        cid = enqueue(tx, tenant_id, device_id, "set_identity", {"name": name, "old": dev["identity"]}, user_id)
+        audit(tx, "device.identity", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+              before={"identity": dev["identity"]}, after={"identity": name, "command_id": cid, "caps": len(aps)}, ip=ip)
+    return {"name": name, "command_id": cid, "aps": aps}
+
+
+def _identity_done(tx: Tx, tenant_id: Any, device_id: Any, command_id: int) -> None:
+    """Zařízení se přejmenovalo: jméno do DB, AP s CAPsMANem na něm už jen na nové jméno."""
+    c = tx.fetchone("SELECT params FROM device_command WHERE id = %(c)s", {"c": command_id})
+    name = ((c or {}).get("params") or {}).get("name")
+    if not name:
+        return
+    tx.execute("UPDATE device SET identity = %(n)s, inventory_at = NULL WHERE id = %(d)s",
+               {"n": name, "d": str(device_id)})
+    for ap in _capsman_aps(tx, device_id):
+        enqueue(tx, tenant_id, ap, "cap_names", {"names": [name]})
+
+
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
-                 "confirm_plan", "poe_cycle", "wifi_package"}
+                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names"}
 USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package"}
 
 
@@ -610,6 +700,10 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         inv = inventory.load(tx, dev["id"], ["packages", "resource", "wifi", "wireless", "wifi_radios"])
         return routeros.wrap_command(ack_url, key, packages.switch_body(inv, opts.check_certificate), opts,
                                      tail=packages.SWITCH_TAIL)
+    if kind == "set_identity":
+        return routeros.wrap_command(ack_url, key, identity_body(cmd["params"].get("name")), opts)
+    if kind == "cap_names":
+        return routeros.wrap_command(ack_url, key, cap_names_body(cmd["params"].get("names") or []), opts)
     if kind == "poe_cycle":
         from . import inventory, portcfg
 
@@ -793,6 +887,8 @@ def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | 
             finish_plan(tx, command_id, status == "done")
             # konfigurace se změnila – inventuru načíst co nejdřív znovu
             tx.execute("UPDATE device SET inventory_at = NULL WHERE id = %(d)s", {"d": str(device_ref["id"])})
+        if row["kind"] == "set_identity" and status == "done":
+            _identity_done(tx, tenant_id, device_ref["id"], command_id)
         if row["kind"] == "deprovision" and status == "done":
             tx.execute(
                 """UPDATE device SET state = 'removed', checkin_key_hash = NULL, tunnel_ip = NULL,

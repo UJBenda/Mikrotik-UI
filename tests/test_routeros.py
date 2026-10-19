@@ -227,3 +227,18 @@ def test_wifi_vlan_scripts():
         assert _balanced(s), s
         s.encode("ascii")
         assert _balanced(wificfg.cap_vlan_source(table))
+
+
+def test_identity_scripts():
+    """Přejmenování zařízení a jména CAPsMANu na AP – ASCII, vyvážené, bez vložení příkazu."""
+    import pytest
+
+    from mtcontroller import services
+
+    for body in (services.identity_body("SW-sklad_1.patro"), services.cap_names_body(["SW-core", "SW-hlavni"])):
+        s = routeros.wrap_command("https://c.example/api/checkin/ack?id=12", "KEY", body, OPTS)
+        assert _balanced(s), s
+        s.encode("ascii")
+    for bad in ('x"; /system reset', "Sklad přízemí", "a b", "", "-x", "x" * 64):
+        with pytest.raises(services.ServiceError):
+            services.identity_body(bad)

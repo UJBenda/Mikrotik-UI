@@ -59,7 +59,10 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
                 """SELECT d.id, d.serial, d.identity, d.model, d.ros_version, d.role, d.state, d.note,
                           host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
                           d.last_checkin_at, d.last_status, d.adopted_at, d.inventory_at, d.inventory_error,
-                          d.backup_at, d.managed_at
+                          d.backup_at, d.managed_at,
+                          (SELECT c.params->>'name' FROM device_command c WHERE c.device_id = d.id
+                            AND c.kind = 'set_identity' AND c.status IN ('queued', 'sent')
+                            ORDER BY c.id DESC LIMIT 1) AS identity_pending
                    FROM device d LEFT JOIN site s ON s.id = d.site_id WHERE d.id = %(d)s""", {"d": did})
             if not d:
                 raise NotFound("zařízení neexistuje")

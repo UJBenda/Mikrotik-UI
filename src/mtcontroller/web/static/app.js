@@ -351,7 +351,15 @@ async function loadDevices() {
     // identita z RouterOS a pod ní sériové číslo (identita může chybět u čekajících)
     const who = el("td", null, "dev-who");
     who.appendChild(el("b", d.identity || d.serial));
+    if (d.identity_pending && d.identity_pending !== d.identity) {
+      const pend = el("span", ` → ${d.identity_pending}`, "id-pending"); pend.title = "nové jméno čeká na potvrzení zařízením";
+      who.appendChild(pend);
+    }
     if (d.identity) who.appendChild(el("div", d.serial, "muted small mono"));
+    if (d.state !== "pending" && d.state !== "removed") {
+      who.title = "Dvojklik = přejmenovat";
+      who.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); renameDevice(d); });
+    }
     tr.appendChild(who);
     const nt = el("td", d.note || "", "dev-note" + (d.note ? "" : " muted"));
     if (d.note) nt.title = d.note;
@@ -420,6 +428,7 @@ function deviceMenu(d) {
     { label: "Otevřít detail", key: "Enter", act: () => openDetail(d.id) },
     d.update_available && d.state === "adopted" ? { label: `Aktualizovat → ${d.latest_version}`, act: () => upgradeDevice(d) } : null,
     { sep: true },
+    { label: "Přejmenovat…", disabled: !canOperate() || d.state === "removed", act: () => renameDevice(d) },
     { label: d.note ? "Upravit poznámku…" : "Přidat poznámku…", disabled: !canOperate(), act: () => editNote(d) },
     { sep: true },
     { label: "Kopírovat sériové číslo", act: () => copyText(d.serial, "Sériové číslo") },
@@ -431,6 +440,21 @@ function deviceMenu(d) {
     { label: "Odebrat", danger: true, disabled: !live, act: () => sendCommand(d, "deprovision", "Odebrat") },
     live ? { label: "Zapomenout", danger: true, act: () => forgetDevice(d) } : null,
   ];
+}
+
+// přejmenování v RouterOS (/system identity); v controlleru se jméno změní po potvrzení zařízením
+async function renameDevice(d, name) {
+  if (name === undefined) {
+    name = await askText(`Nové jméno pro ${d.identity || d.serial} (pošle se do RouterOS):`, d.identity_pending || d.identity || "", "Přejmenovat", 63);
+    if (name === null) return false;
+  }
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/identity`, { name });
+    if (r.unchanged) { msg("Jméno je stejné"); return true; }
+    msg(`Přejmenování na ${r.name} posláno` + ((r.aps || []).length ? ` – ${r.aps.length} AP dostane nové jméno CAPsMANu` : ""));
+    loadDevices(); watchDevice(d.id, r.name);
+    return true;
+  } catch (e) { msg(e.message, true); return false; }
 }
 
 async function editNote(d) {
@@ -459,17 +483,22 @@ function approveControls(d) {
   if (d.site_id) site.value = d.site_id;
   const role = el("select");
   for (const r of ["unknown", "gateway", "switch", "ap", "ptp"]) { const o = el("option", r); o.value = r; role.appendChild(o); }
+  // jméno zařízení: pošle se hned po provisioningu (prázdné = ponechat to z RouterOS)
+  const name = el("input", null, "id-input"); name.maxLength = 63; name.size = 14;
+  name.placeholder = d.identity ? `jméno (${d.identity})` : "jméno, např. SW-sklad";
+  name.title = "Jméno zařízení (/system identity) – nastaví se po schválení";
   const b = el("button", "Schválit", "small");
   b.onclick = async () => {
-    if (!(await ask(`Schválit zařízení ${d.serial} (${d.model})?`))) return;
+    const nm = name.value.trim();
+    if (!(await ask(`Schválit zařízení ${d.serial} (${d.model})${nm ? ` jako ${nm}` : ""}?`))) return;
     try {
-      const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/approve`, { site_id: site.value, role: role.value });
+      const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/approve`, { site_id: site.value, role: role.value, identity: nm || null });
       if (r.concentrator_errors.length) msg("Schváleno, ale koncentrátor: " + r.concentrator_errors.join("; "), true);
       else msg("Schváleno – provisioning proběhne při dalším check-inu");
       loadDevices();
     } catch (e) { msg(e.message, true); }
   };
-  wrap.append(site, " ", role, " ", b);
+  wrap.append(name, " ", site, " ", role, " ", b);
   return wrap;
 }
 
@@ -1673,6 +1702,9 @@ $("d-edit").addEventListener("submit", async (ev) => {
   try {
     await api("PATCH", `/tenants/${tenantId}/devices/${detailId}`,
               { site_id: $("d-edit-site").value, role: $("d-edit-role").value, note: $("d-edit-note").value });
+    const dev = (devicesCache || []).find((x) => x.id === detailId) || { id: detailId };
+    const nm = $("d-edit-name").value.trim();
+    if (nm && nm !== (dev.identity_pending || dev.identity)) await renameDevice(dev, nm);
     msg("Uloženo");
     loadDevices();
     openDetail(detailId);
@@ -2423,6 +2455,10 @@ async function openDetail(id) {
   for (const r of ["unknown", "gateway", "switch", "ap", "ptp"]) { const o = el("option", r); o.value = r; er.appendChild(o); }
   er.value = dev.role || "unknown";
   $("d-edit-note").value = dev.note || "";
+  $("d-edit-name").value = dev.identity_pending || dev.identity || "";
+  $("d-edit-name").placeholder = dev.serial;
+  $("d-edit-name").title = dev.identity_pending && dev.identity_pending !== dev.identity
+    ? `Nové jméno ${dev.identity_pending} čeká na potvrzení zařízením` : "Jméno v RouterOS (/system identity)";
   const sec = $("d-security"); sec.textContent = "";
   if (!d.security) sec.appendChild(el("li", "Zatím bez inventury", "muted"));
   else if (!d.security.length) sec.appendChild(el("li", "Bez nálezů ✓", "muted"));

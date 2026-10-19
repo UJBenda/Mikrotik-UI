@@ -567,3 +567,5 @@ table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-
 .dev-who b { font-weight: 600; }
 .dev-note { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.id-pending { color: var(--warn); font-weight: 600; font-size: 12px; }
+.dev-who { cursor: default; }
