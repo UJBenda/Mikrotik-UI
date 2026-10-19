@@ -111,6 +111,7 @@ def test_ap_role_model():
     assert m["blockers"] == [] and m["role"] == "ap" and m["cap"] == {"manager": "SW-core"}
     body = switchcfg.config_body(m)
     assert 'wifi cap set enabled=yes discovery-interfaces=bridge caps-man-names="SW-core" lock-to-caps-man=yes' in body
+    assert "configuration.manager=capsman datapath.bridge=bridge disabled=no" in body
     assert any("bez CAPsMAN" in b or "CAPsMAN" in b for b in switchcfg.build(AP_INV, INTENT, {}, role="ap")["blockers"])
     assert any("wireless" in b for b in switchcfg.build(dict(INV, wireless=[{"name": "wlan1"}]), INTENT, {}, role="ap",
                                                        cap_manager="X")["blockers"])
@@ -125,6 +126,11 @@ def test_reconcile_cap():
     assert r["changes"] == ["CAP → CAPsMAN SW-core"] and r["additive"] is False
     assert 'caps-man-names="SW-core"' in r["apply"] and "enabled=no" in r["revert"]
     inv["wifi_cap"] = {"enabled": "true", "discovery-interfaces": "bridge", "caps-man-names": "SW-core", "lock-to-caps-man": "true"}
+    # rádia po resetu řídí „local“ → CAPsMAN by je nepřevzal
+    assert switchcfg.reconcile(inv, switchcfg.build(inv, INTENT, {}, role="ap", cap_manager="SW-core"))["changes"] == [
+        "CAP → CAPsMAN SW-core"]
+    for w in inv["wifi"]:
+        w["configuration.manager"] = "capsman"
     assert switchcfg.reconcile(inv, switchcfg.build(inv, INTENT, {}, role="ap", cap_manager="SW-core"))["changes"] == []
     r = switchcfg.reconcile(inv, switchcfg.build(inv, INTENT, {}, role="switch"))
     assert r["changes"] == ["CAP vypnout (role switch)"]

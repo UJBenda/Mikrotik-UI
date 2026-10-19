@@ -212,7 +212,20 @@ def fill_secrets(script: str, psk_for) -> str:
 def cap_body(manager_identity: str) -> str:
     """Nastavení CAP na řízeném AP: hledá CAPsMAN na bridgi (management) a drží se jen našeho."""
     return (f"/interface wifi cap set enabled=yes discovery-interfaces=bridge caps-man-names={q(manager_identity)} "
-            "lock-to-caps-man=yes slaves-static=no\n")
+            "lock-to-caps-man=yes slaves-static=no\n"
+            # fyzická rádia musí řídit CAPsMAN (po resetu bez defconf jsou „local“ a výchozí konfigurace je vypíná)
+            ':do { /interface wifi set [find where default-name~"^wifi" and !master-interface] '
+            "configuration.manager=capsman datapath.bridge=bridge disabled=no } on-error={}\n")
+
+
+def radios_need_capsman(inv: dict) -> bool:
+    """Fyzické rádio, které neřídí CAPsMAN (manager local) nebo je vypnuté."""
+    for w in _rows(inv, "wifi"):
+        if w.get("master-interface") or _true(w.get("dynamic")) or not str(w.get("default-name") or "").startswith("wifi"):
+            continue
+        if str(w.get("configuration.manager") or "local") not in ("capsman", "capsman-or-local") or _true(w.get("disabled")):
+            return True
+    return False
 
 
 def basis(inv: dict) -> str:

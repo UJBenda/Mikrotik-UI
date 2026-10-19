@@ -678,9 +678,10 @@ def reconcile(inv: dict, model: dict) -> dict:
         want = model.get("cap")
         on = _true(capcur.get("enabled"))
         cur_names = str(capcur.get("caps-man-names") or "")
+        from .wificfg import cap_body, radios_need_capsman
+
         if want and (not on or cur_names != want["manager"] or str(capcur.get("discovery-interfaces") or "") != BRIDGE
-                     or not _true(capcur.get("lock-to-caps-man"))):
-            from .wificfg import cap_body
+                     or not _true(capcur.get("lock-to-caps-man")) or radios_need_capsman(inv)):
 
             apply.append(cap_body(want["manager"]).rstrip())
             revert.append(f"/interface wifi cap set enabled={'yes' if on else 'no'} caps-man-names={q(cur_names)} "
