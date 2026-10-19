@@ -206,8 +206,12 @@ def from_observed(observed: list[dict]) -> dict:
 
 COUNTRY_RE = re.compile(r"^[A-Za-z][A-Za-z .'-]{1,39}$")
 SSID_BANDS = ("2.4", "5", "2.4,5")
-MAX_SSIDS = 8          # na lokalitě; na jedno rádio nejvýš 4 (beacony každého SSID zabírají vysílací čas)
-MAX_SSIDS_PER_BAND = 4
+MAX_SSIDS = 16         # na lokalitě (rozdělené do skupin AP)
+MAX_SSIDS_PER_BAND = 4  # doporučení na rádio (beacony každého SSID zabírají vysílací čas) – nad tím varování
+HARD_SSIDS_PER_RADIO = 8  # víc virtuálních AP rádia MikroTik spolehlivě neutáhnou
+MAX_GROUPS = 32
+MAX_PPSK = 1000        # na SSID (RouterOS: 10000 hesel celkem na zařízení)
+GROUP_ID_RE = re.compile(r"^[a-z0-9-]{1,24}$")
 
 
 def validate_wifi(raw: dict) -> dict:
@@ -228,11 +232,34 @@ def validate_wifi(raw: dict) -> dict:
         width = 0
     if width not in (20, 40, 80):
         raise IntentError("Wi-Fi: max. šířka 20, 40 nebo 80 MHz")
-    return {"capsman_device_id": host, "country": country, "dfs": bool(raw.get("dfs", True)), "max_width": width}
+    groups = []
+    seen: set[str] = set()
+    raw_groups = raw.get("groups") or []
+    if not isinstance(raw_groups, list) or len(raw_groups) > MAX_GROUPS:
+        raise IntentError(f"Wi-Fi: nejvýš {MAX_GROUPS} skupin AP")
+    for g in raw_groups:
+        if not isinstance(g, dict):
+            raise IntentError("Wi-Fi: skupina AP musí být objekt")
+        name = str(g.get("name") or "").strip()
+        if not 1 <= len(name) <= 40 or any(ord(c) < 32 for c in name):
+            raise IntentError("Wi-Fi: jméno skupiny AP 1–40 znaků")
+        gid = str(g.get("id") or "")
+        if not GROUP_ID_RE.match(gid):
+            import secrets
+
+            gid = "g-" + secrets.token_hex(4)
+        if gid in seen or name.lower() in {x["name"].lower() for x in groups}:
+            raise IntentError(f"Wi-Fi: skupina {name} je dvakrát")
+        seen.add(gid)
+        groups.append({"id": gid, "name": name})
+    return {"capsman_device_id": host, "country": country, "dfs": bool(raw.get("dfs", True)), "max_width": width,
+            "groups": groups}
 
 
-def validate_ssid(raw: dict, vids: set[int], need_psk: bool) -> dict:
-    """SSID z UI. Heslo (psk) je povinné u nového SSID; u úpravy prázdné = beze změny."""
+def validate_ssid(raw: dict, vids: set[int], need_psk: bool, group_ids: set[str] | None = None) -> dict:
+    """SSID z UI. Heslo (psk) je povinné u nového SSID; u úpravy prázdné = beze změny.
+    groups = skupiny AP, kde se vysílá ([] = všechna AP); ppsk = více hesel s VLAN
+    (None = beze změny, [] = vypnout; prázdné heslo položky = ponechat uložené podle jména)."""
     if not isinstance(raw, dict):
         raise IntentError("SSID musí být objekt")
     ssid = str(raw.get("ssid") or "")
@@ -253,5 +280,41 @@ def validate_ssid(raw: dict, vids: set[int], need_psk: bool) -> dict:
         psk = str(psk)
         if not 8 <= len(psk) <= 63 or not re.fullmatch(r"[\x20-\x7e]+", psk):
             raise IntentError(f"SSID {ssid}: heslo 8–63 znaků bez diakritiky")
+    groups = raw.get("groups") or []
+    if not isinstance(groups, list) or any(not isinstance(g, str) for g in groups):
+        raise IntentError(f"SSID {ssid}: neplatné skupiny AP")
+    groups = sorted(set(groups))
+    if group_ids is not None and set(groups) - group_ids:
+        raise IntentError(f"SSID {ssid}: neznámá skupina AP")
+    ppsk = raw.get("ppsk")
+    if ppsk is not None:
+        if not isinstance(ppsk, list) or len(ppsk) > MAX_PPSK:
+            raise IntentError(f"SSID {ssid}: nejvýš {MAX_PPSK} hesel")
+        norm, names, keys = [], set(), set()
+        for e in ppsk:
+            if not isinstance(e, dict):
+                raise IntentError(f"SSID {ssid}: neplatná položka hesla")
+            nm = str(e.get("name") or "").strip()
+            if not 1 <= len(nm) <= 40 or not re.fullmatch(r"[\x20-\x7e]+", nm):
+                raise IntentError(f"SSID {ssid}: jméno hesla 1–40 znaků bez diakritiky")
+            if nm.lower() in names:
+                raise IntentError(f"SSID {ssid}: heslo {nm} je dvakrát")
+            names.add(nm.lower())
+            v = _vid(e.get("vlan_id"), f"SSID {ssid} heslo {nm}")
+            if v not in vids:
+                raise IntentError(f"SSID {ssid} heslo {nm}: VLAN {v} není v sítích lokality")
+            pk = e.get("psk")
+            if pk not in (None, ""):
+                pk = str(pk)
+                if not 8 <= len(pk) <= 63 or not re.fullmatch(r"[\x20-\x7e]+", pk):
+                    raise IntentError(f"SSID {ssid} heslo {nm}: 8–63 znaků bez diakritiky")
+                if pk in keys or pk == psk:
+                    raise IntentError(f"SSID {ssid}: dvě stejná hesla – klient by nešel přiřadit do VLAN")
+                keys.add(pk)
+            else:
+                pk = None
+            norm.append({"name": nm, "vlan_id": v, "psk": pk})
+        ppsk = norm
     return {"ssid": ssid, "vlan_id": vid, "bands": bands, "isolation": bool(raw.get("isolation", False)),
-            "ft": bool(raw.get("ft", True)), "enabled": bool(raw.get("enabled", True)), "psk": psk}
+            "ft": bool(raw.get("ft", True)), "enabled": bool(raw.get("enabled", True)), "psk": psk,
+            "groups": groups, "ppsk": ppsk}

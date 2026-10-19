@@ -36,6 +36,10 @@ def basis_for(module: str, inv: dict) -> str:
         from .wificfg import basis
 
         return basis(inv)
+    if module == "wifitable":
+        from .wificfg import table_basis
+
+        return table_basis(inv)
     if module == "ports":
         return portcfg.config_basis(inv)
     if module == "dhcp_snooping":
@@ -212,7 +216,7 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
                 raise ServiceError("zařízení už je řízené")
             if p["state"] != "adopted":
                 raise ServiceError("převzetí lze spustit jen u zařízení, které je online")
-        elif p["module"] in ("switch", "capsman") and p["managed_at"] is not None:
+        elif p["module"] in ("switch", "capsman", "wifitable") and p["managed_at"] is not None:
             pass  # řízené zařízení: konfiguraci určuje záměr lokality
         elif p["module"] == "switch":
             raise ServiceError("sladění se záměrem je jen pro řízená zařízení")

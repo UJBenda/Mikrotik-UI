@@ -930,6 +930,8 @@ async def site_wifi_preview(request: Request, p: Principal, tid: str) -> Respons
     def q():
         with tenant_scope(st.db, tid) as tx:
             w = takeover.wifi_preview(tx, sid)
+            w["tables"] = [{k: t[k] for k in ("device_id", "device", "table", "sha", "installed")}
+                           for t in takeover.wifi_tables(tx, sid)]
         w.pop("host_inv", None)
         return w
 
@@ -942,8 +944,52 @@ async def site_wifi_plan(request: Request, p: Principal, tid: str) -> Response:
 
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
-    out = await run_in_threadpool(takeover.create_wifi_plan, st.db, tid, sid, p.user_id, client_ip(request))
+    out = await run_in_threadpool(takeover.create_wifi_plan, st.db, st.box, tid, sid, p.user_id, client_ip(request))
     return json_response(out, 201)
+
+
+@endpoint(READ)
+async def site_ssids(request: Request, p: Principal, tid: str) -> Response:
+    """SSID lokality včetně jmen a VLAN více hesel (hesla ne)."""
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return takeover.list_ssids(tx, sid)
+
+    return json_response({"ssids": await run_in_threadpool(q)})
+
+
+@endpoint(MANAGE)
+async def site_ssid_ppsk_reveal(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    out = await run_in_threadpool(takeover.reveal_ppsk, st.db, st.box, tid, _uuid(request.path_params["site_id"]),
+                                  _uuid(request.path_params["ssid_id"]), p.user_id, client_ip(request))
+    return json_response({"ppsk": out})
+
+
+@endpoint(OPERATE)
+async def site_ap_group(request: Request, p: Principal, tid: str) -> Response:
+    """Přesun AP do skupiny: {"devices": [...], "group": "g-…" | null}."""
+    from .. import takeover
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    data = await _json(request)
+    group = data.get("group")
+    if group is not None and not isinstance(group, str):
+        raise ServiceError("neplatná skupina")
+    devs = data.get("devices")
+    if not isinstance(devs, list):
+        raise ServiceError("vyber zařízení")
+    out = await run_in_threadpool(takeover.set_ap_group, st.db, tid, sid, [_uuid(str(d)) for d in devs], group,
+                                  p.user_id, client_ip(request))
+    return json_response(out)
 
 
 @endpoint(READ)
@@ -1091,7 +1137,10 @@ def routes() -> list[Route]:
         Route(s + "/intent", site_intent_get, methods=["GET"]),
         Route(s + "/intent", site_intent_put, methods=["PUT"]),
         Route(s + "/intent/reconcile", site_intent_reconcile, methods=["POST"]),
+        Route(s + "/ssids", site_ssids, methods=["GET"]),
         Route(s + "/ssids", site_ssid_create, methods=["POST"]),
+        Route(s + "/ssids/{ssid_id}/ppsk/reveal", site_ssid_ppsk_reveal, methods=["POST"]),
+        Route(s + "/ap-groups", site_ap_group, methods=["POST"]),
         Route(s + "/ssids/{ssid_id}", site_ssid_update, methods=["PUT"]),
         Route(s + "/ssids/{ssid_id}", site_ssid_delete, methods=["DELETE"]),
         Route(s + "/wifi/preview", site_wifi_preview, methods=["GET"]),

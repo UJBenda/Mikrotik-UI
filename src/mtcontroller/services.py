@@ -583,7 +583,16 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
             # hesla SSID jen při doručení (v DB je skript s tokeny)
             from . import takeover, wificfg
 
-            body = wificfg.fill_secrets(body, lambda h: takeover.ssid_psk(tx, box, h))
+            cache: dict[str, list] = {}
+
+            def ppsk(h: str, i: int) -> str | None:
+                # jedno dešifrování na SSID, ne na každé heslo
+                if h not in cache:
+                    sid = takeover._sid_from_hex(h)
+                    cache[h] = takeover.ppsk_load(tx, box, sid) if sid else []
+                return cache[h][i]["psk"] if 0 <= i < len(cache[h]) else None
+
+            body = wificfg.fill_secrets(body, lambda h: takeover.ssid_psk(tx, box, h), ppsk)
         if pl["revert_script"]:
             body = routeros.safe_apply_body(body, pl["revert_script"], f"{ack_url}&status=reverted", key, opts,
                                             int(pl["confirm_minutes"] or 5))

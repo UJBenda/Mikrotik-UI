@@ -215,3 +215,15 @@ def test_default_config_scripts():
     s = defaults.one_liner("https://c.example/enroll/KEY/default/switch", OPTS)
     assert _balanced(s)
     s.encode("ascii")
+
+
+def test_wifi_vlan_scripts():
+    """Skript mtc-wifi-vlan na AP (VLAN rádií podle MAC) – ASCII, vyvážený, i s prázdnou tabulkou."""
+    from mtcontroller import wificfg
+
+    for table in ([{"mac": "0A:55:31:53:B9:2E", "ssid": "Firma", "pvid": 10, "tagged": [30, 40]},
+                   {"mac": "08:55:31:53:B9:2F", "ssid": "Hoste", "pvid": 20, "tagged": []}], []):
+        s = routeros.wrap_command("https://c.example/api/checkin/ack?id=11", "KEY", wificfg.cap_vlan_body(table), OPTS)
+        assert _balanced(s), s
+        s.encode("ascii")
+        assert _balanced(wificfg.cap_vlan_source(table))

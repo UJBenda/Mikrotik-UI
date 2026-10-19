@@ -84,7 +84,7 @@ def set_site_intent(db: Database, tenant_id: Any, site_id: Any, data: dict, user
                    AND state IN ('adopted', 'offline')""", {"d": host, "s": str(site_id)}):
             raise ServiceError("CAPsMAN může běžet jen na řízeném zařízení této lokality")
         vids = {n["vlan_id"] for n in new["networks"]}
-        used = {r["vlan_id"] for r in tx.fetchall("SELECT vlan_id FROM site_ssid WHERE site_id = %(s)s", {"s": str(site_id)})}
+        used = ssid_vlans(tx, site_id)
         if used - vids:
             raise ServiceError(f"síť VLAN {', '.join(map(str, sorted(used - vids)))} používá Wi-Fi (SSID) – nejdřív ho uprav")
         if old:
@@ -93,6 +93,14 @@ def set_site_intent(db: Database, tenant_id: Any, site_id: Any, data: dict, user
                                   {"s": str(site_id)})["n"]
             if managed and (old["mgmt_vlan"] != new["mgmt_vlan"] or old["mgmt_native"] != new["mgmt_native"]):
                 raise ServiceError("management síť nelze změnit, dokud jsou na lokalitě řízená zařízení")
+        gone = ({g["id"] for g in ((old or {}).get("wifi") or {}).get("groups") or []}
+                - {g["id"] for g in new["wifi"]["groups"]})
+        for g in sorted(gone):
+            # zrušená skupina AP: SSID ji přestanou uvádět, AP v ní jsou „bez skupiny“
+            tx.execute("UPDATE site_ssid SET groups = groups - %(g)s WHERE site_id = %(s)s AND groups ? %(g)s",
+                       {"g": g, "s": str(site_id)})
+            tx.execute("""UPDATE device_intent SET ap_group = NULL WHERE ap_group = %(g)s
+                          AND device_id IN (SELECT id FROM device WHERE site_id = %(s)s)""", {"g": g, "s": str(site_id)})
         tx.execute(
             """INSERT INTO site_policy (tenant_id, site_id, module, data, updated_by)
                VALUES (%(t)s, %(s)s, %(m)s, %(d)s, %(u)s)
@@ -420,27 +428,71 @@ def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site
 
 
 
-# --- Wi-Fi (F5b): SSID a CAPsMAN -----------------------------------------------------------------------------
+# --- Wi-Fi: SSID, skupiny AP, více hesel, CAPsMAN -------------------------------------------------------------
 
 def _ssid_ctx(ssid_id: Any) -> bytes:
     return f"ssid:{ssid_id}".encode()
 
 
+def _ppsk_ctx(ssid_id: Any) -> bytes:
+    return f"ssid:{ssid_id}:ppsk".encode()
+
+
+def _open(box: SecretBox, w: Any, c: Any, kv: int, ctx: bytes) -> bytes:
+    from .security import SealedSecret
+
+    return box.open(SealedSecret(bytes(w), bytes(c), kv), ctx)
+
+
+def ppsk_load(tx: Tx, box: SecretBox, ssid_id: Any) -> list[dict]:
+    """Více hesel SSID [{name, vlan_id, psk}] – dešifrované, jen pro doručení a zobrazení s auditem."""
+    import json as _json
+
+    r = tx.fetchone("SELECT ppsk_wrapped_key, ppsk_ciphertext, ppsk_key_version FROM site_ssid WHERE id = %(i)s",
+                    {"i": str(ssid_id)})
+    if not r or r["ppsk_wrapped_key"] is None:
+        return []
+    return _json.loads(_open(box, r["ppsk_wrapped_key"], r["ppsk_ciphertext"], r["ppsk_key_version"],
+                             _ppsk_ctx(ssid_id)).decode())
+
+
 def list_ssids(tx: Tx, site_id: Any) -> list[dict]:
-    """SSID lokality bez hesel (jen příznak, že heslo je uložené)."""
-    return [dict(r, id=str(r["id"]), has_psk=True) for r in tx.fetchall(
-        """SELECT id, ssid, vlan_id, bands, isolation, ft, enabled FROM site_ssid
-           WHERE site_id = %(s)s ORDER BY ssid""", {"s": str(site_id)})]
+    """SSID lokality bez hesel (u více hesel jen jména a VLAN)."""
+    return [dict(r, id=str(r["id"]), has_psk=True, groups=list(r["groups"] or []), ppsk=list(r["ppsk_meta"] or []))
+            for r in tx.fetchall(
+                """SELECT id, ssid, vlan_id, bands, isolation, ft, enabled, groups, ppsk_meta FROM site_ssid
+                   WHERE site_id = %(s)s ORDER BY ssid""", {"s": str(site_id)})]
+
+
+def ssid_vlans(tx: Tx, site_id: Any) -> set[int]:
+    """VLAN používané Wi-Fi (hlavní VLAN SSID i VLAN více hesel)."""
+    out = set()
+    for s in list_ssids(tx, site_id):
+        out.add(int(s["vlan_id"]))
+        out |= {int(e["vlan_id"]) for e in s["ppsk"]}
+    return out
+
+
+def _radio_counts(ssids: list[dict], groups: list[str]) -> dict[tuple[str, str], int]:
+    """Počet SSID na rádiu podle skupiny AP a pásma (skupina None = AP bez skupiny)."""
+    out = {}
+    for g in [None] + groups:
+        for band in ("2.4", "5"):
+            out[(g or "", band)] = sum(1 for s in ssids if s["enabled"] and band in s["bands"].split(",")
+                                       and (not s.get("groups") or (g in s["groups"])))
+    return out
 
 
 def save_ssid(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, data: dict, ssid_id: Any = None,
               user_id: Any = None, ip: str | None = None) -> dict:
+    import json as _json
     import uuid as _uuid
 
     with tenant_scope(db, tenant_id) as tx:
         cur = load_intent(tx, site_id)
         if not cur:
             raise ServiceError("lokalita nemá záměr – nejdřív nadefinuj sítě")
+        group_ids = {g["id"] for g in (cur.get("wifi") or {}).get("groups") or []}
         old = None
         if ssid_id is not None:
             old = tx.fetchone("SELECT id, ssid FROM site_ssid WHERE id = %(i)s AND site_id = %(s)s",
@@ -448,42 +500,78 @@ def save_ssid(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, data: 
             if not old:
                 raise NotFound("SSID neexistuje")
         try:
-            v = intent.validate_ssid(data, {n["vlan_id"] for n in cur["networks"]}, need_psk=old is None)
+            v = intent.validate_ssid(data, {n["vlan_id"] for n in cur["networks"]}, need_psk=old is None,
+                                     group_ids=group_ids)
         except intent.IntentError as e:
             raise ServiceError(str(e)) from e
         others = [r for r in list_ssids(tx, site_id) if not old or r["id"] != str(old["id"])]
+        if v["ppsk"] is None and old:
+            v["ppsk_keep"] = next((r["ppsk"] for r in list_ssids(tx, site_id) if r["id"] == str(old["id"])), [])
         if any(r["ssid"] == v["ssid"] for r in others):
             raise ServiceError(f"SSID {v['ssid']} už na lokalitě je")
-        if v["enabled"]:
-            for band in ("2.4", "5"):
-                n = sum(1 for r in others if r["enabled"] and band in r["bands"].split(",")) + (band in v["bands"].split(","))
-                if n > intent.MAX_SSIDS_PER_BAND:
-                    raise ServiceError(f"v pásmu {band} GHz by bylo {n} SSID – nejvýš {intent.MAX_SSIDS_PER_BAND}")
         if len(others) + 1 > intent.MAX_SSIDS:
             raise ServiceError(f"nejvýš {intent.MAX_SSIDS} SSID na lokalitě")
+        warnings = []
+        counts = _radio_counts(others + [v | {"enabled": v["enabled"]}], sorted(group_ids))
+        names = {g["id"]: g["name"] for g in (cur.get("wifi") or {}).get("groups") or []}
+        for (g, band), n in sorted(counts.items()):
+            where = f"skupina {names.get(g, g)}" if g else "AP bez skupiny"
+            if n > intent.HARD_SSIDS_PER_RADIO:
+                raise ServiceError(f"{where}: v pásmu {band} GHz by bylo {n} SSID – nejvýš {intent.HARD_SSIDS_PER_RADIO}")
+            if n > intent.MAX_SSIDS_PER_BAND:
+                warnings.append(f"{where}: {n} SSID v pásmu {band} GHz – nad {intent.MAX_SSIDS_PER_BAND} klesá propustnost")
         sid = str(old["id"]) if old else str(_uuid.uuid4())
+        # více hesel: prázdné heslo položky = ponechat uložené (podle jména)
+        ppsk_blob = None
+        if v["ppsk"] is not None:
+            prev = {e["name"].lower(): e for e in (ppsk_load(tx, box, sid) if old else [])}
+            merged = []
+            for e in v["ppsk"]:
+                pk = e["psk"] or (prev.get(e["name"].lower()) or {}).get("psk")
+                if not pk:
+                    raise ServiceError(f"SSID {v['ssid']}: zadej heslo pro {e['name']}")
+                merged.append({"name": e["name"], "vlan_id": e["vlan_id"], "psk": pk})
+            main = v["psk"] or (ssid_psk(tx, box, sid.replace("-", "")) if old else None)
+            if len({e["psk"] for e in merged} | {main}) != len(merged) + 1:
+                raise ServiceError(f"SSID {v['ssid']}: dvě stejná hesla – klient by nešel přiřadit do VLAN")
+            ppsk_blob = merged
         params = {"i": sid, "t": str(tenant_id), "s": str(site_id), "ssid": v["ssid"], "v": v["vlan_id"],
-                  "b": v["bands"], "iso": v["isolation"], "ft": v["ft"], "en": v["enabled"], "u": _s(user_id)}
+                  "b": v["bands"], "iso": v["isolation"], "ft": v["ft"], "en": v["enabled"], "u": _s(user_id),
+                  "g": v["groups"]}
         if v["psk"] is not None:
             sealed = box.seal(v["psk"].encode(), _ssid_ctx(sid))
             params.update(w=sealed.wrapped_key, c=sealed.ciphertext, kv=sealed.key_version)
+        sets = ""
+        if ppsk_blob is not None:
+            meta = [{"name": e["name"], "vlan_id": e["vlan_id"]} for e in ppsk_blob]
+            if ppsk_blob:
+                sp = box.seal(_json.dumps(ppsk_blob).encode(), _ppsk_ctx(sid))
+                params.update(pw=sp.wrapped_key, pc=sp.ciphertext, pkv=sp.key_version, pm=meta)
+            else:
+                params.update(pw=None, pc=None, pkv=None, pm=[])
+            sets = ", ppsk_wrapped_key = %(pw)s, ppsk_ciphertext = %(pc)s, ppsk_key_version = %(pkv)s, ppsk_meta = %(pm)s"
         if old:
             tx.execute(
                 """UPDATE site_ssid SET ssid = %(ssid)s, vlan_id = %(v)s, bands = %(b)s, isolation = %(iso)s, ft = %(ft)s,
-                       enabled = %(en)s, updated_by = %(u)s, updated_at = now()""" +
+                       enabled = %(en)s, groups = %(g)s, updated_by = %(u)s, updated_at = now()""" +
                 (", psk_wrapped_key = %(w)s, psk_ciphertext = %(c)s, psk_key_version = %(kv)s" if v["psk"] is not None else "") +
-                " WHERE id = %(i)s", params)
+                sets + " WHERE id = %(i)s", params)
         else:
             tx.execute(
-                """INSERT INTO site_ssid (id, tenant_id, site_id, ssid, vlan_id, bands, isolation, ft, enabled,
+                """INSERT INTO site_ssid (id, tenant_id, site_id, ssid, vlan_id, bands, isolation, ft, enabled, groups,
                                           psk_wrapped_key, psk_ciphertext, psk_key_version, updated_by)
-                   VALUES (%(i)s, %(t)s, %(s)s, %(ssid)s, %(v)s, %(b)s, %(iso)s, %(ft)s, %(en)s, %(w)s, %(c)s, %(kv)s, %(u)s)""",
-                params)
-        after = {k: v[k] for k in ("ssid", "vlan_id", "bands", "isolation", "ft", "enabled")}
+                   VALUES (%(i)s, %(t)s, %(s)s, %(ssid)s, %(v)s, %(b)s, %(iso)s, %(ft)s, %(en)s, %(g)s, %(w)s, %(c)s,
+                           %(kv)s, %(u)s)""", params)
+            if sets:
+                tx.execute("UPDATE site_ssid SET " + sets[2:] + " WHERE id = %(i)s", params)
+        after = {k: v[k] for k in ("ssid", "vlan_id", "bands", "isolation", "ft", "enabled", "groups")}
         audit(tx, "site.ssid", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
-              before={"ssid": old["ssid"]} if old else None, after=after | {"id": sid, "psk_changed": v["psk"] is not None},
+              before={"ssid": old["ssid"]} if old else None,
+              after=after | {"id": sid, "psk_changed": v["psk"] is not None,
+                             "ppsk": None if ppsk_blob is None else [{"name": e["name"], "vlan_id": e["vlan_id"]} for e in ppsk_blob]},
               ip=ip)
-    return after | {"id": sid, "has_psk": True}
+    ppsk_out = (v.get("ppsk_keep") or []) if ppsk_blob is None else [{"name": e["name"], "vlan_id": e["vlan_id"]} for e in ppsk_blob]
+    return after | {"id": sid, "has_psk": True, "warnings": warnings, "ppsk": ppsk_out}
 
 
 def delete_ssid(db: Database, tenant_id: Any, site_id: Any, ssid_id: Any, user_id: Any = None, ip: str | None = None) -> None:
@@ -496,26 +584,81 @@ def delete_ssid(db: Database, tenant_id: Any, site_id: Any, ssid_id: Any, user_i
               before={"ssid": r["ssid"], "id": str(ssid_id)}, ip=ip)
 
 
-def ssid_psk(tx: Tx, box: SecretBox, ssid_hex: str) -> str | None:
-    """Heslo SSID podle id bez pomlček (token v plánu) – jen v rámci tenanta (RLS)."""
+def reveal_ppsk(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, ssid_id: Any, user_id: Any = None,
+                ip: str | None = None) -> list[dict]:
+    with tenant_scope(db, tenant_id) as tx:
+        if not tx.fetchone("SELECT 1 FROM site_ssid WHERE id = %(i)s AND site_id = %(s)s",
+                           {"i": str(ssid_id), "s": str(site_id)}):
+            raise NotFound("SSID neexistuje")
+        out = ppsk_load(tx, box, ssid_id)
+        audit(tx, "site.ssid_ppsk_reveal", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
+              after={"id": str(ssid_id), "count": len(out)}, ip=ip)
+    return out
+
+
+def _sid_from_hex(ssid_hex: str) -> str | None:
     import uuid as _uuid
 
     try:
-        sid = str(_uuid.UUID(hex=ssid_hex))
+        return str(_uuid.UUID(hex=ssid_hex))
     except ValueError:
         return None
-    from .security import SealedSecret
 
+
+def ssid_psk(tx: Tx, box: SecretBox, ssid_hex: str) -> str | None:
+    """Heslo SSID podle id bez pomlček (token v plánu) – jen v rámci tenanta (RLS)."""
+    sid = _sid_from_hex(ssid_hex)
+    if not sid:
+        return None
     r = tx.fetchone("SELECT psk_wrapped_key, psk_ciphertext, psk_key_version FROM site_ssid WHERE id = %(i)s", {"i": sid})
     if not r:
         return None
-    return box.open(SealedSecret(bytes(r["psk_wrapped_key"]), bytes(r["psk_ciphertext"]), r["psk_key_version"]),
-                    _ssid_ctx(sid)).decode()
+    return _open(box, r["psk_wrapped_key"], r["psk_ciphertext"], r["psk_key_version"], _ssid_ctx(sid)).decode()
+
+
+def ssid_ppsk(tx: Tx, box: SecretBox, ssid_hex: str, idx: int) -> str | None:
+    sid = _sid_from_hex(ssid_hex)
+    entries = ppsk_load(tx, box, sid) if sid else []
+    return entries[idx]["psk"] if 0 <= idx < len(entries) else None
+
+
+def set_ap_group(db: Database, tenant_id: Any, site_id: Any, device_ids: list[str], group: str | None,
+                 user_id: Any = None, ip: str | None = None) -> dict:
+    """Přesun AP do skupiny (None = bez skupiny). Na AP se projeví dalším nasazením Wi-Fi."""
+    if not isinstance(device_ids, list) or not 1 <= len(device_ids) <= 500:
+        raise ServiceError("vyber zařízení")
+    with tenant_scope(db, tenant_id) as tx:
+        cur = load_intent(tx, site_id) or {}
+        groups = {g["id"]: g["name"] for g in (cur.get("wifi") or {}).get("groups") or []}
+        if group is not None and group not in groups:
+            raise ServiceError("skupina AP neexistuje")
+        n = 0
+        for did in device_ids:
+            if not tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND site_id = %(s)s AND state <> 'removed'",
+                               {"d": str(did), "s": str(site_id)}):
+                raise NotFound("zařízení není na této lokalitě")
+            tx.execute(
+                """INSERT INTO device_intent (tenant_id, device_id, ap_group, updated_by) VALUES (%(t)s, %(d)s, %(g)s, %(u)s)
+                   ON CONFLICT (device_id) DO UPDATE SET ap_group = EXCLUDED.ap_group, updated_by = EXCLUDED.updated_by,
+                       updated_at = now()""", {"t": str(tenant_id), "d": str(did), "g": group, "u": _s(user_id)})
+            n += 1
+        audit(tx, "device.ap_group", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
+              after={"devices": [str(d) for d in device_ids], "group": group, "name": groups.get(group)}, ip=ip)
+    return {"moved": n, "group": group}
+
+
+def _aps(tx: Tx, site_id: Any) -> list[dict]:
+    """Řízená AP lokality s jejich skupinou."""
+    rows = [d for d in _site_devices(tx, site_id) if d["managed_at"] is not None and d["role"] == "ap"]
+    for d in rows:
+        di = tx.fetchone("SELECT ap_group FROM device_intent WHERE device_id = %(d)s", {"d": str(d["id"])})
+        d["group"] = (di or {}).get("ap_group")
+    return rows
 
 
 def wifi_preview(tx: Tx, site_id: Any) -> dict:
-    """Co by se nasadilo na CAPsMAN: hostitel, rádia AP, plán kanálů, skript (s tokeny místo hesel)."""
-    from . import wificfg
+    """Co by se nasadilo na CAPsMAN: hostitel, rádia AP (skupina, čip), plán kanálů, skript (s tokeny)."""
+    from . import packages, wificfg
 
     cur = load_intent(tx, site_id)
     if not cur:
@@ -528,15 +671,22 @@ def wifi_preview(tx: Tx, site_id: Any) -> dict:
                      {"d": host, "s": str(site_id)})
     if not hd or hd["managed_at"] is None:
         raise ServiceError("zařízení s CAPsMANem není řízené")
-    aps = [d for d in _site_devices(tx, site_id) if d["managed_at"] is not None and d["role"] == "ap"]
+    aps = _aps(tx, site_id)
     invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in aps}
+    radios = wificfg.site_radios(aps, invs)
+    for r in radios:
+        d = next(a for a in aps if str(a["id"]) == r["device_id"])
+        r["group"] = d["group"]
+        r["chip"] = packages.chip(invs[r["device_id"]])
     host_inv = inventory.load(tx, host)
     ssids = list_ssids(tx, site_id)
-    m = wificfg.manager(ssids, wificfg.site_radios(aps, invs), pol, host_has_radios=bool(wificfg.radios(host_inv)))
-    return {"host": dict(hd, id=str(hd["id"])), "aps": [str(d["id"]) for d in aps], "host_inv": host_inv, **m}
+    m = wificfg.manager(ssids, radios, pol, host_has_radios=bool(wificfg.radios(host_inv)))
+    return {"host": dict(hd, id=str(hd["id"])), "aps": [str(d["id"]) for d in aps], "host_inv": host_inv,
+            "groups": pol.get("groups") or [], **m}
 
 
-def create_wifi_plan(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: str | None = None) -> dict:
+def create_wifi_plan(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, user_id: Any = None,
+                     ip: str | None = None) -> dict:
     """Plán 'capsman' pro zařízení s CAPsMANem. Bez návratu: Wi-Fi nemůže přerušit správu (AP jsou na drátě)."""
     from . import wificfg
 
@@ -551,8 +701,86 @@ def create_wifi_plan(db: Database, tenant_id: Any, site_id: Any, user_id: Any = 
             """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, basis_sha, created_by)
                VALUES (%(t)s, %(d)s, 'capsman', %(sum)s, %(chg)s, %(sc)s, %(b)s, %(u)s) RETURNING id""",
             {"t": str(tenant_id), "d": hid, "sum": w["summary"],
-             "chg": {"radios": w["radios"], "notes": w["notes"], "aps": w["aps"]},
+             "chg": {"radios": w["radios"], "notes": w["notes"], "aps": w["aps"], "config_map": w["config_map"]},
              "sc": w["script"], "b": wificfg.basis(w["host_inv"]), "u": _s(user_id)})
         audit(tx, "plan.create", tenant_id=tenant_id, user_id=user_id, target=f"device:{hid}",
               after={"plan_id": row["id"], "module": "capsman", "summary": w["summary"]}, ip=ip)
     return {"plan_id": row["id"], "summary": w["summary"], "radios": w["radios"], "notes": w["notes"]}
+
+
+# --- VLAN rádií na AP (skript mtc-wifi-vlan, tabulka MAC → VLAN) ------------------------------------------
+
+def wifi_tables(tx: Tx, site_id: Any) -> list[dict]:
+    """Pro každé řízené AP: požadovaná tabulka MAC → VLAN a otisk té nainstalované."""
+    from . import wificfg
+
+    cur = load_intent(tx, site_id) or {}
+    host = ((cur.get("wifi") or {}).get("capsman_device_id"))
+    if not host:
+        return []
+    last = tx.fetchone("""SELECT changes FROM config_plan WHERE device_id = %(d)s AND module = 'capsman'
+                          AND status = 'applied' ORDER BY id DESC LIMIT 1""", {"d": host})
+    config_map = ((last or {}).get("changes") or {}).get("config_map") or {}
+    if not config_map:
+        return []
+    host_inv = inventory.load(tx, host, ["wifi"])
+    ssids = {s["id"]: s for s in list_ssids(tx, site_id)}
+    out = []
+    for d in _aps(tx, site_id):
+        inv = inventory.load(tx, d["id"], ["wifi", "scripts"])
+        table = wificfg.cap_table(host_inv, inv, config_map, ssids)
+        out.append({"device_id": str(d["id"]), "device": d["identity"] or d["serial"], "table": table,
+                    "sha": wificfg.table_sha(table), "installed": wificfg.installed_table_sha(inv),
+                    "basis": wificfg.table_basis(inv)})
+    return out
+
+
+def sync_wifi_tables(db: Database, settings: Settings, tenant_id: Any, site_id: Any) -> int:
+    """Kde se tabulka na AP liší od požadované, vytvoří a hned schválí plán 'wifitable'
+    (jen porty rádií v bridgi – správu přerušit nemůže). Vrací počet plánů."""
+    from . import wificfg
+    from .plans import approve_plan
+
+    ids = []
+    with tenant_scope(db, tenant_id) as tx:
+        for t in wifi_tables(tx, site_id):
+            # prázdná tabulka a nic nenainstalováno = AP bez Wi-Fi od nás; jinak sladit (i vyčistit)
+            if t["sha"] == t["installed"] or (not t["table"] and t["installed"] is None):
+                continue
+            # rozpracovaný plán, nebo stejná tabulka právě nasazená (inventura ji ještě nevidí)
+            if tx.fetchone("""SELECT 1 FROM config_plan WHERE device_id = %(d)s AND module = 'wifitable'
+                              AND (status IN ('draft', 'queued')
+                                   OR (status = 'applied' AND changes->>'sha' = %(sha)s
+                                       AND created_at > now() - make_interval(mins => 15)))""",
+                           {"d": t["device_id"], "sha": t["sha"]}):
+                continue
+            row = tx.fetchone(
+                """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, basis_sha)
+                   VALUES (%(t)s, %(d)s, 'wifitable', %(sum)s, %(chg)s, %(sc)s, %(b)s) RETURNING id""",
+                {"t": str(tenant_id), "d": t["device_id"],
+                 "sum": f"Wi-Fi VLAN na AP: {len(t['table'])} rozhraní",
+                 "chg": {"table": t["table"], "sha": t["sha"]}, "sc": wificfg.cap_vlan_body(t["table"]),
+                 "b": t["basis"]})
+            ids.append(row["id"])
+    for pid in ids:
+        try:
+            approve_plan(db, settings, tenant_id, pid, None)
+        except ServiceError as e:
+            log_warn(f"wifitable plán {pid}: {e}")
+    return len(ids)
+
+
+def sync_all_wifi_tables(db: Database, settings: Settings) -> int:
+    """Worker: lokality s CAPsMANem (seznam lokalit přes provozovatele, data už jen v rozsahu tenanta)."""
+    from .db import operator_scope
+
+    with operator_scope(db) as tx:
+        sites = tx.fetchall("""SELECT tenant_id, site_id FROM site_policy WHERE module = 'intent'
+                               AND data->'wifi'->>'capsman_device_id' IS NOT NULL""", {})
+    return sum(sync_wifi_tables(db, settings, s["tenant_id"], s["site_id"]) for s in sites)
+
+
+def log_warn(text: str) -> None:
+    import logging
+
+    logging.getLogger("mtc.takeover").warning(text)

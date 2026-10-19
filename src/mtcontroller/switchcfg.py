@@ -584,11 +584,14 @@ def reconcile(inv: dict, model: dict) -> dict:
     changes: list[str] = []
     additive = True
     # VLAN tabulka (nejdřív přidat/rozšířit, porty potom)
+    phys_names = set(names.values()) | {BRIDGE}
     for v in model["vlans"]:
         vid = v["vid"]
         want_t, want_u = set(v["tagged"]), set(v["untagged"])
         cur = cur_vlans.get(vid)
-        tag = q(",".join(names.get(x, x) for x in v["tagged"]))
+        # členy, které nejsou fyzické porty (rádia – drží je skript mtc-wifi-vlan na AP), ponechat
+        extra_t = [x for x in _members((cur or {}).get("tagged")) if x not in phys_names]
+        tag = q(",".join([names.get(x, x) for x in v["tagged"]] + extra_t))
         untag = q(",".join(names.get(x, x) if x != BRIDGE else x for x in v["untagged"]))
         if not cur:
             apply.append(f"/interface bridge vlan add bridge={BRIDGE} vlan-ids={vid} tagged={tag} untagged={untag} "
@@ -598,11 +601,12 @@ def reconcile(inv: dict, model: dict) -> dict:
             if want_u - {BRIDGE}:
                 additive = False
             continue
-        ct, cu = set(_members(cur.get("tagged"))), set(_members(cur.get("untagged")))
+        ct = {x for x in _members(cur.get("tagged")) if x in phys_names}
+        cu = {x for x in _members(cur.get("untagged")) if x in phys_names}
         if to_cur(want_t) != ct or to_cur(want_u) != cu:
             apply.append(f"/interface bridge vlan set [find bridge={BRIDGE} vlan-ids={vid} dynamic=no] tagged={tag} untagged={untag}")
             revert.append(f"/interface bridge vlan set [find bridge={BRIDGE} vlan-ids={vid} dynamic=no] "
-                          f"tagged={q(','.join(sorted(ct)))} untagged={q(','.join(sorted(cu)))}")
+                          f"tagged={q(','.join(sorted(ct) + extra_t))} untagged={q(','.join(sorted(cu)))}")
             added = to_cur(want_t) - ct
             gone = (ct - to_cur(want_t)) | (cu ^ to_cur(want_u))
             changes.append(f"VLAN {vid}: " + ", ".join(
