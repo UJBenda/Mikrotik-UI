@@ -139,6 +139,9 @@ def test_concentrator_script_is_ascii_and_balanced(tmp_path):
     assert 'address=($ctrl . "/32")' in s
     assert 'key-type' in s and '[Rr][Ss][Aa]' in s  # SSTP jen s RSA certifikátem
     assert 'action=src-nat to-addresses="10.200.0.1"' in s
+    # syslog ze zařízení na controller; přesun jen pravidla, které ještě není první (RouterOS jinak skončí chybou)
+    assert 'action=dst-nat to-addresses=$ctrl to-ports=5514' in s and 'dst-port=5514 action=accept comment="mtc: syslog' in s
+    assert s.count("($me->0) != $first") == 2 and " move [find comment" not in s
 
 
 def test_scheduler_has_explicit_start_and_quiet_fetch():
@@ -158,10 +161,11 @@ def test_firewall_move_skips_dynamic_rules(tmp_path):
     st = make_settings(tmp_path)
     for s in (routeros.provision_body(P, OPTS),
               concentrator_script(st, st.tunnel.concentrators[0], "heslo_123")):
-        moves = [ln for ln in s.splitlines() if " move " in ln]
+        moves = [ln for ln in s.splitlines() if " move " in ln and not ln.lstrip().startswith("#")]
         assert moves
         for ln in moves:
-            assert "find dynamic=no]->0" in ln, ln
+            # cíl přesunu = první nedynamické pravidlo (přímo, nebo přes $first z find dynamic=no)
+            assert "find dynamic=no]->0" in ln or ("destination=$first" in ln and "find dynamic=no]->0" in s), ln
         assert re.search(r"find\]\s*->", s) is None
 
 

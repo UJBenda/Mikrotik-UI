@@ -92,14 +92,17 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 /ip firewall nat add chain=srcnat src-address-list="mtc-controller" out-interface-list="TUNNELS" action=src-nat to-addresses={q(local)} comment="mtc: controller do tunelu"
 # logy ze zarizeni (syslog na tunelovou adresu koncentratoru) jdou na controller se zdrojem zarizeni
 /ip firewall nat add chain=dstnat in-interface-list="TUNNELS" dst-address={q(local)} protocol=udp dst-port={settings.syslog.port} action=dst-nat to-addresses=$ctrl to-ports={settings.syslog.port} comment="mtc: syslog na controller"
-:if ([:len [/ip firewall nat find dynamic=no]] > 1) do={{
-  /ip firewall nat move [find comment="mtc: controller do tunelu"] destination=([/ip firewall nat find dynamic=no]->0)
+# pravidla mtc na zacatek (dynamicka pravidla preskocit - pred ne nejde presouvat); presun jen kdyz
+# pravidlo uz neni prvni ("can not move object before itself")
+:foreach c in={{"mtc: syslog na controller";"mtc: controller do tunelu"}} do={{
+  :local me [/ip firewall nat find comment=$c]
+  :local first ([/ip firewall nat find dynamic=no]->0)
+  :if ([:len $me] > 0 && ($me->0) != $first) do={{ /ip firewall nat move ($me->0) destination=$first }}
 }}
-# dynamicka pravidla (fasttrack dummy) preskocit - pred ne nejde presouvat
-:if ([:len [/ip firewall filter find dynamic=no]] > 9) do={{
-  :foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: syslog ze zarizeni";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
-    /ip firewall filter move [find comment=$c] destination=([/ip firewall filter find dynamic=no]->0)
-  }}
+:foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: syslog ze zarizeni";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
+  :local me [/ip firewall filter find comment=$c]
+  :local first ([/ip firewall filter find dynamic=no]->0)
+  :if ([:len $me] > 0 && ($me->0) != $first) do={{ /ip firewall filter move ($me->0) destination=$first }}
 }}
 :log info "mtc: koncentrator nastaven"
 :put ("mtc: hotovo. Otisk certifikatu mtc-api (api_fingerprint do config.toml): " . [/certificate get [find name="mtc-api"] fingerprint])
