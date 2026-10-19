@@ -1,8 +1,10 @@
 """Postupná aktualizace RouterOS v lokalitě (rolling upgrade).
 
 Vždy jen jedno zařízení: další se spustí, až se předchozí vrátí online
-s cílovou verzí. Pořadí: okrajová zařízení první (AP, PtP, switche),
-gateway poslední – restart nikdy neodřízne cestu k ještě neaktualizovaným.
+s cílovou verzí. Pořadí „od konce“: podle topologie (sousedé MNDP/LLDP) nejdřív
+zařízení nejdál od brány, gateway poslední – restart nikdy neodřízne cestu
+k ještě neaktualizovaným. Bez topologie podle role (AP, PtP, switche, gateway).
+Ručně: technik vybere zařízení a pořadí sám.
 Při chybě nebo když se zařízení do STEP_TIMEOUT nevrátí, se úloha zastaví
 a zbytek lokality zůstane beze změny.
 
@@ -45,11 +47,41 @@ def candidates(tx, site_id: Any) -> list[dict]:
         if any(i.severity == "critical" for i in ros_versions.issues_for(r["latest"])):
             continue
         out.append(r)
-    out.sort(key=lambda r: (ROLE_ORDER.get(r["role"], 2), r["identity"] or r["serial"]))
+    depth = depths(tx, site_id)
+    for r in out:
+        r["depth"] = depth.get(str(r["id"]))
+    # od konce sítě: nejvzdálenější od brány první, gateway vždy poslední; bez topologie podle role
+    out.sort(key=lambda r: (r["role"] == "gateway", -(r["depth"] if r["depth"] is not None else -1),
+                            ROLE_ORDER.get(r["role"], 2), r["identity"] or r["serial"]))
     return out
 
 
-def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: str | None = None) -> dict:
+def depths(tx, site_id: Any) -> dict[str, int]:
+    """Vzdálenost zařízení od brány lokality (počet skoků v grafu sousedů MNDP/LLDP).
+    Kořen = zařízení s rolí gateway; bez gateway prázdné (řadí se pak podle role)."""
+    from collections import deque
+
+    from . import dhcpguard, inventory
+
+    devs = tx.fetchall("""SELECT id, identity, role::text AS role FROM device WHERE site_id = %(s)s
+                          AND state IN ('adopted', 'offline')""", {"s": str(site_id)})
+    invs = {str(d["id"]): inventory.load(tx, d["id"], ["neighbors", "interfaces"]) for d in devs}
+    adj = dhcpguard.site_graph(devs, invs)
+    roots = [str(d["id"]) for d in devs if d["role"] == "gateway"]
+    dist: dict[str, int] = {r: 0 for r in roots}
+    q = deque(roots)
+    while q:
+        a = q.popleft()
+        for b in adj.get(a, {}):
+            if b not in dist:
+                dist[b] = dist[a] + 1
+                q.append(b)
+    return dist
+
+
+def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: str | None = None,
+          order: list[str] | None = None) -> dict:
+    """order = ruční výběr a pořadí (id zařízení); None = automaticky od konce sítě."""
     with tenant_scope(db, tenant_id) as tx:
         if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": str(site_id)}):
             raise NotFound("lokalita neexistuje")
@@ -57,6 +89,14 @@ def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: s
                        {"s": str(site_id)}):
             raise ServiceError("v lokalitě už postupná aktualizace běží")
         devs = candidates(tx, site_id)
+        if order is not None:
+            by_id = {str(d["id"]): d for d in devs}
+            if not isinstance(order, list) or len(order) != len(set(map(str, order))):
+                raise ServiceError("neplatné pořadí zařízení")
+            unknown = [str(o) for o in order if str(o) not in by_id]
+            if unknown:
+                raise ServiceError("některé zařízení v pořadí nemá dostupnou aktualizaci nebo není online – obnov stránku")
+            devs = [by_id[str(o)] for o in order]
         if not devs:
             raise ServiceError("v lokalitě není žádné online zařízení s dostupnou aktualizací")
         steps = [{"device_id": str(d["id"]), "label": d["identity"] or d["serial"], "role": d["role"],
@@ -67,7 +107,8 @@ def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: s
                VALUES (%(t)s, %(s)s, %(st)s, %(u)s) RETURNING id""",
             {"t": str(tenant_id), "s": str(site_id), "st": steps, "u": str(user_id) if user_id else None})
         audit(tx, "site.upgrade_start", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
-              after={"job_id": job["id"], "devices": [(s["label"], s["version"]) for s in steps]}, ip=ip)
+              after={"job_id": job["id"], "devices": [(s["label"], s["version"]) for s in steps],
+                     "order": "manual" if order is not None else "auto"}, ip=ip)
         return {"job_id": job["id"], "steps": steps}
 
 

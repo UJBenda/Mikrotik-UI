@@ -1565,15 +1565,19 @@ async function loadReleaseNotes(id) {
 const UPG_STEP = { pending: "čeká", running: "probíhá", done: "hotovo", skipped: "přeskočeno", failed: "chyba" };
 const UPG_JOB = { running: "běží", done: "dokončeno", stopped: "zastaveno", cancelled: "zrušeno" };
 
+let upgList = [];      // [{c, on}] v aktuálním pořadí
+let upgAuto = [];
+
 async function loadUpgrade() {
   let u;
   try { u = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); } catch (e) { return msg(e.message, true); }
   $("upg-wrap").hidden = false;
-  const ol = $("upg-cands"); ol.textContent = "";
-  for (const c of u.candidates) ol.appendChild(el("li", `${c.label} (${c.role}) ${c.from} → ${c.version}`));
+  upgAuto = u.candidates.map((c) => c.device_id);
+  upgList = u.candidates.map((c) => ({ c, on: true }));
+  renderUpgCands();
   const running = u.jobs.some((j) => j.status === "running");
   $("upg-start").hidden = !u.candidates.length || running;
-  if (!u.candidates.length) ol.appendChild(el("li", "Žádné online zařízení s dostupnou aktualizací", "muted"));
+  $("upg-auto").hidden = !u.candidates.length || running;
   const ul = $("upg-jobs"); ul.textContent = "";
   for (const j of u.jobs) {
     const li = el("li", `#${j.id} ${UPG_JOB[j.status] || j.status} – ${fmtTime(j.created_at)} (${j.created_by || "?"})` +
@@ -1596,12 +1600,56 @@ async function loadUpgrade() {
   }
 }
 
+function upgManual() {
+  const ids = upgList.filter((x) => x.on).map((x) => x.c.device_id);
+  return ids.length !== upgAuto.length || ids.some((id, i) => id !== upgAuto[i]);
+}
+
+function renderUpgCands() {
+  const tb = $("upg-cands"); tb.textContent = "";
+  let n = 0;
+  upgList.forEach((x, i) => {
+    const tr = el("tr", null, x.on ? "" : "muted");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = x.on;
+    cb.addEventListener("change", () => { x.on = cb.checked; renderUpgCands(); });
+    const mv = (d) => {
+      const b = el("button", d < 0 ? "↑" : "↓", "small secondary"); b.type = "button";
+      b.disabled = i + d < 0 || i + d >= upgList.length;
+      b.addEventListener("click", () => { const t = upgList[i]; upgList[i] = upgList[i + d]; upgList[i + d] = t; renderUpgCands(); });
+      return b;
+    };
+    const tdc = el("td"); tdc.appendChild(cb);
+    const tdm = el("td"); tdm.append(mv(-1), " ", mv(1));
+    const c = x.c;
+    tr.append(tdc, el("td", x.on ? String(++n) : "–"), el("td", c.label), el("td", c.role),
+              el("td", c.depth == null ? "?" : c.depth === 0 ? "brána" : `${c.depth} ${c.depth === 1 ? "skok" : c.depth < 5 ? "skoky" : "skoků"}`),
+              el("td", `${c.from} → ${c.version}`), tdm);
+    tb.appendChild(tr);
+  });
+  if (!upgList.length) {
+    const tr = el("tr"); const td = el("td", "Žádné online zařízení s dostupnou aktualizací", "muted"); td.colSpan = 7;
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+  $("upg-mode").textContent = upgList.length ? (upgManual() ? "ruční pořadí / výběr" : "automaticky od konce sítě") : "";
+}
+
 $("upg-btn").addEventListener("click", () => loadUpgrade());
+$("upg-auto").addEventListener("click", () => {
+  const by = Object.fromEntries(upgList.map((x) => [x.c.device_id, x.c]));
+  upgList = upgAuto.map((id) => ({ c: by[id], on: true }));
+  renderUpgCands();
+});
 $("upg-start").addEventListener("click", async () => {
-  const n = $("upg-cands").children.length;
-  if (!(await ask(`Spustit postupnou aktualizaci ${n} zařízení? Každé se restartuje (výpadek ~2–5 min na zařízení).`))) return;
-  try { await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); msg("Postupná aktualizace spuštěna"); loadUpgrade(); }
-  catch (e) { msg(e.message, true); }
+  const chosen = upgList.filter((x) => x.on);
+  if (!chosen.length) return msg("Vyber aspoň jedno zařízení", true);
+  const manual = upgManual();
+  if (!(await ask(`Spustit postupnou aktualizaci ${chosen.length} zařízení (${manual ? "ruční pořadí" : "od konce sítě"})?\n` +
+                  chosen.map((x, i) => `${i + 1}. ${x.c.label}`).join("\n") +
+                  "\n\nKaždé se restartuje (výpadek ~2–5 min na zařízení).", "Spustit"))) return;
+  try {
+    await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`, manual ? { order: chosen.map((x) => x.c.device_id) } : {});
+    msg("Postupná aktualizace spuštěna"); loadUpgrade();
+  } catch (e) { msg(e.message, true); }
 });
 
 // --- infrastruktura lokality (strom WAN → gateway → switche → AP) ----------------------------
@@ -2183,6 +2231,20 @@ async function openDetail(id) {
   const w = $("d-warn"); w.textContent = "";
   for (const x of d.warnings) w.appendChild(el("p", (x.severity === "critical" ? "⚠ " : "ⓘ ") + x.text, "sev-" + (x.severity === "critical" ? "error" : "warning")));
   if (dev.inventory_error) w.appendChild(el("p", "Inventura: " + dev.inventory_error, "sev-warning"));
+  const pk = d.packages;
+  if (pk && pk.wifi && !pk.wifi.ok) {
+    const p = el("p", `⚠ Wi-Fi ovladač: ${pk.wifi.problem}`, "sev-warning");
+    if (pk.wifi.fix && dev.state === "adopted") {
+      const b = el("button", `Vyměnit na ${pk.wifi.fix.install}`, "small"); b.type = "button";
+      b.addEventListener("click", () => sendCommand(dev, "wifi_package",
+        `Stáhnout ${pk.wifi.fix.install}` + (pk.wifi.fix.remove.length ? `, odinstalovat ${pk.wifi.fix.remove.join(", ")}` : "") +
+        " a restartovat (Wi-Fi konfigurace rádií se změní, AP pak převezme CAPsMAN)"));
+      p.append(" ", b);
+    }
+    w.appendChild(p);
+  }
+  if (pk && pk.mismatch && pk.mismatch.length)
+    w.appendChild(el("p", `⚠ Balíčky s jinou verzí než RouterOS (po restartu budou vypnuté): ${pk.mismatch.join(", ")}`, "sev-warning"));
   const listed = (devicesCache || []).find((x) => x.id === id);
   const up = $("d-upgrade");
   up.hidden = !(listed && listed.update_available && dev.state === "adopted");

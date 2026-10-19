@@ -748,3 +748,16 @@ Nový kus se připraví před montáží: Lokalita → Nasazení → výchozí k
 Firewall/router je zatím jen výchozí konfigurace; sladění sítí a editor matice zón přijde s řízením routeru (F6).
 K ověření v labu: `netinstall-cli -s` (vlastní výchozí konfigurace přežije reset tlačítkem),
 `run-after-reset` se skriptem z `flash/` na starších kusech, FastTrack s `hw-offload` na RB2011/hAP ac².
+
+## Balíčky Wi-Fi a postupná aktualizace od konce sítě
+
+- `packages.py` hlídá Wi-Fi ovladač podle desky a architektury: 802.11ax → `wifi-qcom`, 802.11ac Wave2
+  na ARM → `wifi-qcom-ac`, mips/starší → jen `wireless` (v řízeném režimu jen jako switch). Alert
+  `wifi_package` (AP nebo deska se zřejmou nápravou) a `package_version` (extra balíček s jinou verzí než
+  routeros – RouterOS ho vypne). Příkaz `wifi_package` stáhne správný `.npk` pro verzi a architekturu
+  zařízení z download.mikrotik.com, naplánuje odinstalaci špatného a po ack restartuje. Role AP má
+  překážku s konkrétní nápravou, dokud ovladač nesedí.
+- Postupná aktualizace řadí **od konce sítě**: vzdálenost od gateway v grafu sousedů (MNDP/LLDP),
+  nejvzdálenější první, gateway poslední; bez topologie podle role. Ručně: výběr a pořadí z UI
+  (`order` v POST), server ověří, že jde jen o kandidáty s dostupnou aktualizací.
+  `/system package update install` aktualizuje i extra balíčky (wifi-qcom…) na stejnou verzi.

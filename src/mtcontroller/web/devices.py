@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import (analysis, backup, firewall, inventory, oui, plans, portcfg, porthistory, ports, portview,
+from .. import (analysis, backup, firewall, inventory, oui, packages, plans, portcfg, porthistory, ports, portview,
                profiles, ros_versions)
 from ..auth import MANAGE, OPERATE, READ, Principal
 from ..db import tenant_scope
@@ -99,6 +99,8 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
                 i["profile"] = m["name"] if m else None
         return {
             "device": d, "summary": _summary(inv), "modules": modes,
+            "packages": {"wifi": packages.wifi_status(inv), "mismatch": packages.version_mismatch(inv),
+                         "installed": sorted(packages.installed(inv))} if inv else None,
             "warnings": [{"severity": i.severity, "text": i.text, "source": i.source}
                          for i in ros_versions.issues_for(d.get("ros_version") or "")],
             "interfaces": ifaces,
@@ -750,7 +752,9 @@ async def site_upgrade(request: Request, p: Principal, tid: str) -> Response:
     if request.method == "POST":
         if not p.can(tid, MANAGE):
             return _err(403, "nedostatečná oprávnění")
-        res = await run_in_threadpool(upgrades.start, st.db, tid, sid, p.user_id, client_ip(request))
+        data = await _json(request)
+        order = data.get("order") if isinstance(data, dict) else None
+        res = await run_in_threadpool(upgrades.start, st.db, tid, sid, p.user_id, client_ip(request), order)
         return json_response(res, 201)
 
     def q():
@@ -758,7 +762,7 @@ async def site_upgrade(request: Request, p: Principal, tid: str) -> Response:
             cands = upgrades.candidates(tx, sid)
             return {"candidates": [{"device_id": str(c["id"]), "label": c["identity"] or c["serial"],
                                     "role": c["role"], "from": (c["ros_version"] or "").split(" ")[0],
-                                    "version": c["latest"]} for c in cands],
+                                    "version": c["latest"], "depth": c.get("depth")} for c in cands],
                     "jobs": upgrades.jobs(tx, sid)}
 
     return json_response(await run_in_threadpool(q))

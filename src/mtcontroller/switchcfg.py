@@ -273,9 +273,15 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
     warnings: list[str] = []
     cap = None
     if role == "ap":
+        from .packages import wifi_status
+
         sw = supports_wifi(inv)
-        if sw is None:
+        ws = wifi_status(inv)
+        if sw is None and not ws["installed"]:
             blockers.append("zařízení nemá Wi-Fi rádia – role AP nedává smysl")
+        elif not ws["ok"]:
+            blockers.append(f"Wi-Fi ovladač: {ws['problem']}" +
+                            (f" – v detailu zařízení „Vyměnit Wi-Fi ovladač“ na {ws['fix']['install']}" if ws["fix"] else ""))
         elif sw is False:
             blockers.append("rádia mají jen starý balík wireless – řízený režim umí AP s balíkem wifi "
                             "(wifi-qcom, wifi-qcom-ac); nech roli switch")

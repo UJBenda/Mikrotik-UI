@@ -266,10 +266,16 @@
         <tbody id="fpw-rows"></tbody></table>
       </div>
       <div id="upg-wrap" hidden class="pane">
-        <p class="muted">Postupně po jednom zařízení: AP a PtP → switche → gateway. Další až po návratu
-          předchozího s novou verzí; při chybě se zastaví.</p>
-        <ol id="upg-cands"></ol>
-        <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
+        <p class="muted">Postupně po jednom zařízení, <b>od konce sítě</b>: nejdřív zařízení nejdál od brány (podle
+          sousedů MNDP/LLDP), gateway poslední – restart nikdy neodřízne cestu k ostatním. Další až po návratu
+          předchozího s novou verzí; při chybě se zastaví. Pořadí i výběr můžeš upravit ručně.</p>
+        <table class="upg"><thead><tr><th></th><th>#</th><th>Zařízení</th><th>Role</th><th>Od brány</th><th>Verze</th><th>Pořadí</th></tr></thead>
+        <tbody id="upg-cands"></tbody></table>
+        <div class="intent-acts">
+          <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
+          <button id="upg-auto" type="button" class="small secondary">Automatické pořadí</button>
+          <span id="upg-mode" class="muted"></span>
+        </div>
         <h4>Úlohy</h4>
         <ul id="upg-jobs"></ul>
       </div>

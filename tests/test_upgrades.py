@@ -110,3 +110,44 @@ def test_api_skip_cancel_and_isolation():
         assert "site.upgrade_start" in acts and "site.upgrade_cancel" in acts
     finally:
         drop_db(name)
+
+
+def test_topology_order_and_manual():
+    """Od konce sítě podle sousedů (gateway → sw-core → sw-sklad → ap); ručně vlastní výběr a pořadí."""
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _dev(db, box, tid, sid, "GW1", "10.200.1.1", "gw", "gateway")
+        core = _dev(db, box, tid, sid, "SW1", "10.200.1.2", "sw-core", "switch")
+        sklad = _dev(db, box, tid, sid, "SW2", "10.200.1.3", "sw-sklad", "switch")
+        ap = _dev(db, box, tid, sid, "AP1", "10.200.1.4", "ap", "ap")
+
+        def link(a, b, port):
+            with operator_scope(db) as tx:
+                cur = tx.fetchone("SELECT data FROM device_inventory WHERE device_id = %(d)s AND section = 'neighbors'",
+                                  {"d": a})
+            rows = (cur["data"] if cur else []) + [{"interface": port, "identity": b}]
+            inventory.store(db, tid, a, {"neighbors": rows}, [])
+
+        link(gw, "sw-core", "ether2")
+        link(core, "sw-sklad", "ether5")
+        link(sklad, "ap", "ether3")
+        with tenant_scope(db, tid) as tx:
+            c = upgrades.candidates(tx, sid)
+        assert [(x["identity"], x["depth"]) for x in c] == [("ap", 3), ("sw-sklad", 2), ("sw-core", 1), ("gw", 0)]
+        # ručně: jen dvě zařízení v mém pořadí
+        res = upgrades.start(db, tid, sid, order=[core, ap])
+        assert [s["label"] for s in res["steps"]] == ["sw-core", "ap"]
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE upgrade_job SET status = 'stopped'")
+        with pytest.raises(services.ServiceError):
+            upgrades.start(db, tid, sid, order=[core, core])
+        with pytest.raises(services.ServiceError):
+            upgrades.start(db, tid, sid, order=["00000000-0000-0000-0000-000000000000"])
+        # API: pořadí v těle POST
+        c2 = _login(app)
+        r = c2.post(f"/api/admin/tenants/{tid}/sites/{sid}/upgrade", json_body={"order": [ap]})
+        assert r.status_code == 201 and [s["label"] for s in r.json()["steps"]] == ["ap"]
+        g = c2.get(f"/api/admin/tenants/{tid}/sites/{sid}/upgrade").json()
+        assert [x["depth"] for x in g["candidates"]] == [3, 2, 1, 0]
+    finally:
+        drop_db(name)

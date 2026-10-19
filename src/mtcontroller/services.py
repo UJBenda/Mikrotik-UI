@@ -457,8 +457,8 @@ def forget_device(db: Database, tenant_id: Any, device_id: Any, user_id: Any = N
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
-                 "confirm_plan", "poe_cycle"}
-USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle"}
+                 "confirm_plan", "poe_cycle", "wifi_package"}
+USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package"}
 
 
 def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
@@ -504,6 +504,15 @@ def request_command(db: Database, tenant_id: Any, device_id: Any, kind: str,
             except (portcfg.PortError, ValueError) as e:
                 raise ServiceError(str(e)) from e
             p = {"port": port}
+        if kind == "wifi_package":
+            from . import inventory, packages
+
+            if dev["state"] != "adopted":
+                raise ServiceError("výměnu balíčku lze poslat jen zařízení, které je online")
+            try:
+                packages.switch_body(inventory.load(tx, device_id, ["packages", "resource", "wifi", "wireless", "wifi_radios"]))
+            except ValueError as e:
+                raise ServiceError(str(e)) from e
         cid = enqueue(tx, tenant_id, device_id, kind, p, user_id)
         audit(tx, f"device.command.{kind}", tenant_id=tenant_id, user_id=user_id,
               target=f"device:{device_id}", after={"command_id": cid, **p}, ip=ip)
@@ -586,6 +595,12 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
 
             return routeros.wrap_command(ack_url, key, TAKEOVER_CONFIRM, opts)
         return routeros.wrap_command(ack_url, key, routeros.CONFIRM_BODY, opts)
+    if kind == "wifi_package":
+        from . import inventory, packages
+
+        inv = inventory.load(tx, dev["id"], ["packages", "resource", "wifi", "wireless", "wifi_radios"])
+        return routeros.wrap_command(ack_url, key, packages.switch_body(inv, opts.check_certificate), opts,
+                                     tail=packages.SWITCH_TAIL)
     if kind == "poe_cycle":
         from . import inventory, portcfg
 

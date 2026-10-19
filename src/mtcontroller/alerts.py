@@ -45,7 +45,7 @@ def _label(d: dict) -> str:
 def conditions(tx: Tx) -> list[Active]:
     out: list[Active] = []
     devs = tx.fetchall(
-        """SELECT d.id, d.tenant_id, d.serial, d.identity, d.state, d.ros_version, d.last_checkin_at,
+        """SELECT d.id, d.tenant_id, d.serial, d.identity, d.state, d.role::text AS role, d.ros_version, d.last_checkin_at,
                   d.last_status, d.inventory_error, d.inventory_at, d.backup_at, d.adopted_at,
                   (SELECT data FROM device_inventory i WHERE i.device_id = d.id AND i.section = 'resource') AS res
            FROM device d WHERE d.state IN ('adopted', 'offline', 'provisioning')""")
@@ -67,6 +67,20 @@ def conditions(tx: Tx) -> list[Active]:
         if d["state"] == "adopted" and d["inventory_error"] and "otisk certifikátu" in d["inventory_error"]:
             out.append(Active(t, i, "rest_pin_mismatch", "", "critical",
                               f"{name}: certifikát REST na zařízení nesouhlasí s uloženým otiskem – možné podvržení"))
+        if d["state"] == "adopted":
+            from . import inventory as _inv
+            from . import packages
+
+            pinv = _inv.load(tx, i, ["packages", "resource", "wifi", "wireless", "wifi_radios"])
+            if pinv.get("packages"):
+                ws = packages.wifi_status(pinv)
+                # hlásit u AP a všude, kde je jasná náprava (špatný ovladač na desce, která umí lepší)
+                if not ws["ok"] and (d.get("role") == "ap" or ws["fix"]):
+                    out.append(Active(t, i, "wifi_package", "", "warning", f"{name}: Wi-Fi ovladač – {ws['problem']}"))
+                mism = packages.version_mismatch(pinv)
+                if mism:
+                    out.append(Active(t, i, "package_version", "", "warning",
+                                      f"{name}: balíčky s jinou verzí než RouterOS (budou vypnuté): {', '.join(mism)}"))
         res = d["res"] or {}
         try:
             cpu = int(res.get("cpu-load"))
