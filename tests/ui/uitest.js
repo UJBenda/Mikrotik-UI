@@ -71,7 +71,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
 
 (async () => {
   try {
-    vm.runInContext(fs.readFileSync(appPath, "utf8") + "\n;globalThis.__t = { openDetail, drawTopology, renderClients };", ctx);
+    vm.runInContext(fs.readFileSync(appPath, "utf8") + "\n;globalThis.__t = { openDetail, drawTopology, renderClients, setCapsmanHost };", ctx);
     await new Promise((r) => setImmediate(r));
     for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
@@ -138,6 +138,14 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
       await tick();
+      if (!byId["capsman-card"].textContent.includes("CAPsMAN lokality: sw")) errors.push("wifi: karta CAPsMAN " + byId["capsman-card"].textContent.slice(0, 80));
+      {
+        const n0 = requests.length;
+        const pc = ctx.__t.setCapsmanHost(api.sw); await tick();
+        if (byId["ask"].hidden) errors.push("wifi: dialog CAPsMAN");
+        else { byId["ask-ok"].onclick(); await pc; await tick(); }
+        if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.endsWith("/intent"))) errors.push("wifi: nastavení CAPsMAN");
+      }
       const rows = byId["roam-clients"].children;
       if (rows.length !== 2 || !rows[0].textContent.includes("ntb-novak") || !rows[0].textContent.includes("přeskakuje"))
         errors.push("roaming: klienti " + byId["roam-clients"].textContent.slice(0, 160));

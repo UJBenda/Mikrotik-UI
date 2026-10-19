@@ -302,7 +302,7 @@ async def adoption_tokens(request: Request, p: Principal, tid: str) -> Response:
 
 # --- zařízení ----------------------------------------------------------------------
 
-_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model,
+_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model, d.managed_at IS NOT NULL AS managed,
                   (SELECT c.params->>'name' FROM device_command c WHERE c.device_id = d.id AND c.kind = 'set_identity'
                     AND c.status IN ('queued', 'sent') ORDER BY c.id DESC LIMIT 1) AS identity_pending, d.ros_version, d.role, d.state,
                   host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,

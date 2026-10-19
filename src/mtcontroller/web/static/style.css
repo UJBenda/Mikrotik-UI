@@ -716,3 +716,6 @@ table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-
 #jr-svg .jr-sig { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: .7; }
 #jr-svg .jr-pt { stroke: var(--card); stroke-width: .8; }
 .roam-mx .mxcell { width: 30%; }
+.capsman-card { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--line); border-left: 4px solid var(--accent);
+                border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; background: var(--card); }
+.capsman-card .cm-text { flex: 1; min-width: 260px; }

@@ -593,6 +593,8 @@ function deviceMenu(d) {
     d.update_available && d.state === "adopted" ? { label: `Aktualizovat → ${d.latest_version}`, act: () => upgradeDevice(d) } : null,
     { sep: true },
     { label: "Přejmenovat…", disabled: !canOperate() || d.state === "removed", act: () => renameDevice(d) },
+    { label: "Nastavit jako CAPsMAN lokality…", disabled: !canManage() || !d.site_id,
+      hint: d.managed ? "" : "CAPsMAN může běžet jen na řízeném zařízení", act: () => setCapsmanHost(d.id, d.site_id) },
     { label: d.note ? "Upravit poznámku…" : "Přidat poznámku…", disabled: !canOperate(), act: () => editNote(d) },
     { sep: true },
     { label: "Kopírovat sériové číslo", act: () => copyText(d.serial, "Sériové číslo") },
@@ -1113,8 +1115,53 @@ async function loadWifi() {
 }
 $("wifi-btn").addEventListener("click", loadWifi);
 
+// CAPsMAN lokality: kde běží a jak ho nastavit (výběr z řízených zařízení lokality)
+async function renderCapsmanCard() {
+  const box = $("capsman-card"); box.textContent = "";
+  let v;
+  try { v = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/intent`); } catch (_e) { return; }
+  const host = v.intent && v.intent.wifi && v.intent.wifi.capsman_device_id;
+  const hd = host && v.devices.find((d) => d.id === host);
+  const managed = v.devices.filter((d) => d.managed);
+  const t = el("div", null, "cm-text");
+  if (hd) t.append(el("b", "📡 CAPsMAN lokality: " + hd.name), el("span", " · rádia AP řídí odsud; SSID a nasazení v Sítě a DHCP → Záměr → Wi-Fi", "muted"));
+  else if (!v.intent) t.append(el("b", "CAPsMAN zatím není"), el("span", " – nejdřív nadefinuj sítě lokality (Sítě a DHCP → Záměr lokality).", "muted"));
+  else if (!managed.length) t.append(el("b", "CAPsMAN zatím není"), el("span", " – může běžet jen na řízeném zařízení. Převezmi switch do řízení (detail → Řízení) nebo ho nasaď s výchozí konfigurací „switch + CAPsMAN“.", "muted"));
+  else t.append(el("b", "CAPsMAN zatím není"), el("span", " – vyber řízené zařízení, nejlépe páteřní switch.", "muted"));
+  box.appendChild(t);
+  if (v.intent && managed.length && canManage()) {
+    const sel = el("select");
+    const o0 = el("option", hd ? "— vypnout CAPsMAN —" : "— vyber zařízení —"); o0.value = ""; sel.appendChild(o0);
+    for (const d of managed) { const o = el("option", `${d.name}${d.model ? " (" + d.model + ")" : ""}`); o.value = d.id; sel.appendChild(o); }
+    sel.value = host || "";
+    const b = el("button", hd ? "Změnit" : "Nastavit jako CAPsMAN", "small"); b.type = "button";
+    b.addEventListener("click", () => setCapsmanHost(sel.value || null));
+    box.append(sel, b);
+  }
+}
+
+async function setCapsmanHost(deviceId, siteOverride) {
+  const sid = siteOverride || siteId();
+  let v;
+  try { v = await api("GET", `/tenants/${tenantId}/sites/${sid}/intent`); } catch (e) { return msg(e.message, true); }
+  if (!v.intent) return msg("Lokalita nemá záměr – nejdřív nadefinuj sítě (Lokalita → Sítě a DHCP → Záměr lokality)", true);
+  const d = deviceId && v.devices.find((x) => x.id === deviceId);
+  if (deviceId && (!d || !d.managed)) return msg("CAPsMAN může běžet jen na řízeném zařízení – nejdřív ho převezmi (detail → Řízení)", true);
+  const text = deviceId ? `Nastavit ${d.name} jako CAPsMAN lokality?\n\nRádia všech AP s rolí „AP + switch“ pak řídí tento CAPsMAN. ` +
+    "Na zařízení se nic nezmění, dokud v Sítě a DHCP → Wi-Fi nedáš „Nasadit Wi-Fi“." : "Vypnout CAPsMAN v záměru lokality?";
+  if (!(await ask(text, deviceId ? "Nastavit" : "Vypnout"))) return;
+  const wifi = { ...(v.intent.wifi || {}), capsman_device_id: deviceId || null };
+  try {
+    await api("PUT", `/tenants/${tenantId}/sites/${sid}/intent`, { ...v.intent, wifi });
+    msg(deviceId ? `${d.name} je CAPsMAN lokality – dál: SSID a „Nasadit Wi-Fi“ v Sítě a DHCP → Záměr → Wi-Fi` : "CAPsMAN vypnut v záměru");
+    if (!$("wifi-wrap").hidden) renderCapsmanCard();
+    if (!$("net-wrap").hidden) loadIntent();
+  } catch (e) { msg(e.message, true); }
+}
+
 function renderWifi(w) {
   $("wifi-wrap").hidden = false;
+  renderCapsmanCard();
   const sm = w.summary;
   $("wifi-summary").textContent = `${sm.aps} zařízení, ${sm.radios} rádií, ${sm.clients} klientů` +
     (sm.ssids.length ? ` · SSID: ${sm.ssids.join(", ")}` : "");
