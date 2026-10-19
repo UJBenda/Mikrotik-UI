@@ -53,7 +53,11 @@ def site_intent_view(db: Database, tenant_id: Any, site_id: Any) -> dict:
         devs = _site_devices(tx, site_id)
         invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
         ssids = list_ssids(tx, site_id)
+        groups = {str(r["device_id"]): r["ap_group"] for r in tx.fetchall(
+            """SELECT i.device_id, i.ap_group FROM device_intent i JOIN device d ON d.id = i.device_id
+               WHERE d.site_id = %(s)s""", {"s": str(site_id)})}
     observed = dhcpguard.site_networks(devs, invs)["networks"]
+    from .packages import chip
     from .wificfg import supports_wifi
 
     return {
@@ -62,7 +66,9 @@ def site_intent_view(db: Database, tenant_id: Any, site_id: Any) -> dict:
         "suggested": None if cur else intent.from_observed(observed),
         "purposes": intent.PURPOSES,
         "devices": [{"id": str(d["id"]), "name": d["identity"] or d["serial"], "model": d["model"], "role": d["role"],
-                     "managed": d["managed_at"] is not None, "wifi": supports_wifi(invs[str(d["id"])])} for d in devs],
+                     "managed": d["managed_at"] is not None, "wifi": supports_wifi(invs[str(d["id"])]),
+                     "chip": chip(invs[str(d["id"])]), "ap_group": groups.get(str(d["id"])),
+                     "state": d["state"]} for d in devs],
     }
 
 
@@ -74,6 +80,9 @@ def set_site_intent(db: Database, tenant_id: Any, site_id: Any, data: dict, user
         old = load_intent(tx, site_id)
         if "wifi" not in data and old and old.get("wifi"):
             data = dict(data, wifi=old["wifi"])  # uložení sítí nesmí smazat nastavení Wi-Fi
+        elif isinstance(data.get("wifi"), dict) and "groups" not in data["wifi"] and old and old.get("wifi"):
+            # nastavení Wi-Fi bez skupin AP skupiny nemaže
+            data = dict(data, wifi=dict(data["wifi"], groups=old["wifi"].get("groups") or []))
         try:
             new = intent.validate(data)
         except intent.IntentError as e:

@@ -2942,7 +2942,17 @@
      "capsman_device_id": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
      "country": "Czech Republic",
      "dfs": true,
-     "max_width": 80
+     "max_width": 80,
+     "groups": [
+      {
+       "id": "g-sklad",
+       "name": "Sklad"
+      },
+      {
+       "id": "g-kancl",
+       "name": "Kancelář"
+      }
+     ]
     }
    },
    "suggested": null,
@@ -2962,7 +2972,10 @@
      "model": "RB5009",
      "role": "gateway",
      "managed": false,
-     "wifi": true
+     "wifi": true,
+     "chip": null,
+     "ap_group": null,
+     "state": "adopted"
     },
     {
      "id": "c98a55a0-459a-4cc5-823b-67fa7d9cd27c",
@@ -2970,7 +2983,32 @@
      "model": "CRS326",
      "role": "switch",
      "managed": true,
-     "wifi": null
+     "wifi": null,
+     "chip": null,
+     "ap_group": null,
+     "state": "adopted"
+    },
+    {
+     "id": "d1",
+     "name": "AP-sklad",
+     "model": "cAPGi-5HaxD2HaxD",
+     "role": "ap",
+     "managed": true,
+     "wifi": true,
+     "chip": "ax",
+     "ap_group": "g-sklad",
+     "state": "adopted"
+    },
+    {
+     "id": "d2",
+     "name": "AP-chodba",
+     "model": "RBcAPGi-5acD2nD",
+     "role": "ap",
+     "managed": true,
+     "wifi": true,
+     "chip": "ac",
+     "ap_group": null,
+     "state": "offline"
     }
    ],
    "ssids": [
@@ -2982,7 +3020,9 @@
      "isolation": false,
      "ft": true,
      "enabled": true,
-     "has_psk": true
+     "has_psk": true,
+     "groups": [],
+     "ppsk": []
     },
     {
      "id": "0b9a3c1e-0000-4000-8000-000000000002",
@@ -2992,7 +3032,20 @@
      "isolation": true,
      "ft": true,
      "enabled": true,
-     "has_psk": true
+     "has_psk": true,
+     "groups": [
+      "g-sklad"
+     ],
+     "ppsk": [
+      {
+       "name": "Ucetni",
+       "vlan_id": 10
+      },
+      {
+       "name": "Host",
+       "vlan_id": 20
+      }
+     ]
     }
    ]
   },
@@ -3362,7 +3415,9 @@
       "Hoste"
      ],
      "channel": 100,
-     "width": 80
+     "width": 80,
+     "group": null,
+     "chip": "ac"
     },
     {
      "device": "AP-chodba",
@@ -3373,7 +3428,9 @@
       "Hoste"
      ],
      "channel": 1,
-     "width": 20
+     "width": 20,
+     "group": null,
+     "chip": "ac"
     },
     {
      "device": "AP-sklad",
@@ -3384,7 +3441,9 @@
       "Hoste"
      ],
      "channel": 36,
-     "width": 80
+     "width": 80,
+     "group": null,
+     "chip": "ac"
     },
     {
      "device": "AP-sklad",
@@ -3395,7 +3454,9 @@
       "Hoste"
      ],
      "channel": 6,
-     "width": 20
+     "width": 20,
+     "group": null,
+     "chip": "ac"
     }
    ],
    "notes": [
@@ -3501,7 +3562,33 @@
     "notes": [
      "DFS kanály (52–64, 100+): při detekci radaru rádio na chvíli přejde jinam – pro kritické AP preferuj 36–48."
     ]
-   }
+   },
+   "groups": [
+    {
+     "id": "g-sklad",
+     "name": "Sklad"
+    },
+    {
+     "id": "g-kancl",
+     "name": "Kancelář"
+    }
+   ],
+   "tables": [
+    {
+     "device_id": "d2",
+     "device": "AP-chodba",
+     "table": [
+      {
+       "mac": "0A:55:31:53:B9:2E",
+       "ssid": "Firma",
+       "pvid": 10,
+       "tagged": []
+      }
+     ],
+     "sha": "aaa",
+     "installed": null
+    }
+   ]
   },
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/activity": {
    "state": "adopted",

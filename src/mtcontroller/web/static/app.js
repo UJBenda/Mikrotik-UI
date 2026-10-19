@@ -36,6 +36,87 @@ function ask(text, okLabel = "Potvrdit") {
 if (typeof document.addEventListener === "function") {
   document.addEventListener("keydown", (e) => { if (askDone && e.key === "Escape") askDone(false); });
 }
+// dotaz na krátký text (jméno skupiny…) ve stejném dialogu jako ask()
+async function askText(text, value = "", okLabel = "Uložit") {
+  const inp = $("ask-input");
+  inp.hidden = false; inp.value = value;
+  const p = ask(text, okLabel);
+  try { inp.focus(); if (inp.select) inp.select(); } catch (_e) { /* fokus není podstatný */ }
+  inp.onkeydown = (e) => { if (e.key === "Enter") $("ask-ok").onclick(); };
+  const ok = await p;
+  inp.hidden = true;
+  return ok ? inp.value.trim() : null;
+}
+
+// --- kontextové menu (pravé tlačítko, klávesa Menu / Shift+F10, tlačítko ⋯) -------------------------
+// položka: {label, act, danger, disabled, hint, checked} | {sep: true} | {head: "text"}; falsy položky se vynechají
+function ctxMenu(ev, title, items) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const m = $("ctx"); m.textContent = "";
+  if (title) m.appendChild(el("div", title, "ctx-title"));
+  const buttons = [];
+  for (const it of items) {
+    if (!it) continue;
+    if (it.sep) { m.appendChild(el("div", null, "ctx-sep")); continue; }
+    if (it.head) { m.appendChild(el("div", it.head, "ctx-head")); continue; }
+    const b = el("button", null, "ctx-item" + (it.danger ? " danger" : "") + (it.checked ? " checked" : ""));
+    b.type = "button"; b.setAttribute("role", "menuitem");
+    b.append(el("span", it.checked ? "✓" : "", "ctx-mark"), el("span", it.label));
+    if (it.key) b.appendChild(el("span", it.key, "ctx-key"));
+    b.disabled = !!it.disabled;
+    if (it.hint) b.title = it.hint;
+    b.addEventListener("click", () => { ctxHide(); it.act(); });
+    m.appendChild(b); buttons.push(b);
+  }
+  if (!buttons.length) return;
+  m.hidden = false; ctxOpenedAt = Date.now();
+  // pozice u kurzoru, ale vždy celé v okně
+  const W = window.innerWidth || 1e4, H = window.innerHeight || 1e4;
+  const w = m.offsetWidth || 220, h = m.offsetHeight || 200;
+  let x = ev && ev.clientX != null ? ev.clientX : 0, y = ev && ev.clientY != null ? ev.clientY : 0;
+  if ((!x && !y) && ev && ev.currentTarget && ev.currentTarget.getBoundingClientRect) {
+    const r = ev.currentTarget.getBoundingClientRect(); x = r.left + 12; y = r.bottom - 4;  // z klávesnice
+  }
+  m.style.left = Math.max(4, Math.min(x, W - w - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(y, H - h - 4)) + "px";
+  try { buttons.find((b) => !b.disabled).focus(); } catch (_e) { /* fokus není podstatný */ }
+}
+let ctxOpenedAt = 0;
+function ctxHide() { const m = $("ctx"); if (m && !m.hidden) m.hidden = true; }
+// posun stránky menu zavře – ale ne posun, který vyvolalo samo otevření (fokus řádku)
+function ctxHideOnScroll() { if (Date.now() - ctxOpenedAt > 250) ctxHide(); }
+// prvek s menu: pravé tlačítko i klávesnice (prvek musí jít zaměřit)
+function withCtx(node, title, items) {
+  node.addEventListener("contextmenu", (ev) => ctxMenu(ev, typeof title === "function" ? title() : title, items()));
+  if (node.tabIndex == null || node.tabIndex < 0) node.tabIndex = 0;
+  return node;
+}
+function moreButton(title, items) {
+  const b = el("button", "⋯", "icon-btn more"); b.type = "button"; b.title = "Akce (nebo pravé tlačítko)";
+  b.setAttribute("aria-haspopup", "menu");
+  b.addEventListener("click", (ev) => ctxMenu(ev, typeof title === "function" ? title() : title, items()));
+  return b;
+}
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("click", (e) => { const m = $("ctx"); if (m && !m.hidden && !m.contains(e.target)) ctxHide(); });
+  document.addEventListener("keydown", (e) => {
+    const m = $("ctx");
+    if (!m || m.hidden) return;
+    if (e.key === "Escape") { ctxHide(); e.preventDefault(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const bs = [...m.querySelectorAll("button.ctx-item:not(:disabled)")];
+      const i = bs.indexOf(document.activeElement);
+      const n = bs[(i + (e.key === "ArrowDown" ? 1 : bs.length - 1)) % bs.length];
+      if (n) n.focus();
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("resize", ctxHide);
+  document.addEventListener("scroll", ctxHideOnScroll, true);
+}
+function copyText(t, what) { navigator.clipboard.writeText(String(t)).then(() => msg(`${what} zkopírováno`)); }
+
 // chyba ve skriptu se ukáže v UI, ne jen v konzoli (jinak tlačítko „nic nedělá“)
 if (typeof window.addEventListener === "function") {
   window.addEventListener("error", (e) => msg("Chyba v UI: " + (e.message || e), true));
@@ -263,7 +344,9 @@ async function loadDevices() {
     if (d.state !== "pending") {
       tr.className = "clickable";
       tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON" && ev.target.tagName !== "SELECT") openDetail(d.id); });
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
     }
+    withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
     tr.appendChild(el("td", d.state, "state " + d.state));
     tr.appendChild(el("td", d.serial));
     tr.appendChild(el("td", d.model));
@@ -314,18 +397,39 @@ async function loadDevices() {
 function forgetButton(d) {
   const b = el("button", d.state === "pending" ? "Zahodit" : "Zapomenout", "small danger");
   b.title = "Odebrat jen z controlleru, bez úklidu na zařízení";
-  b.onclick = async () => {
-    const name = d.identity || d.serial;
-    const text = d.state === "pending"
-      ? `Zahodit čekající zařízení ${name}? Lze ho kdykoli adoptovat znovu.`
-      : `Zapomenout zařízení ${name}?\n\nOdebere ho jen z controlleru – zařízení nic nedostane. Použij, když „Odebrat“ nejde, ` +
-        "protože zařízení neodpovídá. Klíče se zneplatní, fronta příkazů a plány se zruší, účet na koncentrátoru se vypne. " +
-        "Zařízení pak jde znovu adoptovat (adopce stávající objekty mtc přepíše).";
-    if (!(await ask(text, d.state === "pending" ? "Zahodit" : "Zapomenout"))) return;
-    try { await api("POST", `/tenants/${tenantId}/devices/${d.id}/forget`, {}); msg(`${name}: odebráno z controlleru`); loadDevices(); }
-    catch (e) { msg(e.message, true); }
-  };
+  b.onclick = () => forgetDevice(d);
   return b;
+}
+
+// akce zařízení pro pravé tlačítko na řádku (stejné jako tlačítka v řádku)
+function deviceMenu(d) {
+  if (d.state === "pending") return [{ label: "Zahodit", danger: true, act: () => forgetDevice(d) }];
+  const live = d.state !== "removed";
+  return [
+    { label: "Otevřít detail", key: "Enter", act: () => openDetail(d.id) },
+    d.update_available && d.state === "adopted" ? { label: `Aktualizovat → ${d.latest_version}`, act: () => upgradeDevice(d) } : null,
+    { sep: true },
+    { label: "Kopírovat sériové číslo", act: () => copyText(d.serial, "Sériové číslo") },
+    d.tunnel_ip ? { label: "Kopírovat IP v tunelu", act: () => copyText(d.tunnel_ip, "IP") } : null,
+    { sep: true },
+    { label: "Znovu provisioning", disabled: !live, act: () => sendCommand(d, "provision", "Znovu provisioning") },
+    { label: "Restart", disabled: !live, act: () => sendCommand(d, "reboot", "Restart") },
+    { sep: true },
+    { label: "Odebrat", danger: true, disabled: !live, act: () => sendCommand(d, "deprovision", "Odebrat") },
+    live ? { label: "Zapomenout", danger: true, act: () => forgetDevice(d) } : null,
+  ];
+}
+
+async function forgetDevice(d) {
+  const name = d.identity || d.serial;
+  const text = d.state === "pending"
+    ? `Zahodit čekající zařízení ${name}? Lze ho kdykoli adoptovat znovu.`
+    : `Zapomenout zařízení ${name}?\n\nOdebere ho jen z controlleru – zařízení nic nedostane. Použij, když „Odebrat“ nejde, ` +
+      "protože zařízení neodpovídá. Klíče se zneplatní, fronta příkazů a plány se zruší, účet na koncentrátoru se vypne. " +
+      "Zařízení pak jde znovu adoptovat (adopce stávající objekty mtc přepíše).";
+  if (!(await ask(text, d.state === "pending" ? "Zahodit" : "Zapomenout"))) return;
+  try { await api("POST", `/tenants/${tenantId}/devices/${d.id}/forget`, {}); msg(`${name}: odebráno z controlleru`); loadDevices(); }
+  catch (e) { msg(e.message, true); }
 }
 
 function approveControls(d) {
@@ -470,6 +574,13 @@ async function loadPlans() {
     const no = el("button", "Zahodit", "small secondary");
     no.onclick = async () => { try { await api("POST", `/tenants/${tenantId}/plans/${p.id}/discard`); loadPlans(); } catch (e) { msg(e.message, true); } };
     div.append(ok, " ", no);
+    withCtx(div, `Plán #${p.id} · ${p.identity || p.serial}`, () => [
+      { label: "Schválit a aplikovat", act: () => ok.onclick() },
+      { label: "Zahodit", danger: true, act: () => no.onclick() },
+      { sep: true },
+      { label: "Otevřít zařízení", act: () => openDetail(p.device_id) },
+      { label: "Kopírovat skript", act: () => copyText(p.script, "Skript") },
+    ]);
     box.appendChild(div);
   }
 }
@@ -729,6 +840,10 @@ const ROLE_LABEL = { tenant_admin: "správce", technician: "technik", readonly: 
 
 function canManage() {
   return me && (me.superadmin || (me.tenants || {})[tenantId] === "tenant_admin");
+}
+// technik smí měnit provozní věci (skupina AP, výjimky portů), ne záměr a hesla
+function canOperate() {
+  return canManage() || (me && (me.tenants || {})[tenantId] === "technician");
 }
 
 async function loadUsers() {
@@ -1988,6 +2103,13 @@ function drawLeaseRows() {
     const act = el("td");
     const eb = el("button", "Upravit", "small secondary"); eb.type = "button";
     eb.addEventListener("click", () => { c.edit = c.edit && c.edit.mac === r.mac ? null : { mac: r.mac }; drawLeaseRows(); });
+    withCtx(tr, r.ip || r.mac, () => [
+      { label: r.kind === "dynamic" ? "Udělat statickou (rezervace)…" : "Upravit…", act: () => { c.edit = { mac: r.mac }; drawLeaseRows(); } },
+      { sep: true },
+      r.ip ? { label: "Kopírovat IP", act: () => copyText(r.ip, "IP") } : null,
+      { label: "Kopírovat MAC", act: () => copyText(r.mac, "MAC") },
+      r.hostname ? { label: "Kopírovat hostname", act: () => copyText(r.hostname, "Hostname") } : null,
+    ]);
     act.appendChild(eb);
     tr.appendChild(act);
     tb.appendChild(tr);
@@ -2584,10 +2706,24 @@ async function loadIntent() {
   renderIntentWifi();
 }
 
-// --- Wi-Fi: CAPsMAN a SSID ---
-function renderIntentWifi() {
+// --- Wi-Fi: CAPsMAN, SSID (karty + editor), skupiny AP (tabule s přetahováním) ---
+let wifiGroups = [];          // [{id, name}] – ukládá se se záměrem lokality
+const apSel = new Set();      // vybraná AP na tabuli (Ctrl+klik)
+const BAND_LABEL = { "2.4,5": "2,4 + 5 GHz", "5": "5 GHz", "2.4": "2,4 GHz" };
+const CHIP_LABEL = { ax: "ax", ac: "ac", legacy: "starý" };
+const sitePath = () => `/tenants/${tenantId}/sites/${siteId()}`;
+
+function wifiPolicy() {
   const cur = intentData.intent;
-  const w = (cur && cur.wifi) || { capsman_device_id: null, max_width: 80, dfs: true, country: "Czech Republic" };
+  return (cur && cur.wifi) || { capsman_device_id: null, max_width: 80, dfs: true, country: "Czech Republic", groups: [] };
+}
+const netName = (vid) => { const n = intentNets.find((x) => String(x.vlan_id) === String(vid)); return n ? n.name : `VLAN ${vid}`; };
+const groupName = (gid) => { const g = wifiGroups.find((x) => x.id === gid); return g ? g.name : "?"; };
+const siteAps = () => intentData.devices.filter((d) => d.role === "ap" || (d.wifi && d.role !== "gateway"));
+
+function renderIntentWifi() {
+  const w = wifiPolicy();
+  wifiGroups = (w.groups || []).map((g) => ({ ...g }));
   const host = $("wifi-host"); host.textContent = "";
   const none = el("option", "— nevybráno —"); none.value = ""; host.appendChild(none);
   for (const d of intentData.devices.filter((x) => x.managed)) {
@@ -2599,65 +2735,367 @@ function renderIntentWifi() {
   $("wifi-dfs").checked = w.dfs !== false;
   $("wifi-country").value = w.country || "Czech Republic";
   $("wifi-result").textContent = "";
-  const tb = $("ssid-rows"); tb.textContent = "";
-  for (const x of intentData.ssids || []) tb.appendChild(ssidRow(x));
-  if (!(intentData.ssids || []).length) {
-    const tr = el("tr"); const td = el("td", "Žádná Wi-Fi síť.", "muted"); td.colSpan = 8; tr.appendChild(td); tb.appendChild(tr);
-  }
+  renderSsidCards();
+  renderApBoard();
+  $("apg-add").disabled = !canManage();
   $("wifi-deploy").disabled = !canManage() || !w.capsman_device_id || !(intentData.ssids || []).length;
   $("wifi-deploy").title = !w.capsman_device_id ? "nejdřív vyber a ulož zařízení s CAPsMANem" : "";
 }
 
-function ssidRow(x) {
-  const tr = el("tr");
-  const name = el("input"); name.value = x.ssid || ""; name.maxLength = 32; name.placeholder = "SSID";
-  const net = el("select");
-  for (const n of intentNets) { const o = el("option", `${n.name} (${n.vlan_id})`); o.value = String(n.vlan_id); net.appendChild(o); }
-  if (x.vlan_id) net.value = String(x.vlan_id);
-  const bands = el("select");
-  for (const [v, l] of [["2.4,5", "2,4 + 5 GHz"], ["5", "jen 5 GHz"], ["2.4", "jen 2,4 GHz"]]) { const o = el("option", l); o.value = v; bands.appendChild(o); }
-  bands.value = x.bands || "2.4,5";
-  const psk = el("input"); psk.type = "password"; psk.autocomplete = "new-password"; psk.maxLength = 63;
-  psk.placeholder = x.id ? "uloženo (prázdné = beze změny)" : "8–63 znaků";
-  const chk = (v) => { const i = el("input"); i.type = "checkbox"; i.checked = !!v; return i; };
-  const iso = chk(x.isolation), ft = chk(x.ft !== false), en = chk(x.enabled !== false);
-  const save = el("button", "Uložit", "small"); save.type = "button";
-  save.addEventListener("click", async () => {
-    const body = { ssid: name.value, vlan_id: Number(net.value), bands: bands.value, isolation: iso.checked, ft: ft.checked,
-                   enabled: en.checked, psk: psk.value };
-    try {
-      if (x.id) await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/ssids/${x.id}`, body);
-      else await api("POST", `/tenants/${tenantId}/sites/${siteId()}/ssids`, body);
-      msg(`Wi-Fi ${body.ssid} uložena – na AP se projeví po „Nasadit Wi-Fi“`); loadIntent();
-    } catch (e) { msg(e.message, true); }
-  });
-  const rm = el("button", "×", "small secondary"); rm.type = "button"; rm.title = "Smazat SSID";
-  rm.addEventListener("click", async () => {
-    if (!x.id) { tr.remove(); return; }
-    if (!(await ask(`Smazat Wi-Fi ${x.ssid}? Z AP zmizí po dalším nasazení Wi-Fi.`, "Smazat"))) return;
-    try { await api("DELETE", `/tenants/${tenantId}/sites/${siteId()}/ssids/${x.id}`); loadIntent(); } catch (e) { msg(e.message, true); }
-  });
-  const cell = (...xs) => { const td = el("td"); td.append(...xs); return td; };
-  tr.append(cell(name), cell(net), cell(bands), cell(psk), cell(iso), cell(ft), cell(en), cell(save, rm));
-  return tr;
+// kde se SSID vysílá – text pro kartu
+function ssidWhere(x) {
+  return (x.groups || []).length ? x.groups.map(groupName).join(", ") : "všechna AP";
 }
 
-$("ssid-add").addEventListener("click", () => {
-  const tb = $("ssid-rows");
-  if (!(intentData.ssids || []).length) tb.textContent = "";
-  tb.appendChild(ssidRow({ vlan_id: intentData.intent ? intentData.intent.access_vlan : null }));
+function ssidMenu(x) {
+  const can = canManage();
+  return [
+    { label: "Upravit…", act: () => openSsid(x), key: "Enter" },
+    { label: x.enabled ? "Vypnout" : "Zapnout", disabled: !can, act: () => patchSsid(x, { enabled: !x.enabled }) },
+    { label: "Roaming (FT)", checked: x.ft !== false, disabled: !can, act: () => patchSsid(x, { ft: x.ft === false }) },
+    { label: "Izolace klientů", checked: !!x.isolation, disabled: !can, act: () => patchSsid(x, { isolation: !x.isolation }) },
+    { sep: true },
+    { head: "Vysílat na" },
+    { label: "všech AP", checked: !(x.groups || []).length, disabled: !can, act: () => patchSsid(x, { groups: [] }) },
+    ...wifiGroups.map((g) => ({ label: g.name, checked: (x.groups || []).includes(g.id), disabled: !can,
+                                act: () => patchSsid(x, { groups: toggled(x.groups || [], g.id) }) })),
+    { sep: true },
+    (x.ppsk || []).length ? { label: "Zobrazit hesla více hesel", disabled: !can, act: () => revealPpsk(x) } : null,
+    { label: "Duplikovat…", disabled: !can, act: () => openSsid({ ...x, id: null, ssid: x.ssid + "-2", ppsk: [] }) },
+    { label: "Smazat", danger: true, disabled: !can, act: () => deleteSsid(x) },
+  ];
+}
+const toggled = (arr, v) => (arr.includes(v) ? arr.filter((a) => a !== v) : [...arr, v]);
+
+function renderSsidCards() {
+  const box = $("ssid-cards"); box.textContent = "";
+  for (const x of intentData.ssids || []) {
+    const card = el("div", null, "ssid-card" + (x.enabled === false ? " off" : ""));
+    const head = el("div", null, "sc-head");
+    head.append(el("span", "📶", "sc-ico"), el("b", x.ssid), moreButton(x.ssid, () => ssidMenu(x)));
+    card.appendChild(head);
+    const meta = el("div", null, "sc-meta");
+    meta.append(el("span", netName(x.vlan_id), "wpill vlan"), el("span", BAND_LABEL[x.bands] || x.bands, "wpill"));
+    if (x.ft !== false) meta.appendChild(el("span", "FT", "wpill ok"));
+    if (x.isolation) meta.appendChild(el("span", "izolace", "wpill"));
+    if (x.enabled === false) meta.appendChild(el("span", "vypnuto", "wpill bad"));
+    card.appendChild(meta);
+    if ((x.ppsk || []).length) {
+      const pp = el("div", null, "sc-ppsk");
+      pp.append(el("span", `${x.ppsk.length}× heslo`, "badge-ax"), el("span", " → " + [...new Set(x.ppsk.map((e) => netName(e.vlan_id)))].join(", "), "muted"));
+      pp.title = "Více hesel s VLAN – vysílá se jen na cAP ax";
+      card.appendChild(pp);
+      // AP s 802.11ac tam, kde by se SSID mělo vysílat: tam ho nebude
+      const ac = siteAps().filter((d) => d.chip !== "ax" && (!(x.groups || []).length || x.groups.includes(d.ap_group)));
+      if (ac.length) {
+        const wn = el("div", `⚠ na ${ac.length} AP bez ax se nevysílá`, "sc-warn");
+        wn.title = ac.map((d) => d.name).join(", ");
+        card.appendChild(wn);
+      }
+    }
+    card.appendChild(el("div", "📍 " + ssidWhere(x), "sc-where"));
+    card.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON") openSsid(x); });
+    card.addEventListener("keydown", (ev) => { if (ev.key === "Enter") openSsid(x); });
+    withCtx(card, x.ssid, () => ssidMenu(x));
+    box.appendChild(card);
+  }
+  const add = el("button", null, "ssid-card add"); add.type = "button";
+  add.append(el("span", "+", "sc-plus"), el("span", "Nová Wi-Fi síť"));
+  add.disabled = !canManage();
+  add.addEventListener("click", () => openSsid({ vlan_id: intentData.intent ? intentData.intent.access_vlan : null }));
+  box.appendChild(add);
+}
+
+// rychlá změna z menu: celé SSID znovu (heslo a více hesel beze změny)
+async function patchSsid(x, change) {
+  const body = { ssid: x.ssid, vlan_id: x.vlan_id, bands: x.bands, isolation: !!x.isolation, ft: x.ft !== false,
+                 enabled: x.enabled !== false, groups: x.groups || [], ...change };
+  try {
+    const r = await api("PUT", `${sitePath()}/ssids/${x.id}`, body);
+    for (const w of r.warnings || []) msg(w);
+    msg(`Wi-Fi ${x.ssid} upravena – na AP se projeví po „Nasadit Wi-Fi“`); loadIntent();
+  } catch (e) { msg(e.message, true); }
+}
+
+async function deleteSsid(x) {
+  if (!(await ask(`Smazat Wi-Fi ${x.ssid}? Z AP zmizí po dalším nasazení Wi-Fi.`, "Smazat"))) return false;
+  try { await api("DELETE", `${sitePath()}/ssids/${x.id}`); msg(`Wi-Fi ${x.ssid} smazána`); loadIntent(); return true; }
+  catch (e) { msg(e.message, true); return false; }
+}
+
+async function revealPpsk(x) {
+  try {
+    const r = await api("POST", `${sitePath()}/ssids/${x.id}/ppsk/reveal`, {});
+    const lines = (r.ppsk || []).map((e) => `${e.name} (${netName(e.vlan_id)}): ${e.psk}`);
+    await ask(`${x.ssid} – hesla (zobrazení je v auditu):\n\n${lines.join("\n")}`, "Zavřít");
+    return r.ppsk || [];
+  } catch (e) { msg(e.message, true); return null; }
+}
+
+// --- editor SSID ---
+let sd = null;  // {x, bands, groups, ppsk:[{name, vlan_id, psk, saved}], ppskDirty}
+function openSsid(x) {
+  sd = { x, bands: x.bands || "2.4,5", groups: [...(x.groups || [])], ppskDirty: false,
+         ppsk: (x.ppsk || []).map((e) => ({ name: e.name, vlan_id: e.vlan_id, psk: "", saved: true })) };
+  $("sd-title").textContent = x.id ? `Wi-Fi ${x.ssid}` : "Nová Wi-Fi síť";
+  $("sd-ssid").value = x.ssid || "";
+  const v = $("sd-vlan"); v.textContent = "";
+  for (const n of intentNets) { const o = el("option", `${n.name} (VLAN ${n.vlan_id})`); o.value = String(n.vlan_id); v.appendChild(o); }
+  if (x.vlan_id != null) v.value = String(x.vlan_id);
+  $("sd-psk").value = ""; $("sd-psk").type = "password";
+  $("sd-psk").placeholder = x.id ? "uloženo (prázdné = beze změny)" : "8–63 znaků";
+  $("sd-en").checked = x.enabled !== false; $("sd-ft").checked = x.ft !== false; $("sd-iso").checked = !!x.isolation;
+  $("sd-delete").hidden = !x.id; $("sd-ppsk-reveal").hidden = !x.id || !(x.ppsk || []).length;
+  $("sd-csv-box").hidden = true; $("sd-warn").textContent = "";
+  for (const id of ["sd-save", "sd-delete", "sd-ppsk-add", "sd-ppsk-csv"]) $(id).disabled = !canManage();
+  sdBands(); sdGroups(); sdPpsk();
+  $("ssid-dlg").hidden = false;
+  try { $("sd-ssid").focus(); } catch (_e) { /* fokus není podstatný */ }
+}
+function sdClose() { $("ssid-dlg").hidden = true; sd = null; }
+function sdBands() {
+  segmented($("sd-bands"), Object.entries(BAND_LABEL), sd.bands, (b) => { sd.bands = b; sdBands(); });
+}
+function sdGroups() {
+  const box = $("sd-groups"); box.textContent = "";
+  const all = el("button", "všechna AP", "gchip" + (sd.groups.length ? "" : " on")); all.type = "button";
+  all.addEventListener("click", () => { sd.groups = []; sdGroups(); });
+  box.appendChild(all);
+  for (const g of wifiGroups) {
+    const b = el("button", g.name, "gchip" + (sd.groups.includes(g.id) ? " on" : "")); b.type = "button";
+    const n = siteAps().filter((d) => d.ap_group === g.id).length;
+    b.title = `${n} AP ve skupině`;
+    b.addEventListener("click", () => { sd.groups = toggled(sd.groups, g.id); sdGroups(); });
+    box.appendChild(b);
+  }
+  if (!wifiGroups.length) box.appendChild(el("span", "skupiny AP založíš na tabuli pod kartami", "muted small"));
+}
+function sdPpsk() {
+  const tb = $("sd-ppsk"); tb.textContent = "";
+  for (const e of sd.ppsk) {
+    const tr = el("tr");
+    const nm = el("input"); nm.value = e.name; nm.maxLength = 40; nm.placeholder = "např. Účetní";
+    nm.addEventListener("input", () => { e.name = nm.value; sd.ppskDirty = true; });
+    const vl = el("select");
+    for (const n of intentNets) { const o = el("option", `${n.name} (${n.vlan_id})`); o.value = String(n.vlan_id); vl.appendChild(o); }
+    vl.value = String(e.vlan_id); vl.addEventListener("change", () => { e.vlan_id = Number(vl.value); sd.ppskDirty = true; });
+    const pk = el("input"); pk.type = "password"; pk.autocomplete = "new-password"; pk.maxLength = 63; pk.value = e.psk;
+    pk.placeholder = e.saved ? "uloženo" : "8–63 znaků";
+    pk.addEventListener("input", () => { e.psk = pk.value; sd.ppskDirty = true; });
+    const rm = el("button", "×", "icon-btn"); rm.type = "button"; rm.title = "Odebrat heslo";
+    rm.addEventListener("click", () => { sd.ppsk.splice(sd.ppsk.indexOf(e), 1); sd.ppskDirty = true; sdPpsk(); });
+    const td = (...xs) => { const c = el("td"); c.append(...xs); return c; };
+    tr.append(td(nm), td(vl), td(pk), td(rm));
+    tb.appendChild(tr);
+  }
+  if (!sd.ppsk.length) {
+    const tr = el("tr"); const c = el("td", "Jedno heslo pro všechny (hlavní heslo a VLAN SSID).", "muted"); c.colSpan = 4;
+    tr.appendChild(c); tb.appendChild(tr);
+  }
+}
+$("sd-ppsk-add").addEventListener("click", () => {
+  const used = new Set(sd.ppsk.map((e) => e.vlan_id));
+  const n = intentNets.find((x) => !used.has(Number(x.vlan_id)) && x.purpose !== "mgmt") || intentNets[0];
+  sd.ppsk.push({ name: "", vlan_id: n ? Number(n.vlan_id) : Number($("sd-vlan").value), psk: "", saved: false });
+  sd.ppskDirty = true; sdPpsk();
 });
+$("sd-ppsk-csv").addEventListener("click", () => { $("sd-csv-box").hidden = !$("sd-csv-box").hidden; });
+$("sd-csv-ok").addEventListener("click", () => {
+  // jméno;vlan;heslo (oddělovač ; , nebo tab); VLAN jako číslo nebo jméno sítě
+  let n = 0; const bad = [];
+  for (const line of $("sd-csv").value.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const [name, vlan, psk] = line.split(/[;,\t]/).map((s) => (s || "").trim());
+    const net = intentNets.find((x) => String(x.vlan_id) === vlan || (x.name || "").toLowerCase() === (vlan || "").toLowerCase());
+    if (!name || !net) { bad.push(line); continue; }
+    const ex = sd.ppsk.find((e) => e.name.toLowerCase() === name.toLowerCase());
+    if (ex) { ex.vlan_id = Number(net.vlan_id); if (psk) ex.psk = psk; } else sd.ppsk.push({ name, vlan_id: Number(net.vlan_id), psk: psk || "", saved: false });
+    n++;
+  }
+  sd.ppskDirty = true; sdPpsk();
+  $("sd-csv").value = bad.join("\n");
+  msg(`Načteno ${n} hesel` + (bad.length ? ` – ${bad.length} řádků nejde přečíst (zůstaly v poli)` : ""), !!bad.length);
+  if (!bad.length) $("sd-csv-box").hidden = true;
+});
+$("sd-ppsk-reveal").addEventListener("click", async () => {
+  const r = await revealPpsk(sd.x);
+  if (!r || !sd) return;
+  for (const e of sd.ppsk) { const f = r.find((x) => x.name.toLowerCase() === e.name.toLowerCase()); if (f && !e.psk) e.psk = f.psk; }
+  sdPpsk();
+});
+$("sd-psk-eye").addEventListener("click", () => { $("sd-psk").type = $("sd-psk").type === "password" ? "text" : "password"; });
+$("sd-close").addEventListener("click", sdClose);
+$("sd-cancel").addEventListener("click", sdClose);
+$("sd-delete").addEventListener("click", async () => { if (await deleteSsid(sd.x)) sdClose(); });
+$("sd-save").addEventListener("click", async () => {
+  const x = sd.x;
+  const body = { ssid: $("sd-ssid").value.trim(), vlan_id: Number($("sd-vlan").value), bands: sd.bands,
+                 isolation: $("sd-iso").checked, ft: $("sd-ft").checked, enabled: $("sd-en").checked,
+                 psk: $("sd-psk").value, groups: sd.groups };
+  if (sd.ppskDirty || !x.id) body.ppsk = sd.ppsk.map((e) => ({ name: e.name.trim(), vlan_id: Number(e.vlan_id), psk: e.psk }));
+  const ul = $("sd-warn"); ul.textContent = "";
+  try {
+    const r = x.id ? await api("PUT", `${sitePath()}/ssids/${x.id}`, body) : await api("POST", `${sitePath()}/ssids`, body);
+    for (const w of r.warnings || []) msg(w);
+    msg(`Wi-Fi ${body.ssid} uložena – na AP se projeví po „Nasadit Wi-Fi“`);
+    sdClose(); loadIntent();
+  } catch (e) { ul.appendChild(el("li", e.message, "sev-error")); }
+});
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("keydown", (e) => { if (sd && e.key === "Escape" && $("ask").hidden) sdClose(); });
+}
+
+// --- tabule skupin AP ---
+function apMenu(d) {
+  const ids = apSel.has(d.id) && apSel.size > 1 ? [...apSel] : [d.id];
+  const can = canOperate();
+  return [
+    { label: "Otevřít detail", act: () => openDetail(d.id) },
+    { sep: true },
+    { head: ids.length > 1 ? `Přesunout ${ids.length} AP do` : "Přesunout do" },
+    { label: "bez skupiny", checked: ids.length === 1 && !d.ap_group, disabled: !can, act: () => moveAps(ids, null) },
+    ...wifiGroups.map((g) => ({ label: g.name, checked: ids.length === 1 && d.ap_group === g.id, disabled: !can,
+                                act: () => moveAps(ids, g.id) })),
+    { label: "Nová skupina…", disabled: !canManage(), act: async () => { const g = await addGroup(); if (g) moveAps(ids, g.id); } },
+    { sep: true },
+    { label: apSel.has(d.id) ? "Zrušit výběr" : "Vybrat", act: () => { apSel.has(d.id) ? apSel.delete(d.id) : apSel.add(d.id); renderApBoard(); } },
+  ];
+}
+function groupMenu(g) {
+  const can = canManage();
+  const members = siteAps().filter((d) => (d.ap_group || null) === (g ? g.id : null));
+  return [
+    { label: "Vybrat všechna AP", disabled: !members.length, act: () => { for (const d of members) apSel.add(d.id); renderApBoard(); } },
+    g ? { label: "Přejmenovat…", disabled: !can, act: () => renameGroup(g) } : null,
+    g ? { label: "Nová Wi-Fi jen pro tuto skupinu…", disabled: !can,
+          act: () => openSsid({ vlan_id: intentData.intent ? intentData.intent.access_vlan : null, groups: [g.id] }) } : null,
+    g ? { sep: true } : null,
+    g ? { label: "Smazat skupinu", danger: true, disabled: !can, act: () => deleteGroup(g) } : null,
+  ];
+}
+
+function renderApBoard() {
+  const board = $("apg-board"); board.textContent = "";
+  const aps = siteAps();
+  for (const id of [...apSel]) if (!aps.some((d) => d.id === id)) apSel.delete(id);
+  const cols = [null, ...wifiGroups];
+  for (const g of cols) {
+    const col = el("div", null, "apg-col" + (g ? "" : " nogroup"));
+    const head = el("div", null, "apg-head");
+    const members = aps.filter((d) => (d.ap_group || null) === (g ? g.id : null));
+    head.append(el("b", g ? g.name : "Bez skupiny"), el("span", String(members.length), "apg-n"), moreButton(g ? g.name : "Bez skupiny", () => groupMenu(g)));
+    if (g) head.addEventListener("dblclick", () => renameGroup(g));
+    col.appendChild(head);
+    // SSID, která se v této skupině vysílají
+    const ss = el("div", null, "apg-ssids");
+    const here = (intentData.ssids || []).filter((x) => x.enabled !== false && (g ? !(x.groups || []).length || x.groups.includes(g.id) : !(x.groups || []).length));
+    for (const x of here) {
+      const p = el("span", x.ssid, "wpill" + ((x.groups || []).length ? " vlan" : ""));
+      p.title = (x.groups || []).length ? "jen ve vybraných skupinách" : "na všech AP";
+      p.addEventListener("click", () => openSsid(x));
+      withCtx(p, x.ssid, () => ssidMenu(x));
+      ss.appendChild(p);
+    }
+    if (!here.length) ss.appendChild(el("span", "žádné SSID", "muted small"));
+    col.appendChild(ss);
+    const list = el("div", null, "apg-list");
+    for (const d of members) list.appendChild(apChip(d));
+    if (!members.length) list.appendChild(el("div", g ? "přetáhni sem AP" : "—", "apg-empty"));
+    col.appendChild(list);
+    // přetahování
+    col.addEventListener("dragover", (ev) => { ev.preventDefault(); col.className = col.className.replace(/ drop$/, "") + " drop"; });
+    col.addEventListener("dragleave", () => { col.className = col.className.replace(/ drop$/, ""); });
+    col.addEventListener("drop", (ev) => {
+      ev.preventDefault(); col.className = col.className.replace(/ drop$/, "");
+      const id = ev.dataTransfer && ev.dataTransfer.getData("text/plain");
+      if (!id) return;
+      const ids = apSel.has(id) ? [...apSel] : [id];
+      if (ids.every((x) => (aps.find((d) => d.id === x) || {}).ap_group === (g ? g.id : undefined) ||
+                           ((aps.find((d) => d.id === x) || {}).ap_group || null) === (g ? g.id : null))) return;
+      moveAps(ids, g ? g.id : null);
+    });
+    withCtx(col, g ? g.name : "Bez skupiny", () => groupMenu(g));
+    board.appendChild(col);
+  }
+  if (!aps.length) board.appendChild(el("p", "Na lokalitě zatím není žádné AP s Wi-Fi.", "muted"));
+}
+
+function apChip(d) {
+  const c = el("div", null, "ap-chip" + (apSel.has(d.id) ? " sel" : "") + (d.state === "offline" ? " offline" : ""));
+  c.draggable = canOperate();
+  c.append(el("span", "", "ap-dot"), el("span", d.name, "ap-name"));
+  if (d.chip) {
+    const b = el("span", CHIP_LABEL[d.chip] || d.chip, "ap-std " + d.chip);
+    b.title = d.chip === "ax" ? "802.11ax (wifi-qcom) – umí i více hesel s VLAN"
+      : d.chip === "ac" ? "802.11ac (wifi-qcom-ac) – SSID s více hesly se tu nevysílá" : "starý ovladač wireless – CAPsMAN v7 nepodporuje";
+    c.appendChild(b);
+  }
+  c.title = `${d.model || ""}${d.managed ? "" : " · zatím neřízené"}`.trim();
+  c.addEventListener("dragstart", (ev) => { if (ev.dataTransfer) { ev.dataTransfer.setData("text/plain", d.id); ev.dataTransfer.effectAllowed = "move"; } });
+  c.addEventListener("click", (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey) { apSel.has(d.id) ? apSel.delete(d.id) : apSel.add(d.id); renderApBoard(); }
+    else openDetail(d.id);
+  });
+  withCtx(c, () => (apSel.has(d.id) && apSel.size > 1 ? `${apSel.size} vybraných AP` : d.name), () => apMenu(d));
+  return c;
+}
+
+async function moveAps(ids, group) {
+  try {
+    const r = await api("POST", `${sitePath()}/ap-groups`, { devices: ids, group });
+    msg(`${r.moved || ids.length} AP → ${group ? groupName(group) : "bez skupiny"} · projeví se po „Nasadit Wi-Fi“`);
+    apSel.clear(); loadIntent();
+  } catch (e) { msg(e.message, true); }
+}
+
+// skupiny jsou součást záměru: uloží se celé nastavení Wi-Fi
+async function saveGroups(groups, done) {
+  const w = wifiPolicy();
+  const body = { ...intentData.intent, wifi: { ...w, groups } };
+  try { const r = await api("PUT", `${sitePath()}/intent`, body); msg(done); loadIntent(); return r; }
+  catch (e) { msg(e.message, true); return null; }
+}
+async function addGroup() {
+  if (!intentData.intent) { msg("Nejdřív ulož záměr lokality (sítě)", true); return null; }
+  const name = await askText("Jméno nové skupiny AP (např. Sklad, 1. patro):", "", "Založit");
+  if (!name) return null;
+  const r = await saveGroups([...wifiGroups, { name }], `Skupina ${name} založena`);
+  return r && r.intent ? (r.intent.wifi.groups || []).find((g) => g.name === name) || null : null;
+}
+async function renameGroup(g) {
+  const name = await askText("Nové jméno skupiny:", g.name);
+  if (!name || name === g.name) return;
+  saveGroups(wifiGroups.map((x) => (x.id === g.id ? { ...x, name } : x)), `Skupina přejmenována na ${name}`);
+}
+async function deleteGroup(g) {
+  const n = siteAps().filter((d) => d.ap_group === g.id).length;
+  const s = (intentData.ssids || []).filter((x) => (x.groups || []).includes(g.id)).length;
+  if (!(await ask(`Smazat skupinu ${g.name}?\n\n${n} AP se vrátí mezi AP bez skupiny, ${s} SSID ji přestane uvádět ` +
+                  "(SSID bez jiné skupiny se pak vysílá na všech AP).", "Smazat"))) return;
+  saveGroups(wifiGroups.filter((x) => x.id !== g.id), `Skupina ${g.name} smazána`);
+}
+$("apg-add").addEventListener("click", () => addGroup());
+
+$("ssid-add").addEventListener("click", () => openSsid({ vlan_id: intentData.intent ? intentData.intent.access_vlan : null }));
 $("wifi-deploy").addEventListener("click", async () => {
   let w;
-  try { w = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/preview`); } catch (e) { return msg(e.message, true); }
+  try { w = await api("GET", `${sitePath()}/wifi/preview`); } catch (e) { return msg(e.message, true); }
   const ul = $("wifi-result"); ul.textContent = "";
   for (const b of w.blockers || []) ul.appendChild(el("li", b, "sev-error"));
-  for (const r of w.radios || []) ul.appendChild(el("li", `${r.device} ${r.interface}: ${r.band} GHz, kanál ${r.channel ?? "?"} / ${r.width} MHz – ${r.ssids.join(", ")}`));
+  for (const r of w.radios || []) {
+    const li = el("li", `${r.device} ${r.interface}: ${r.band} GHz, kanál ${r.channel ?? "?"} / ${r.width} MHz – ${r.ssids.join(", ")}`);
+    if (r.group) li.appendChild(el("span", groupName(r.group), "wpill"));
+    if (r.chip) li.appendChild(el("span", CHIP_LABEL[r.chip] || r.chip, "ap-std " + r.chip));
+    ul.appendChild(li);
+  }
   for (const n of w.notes || []) ul.appendChild(el("li", n, "muted"));
+  for (const t of w.tables || []) {
+    if (t.table.length && t.sha !== t.installed) ul.appendChild(el("li", `${t.device}: VLAN rádií se na AP doladí samy (${t.table.length} rozhraní)`, "muted"));
+  }
   if ((w.blockers || []).length) return;
   if (!(await ask(`${w.summary}\n\nVytvořit plán pro CAPsMAN? Po schválení se Wi-Fi na AP krátce přenastaví (klienti se znovu připojí).`, "Vytvořit plán"))) return;
   try {
-    const r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/wifi/plan`, {});
+    const r = await api("POST", `${sitePath()}/wifi/plan`, {});
     msg(`Plán Wi-Fi #${r.plan_id} čeká na schválení v Plánech změn.`); loadPlans();
   } catch (e) { msg(e.message, true); }
 });
@@ -2723,7 +3161,7 @@ async function saveIntent() {
     networks: intentNets.map((n) => ({ ...n, dns: typeof n.dns === "string" ? n.dns : (n.dns || []).join(",") })),
     access_vlan: $("intent-access").value, mgmt_native: $("intent-native").checked, auto_trunk: $("intent-auto").checked,
     wifi: { capsman_device_id: $("wifi-host").value || null, max_width: Number($("wifi-width").value),
-            dfs: $("wifi-dfs").checked, country: $("wifi-country").value.trim() },
+            dfs: $("wifi-dfs").checked, country: $("wifi-country").value.trim(), groups: wifiGroups },
   };
   try { await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/intent`, body); msg("Záměr lokality uložen"); loadIntent(); }
   catch (e) { msg(e.message, true); }

@@ -433,7 +433,9 @@ def test_groups_ppsk_flow():
         _device_post(app, f"/api/checkin/ack?id={cid}&status=done", "key-AP1")
         assert takeover.sync_wifi_tables(db, settings, tid, sid) == 0
         # zrušení skupiny: AP i SSID se vrátí na „všechna AP“
-        assert c.put(S + "/intent", json_body=dict(INTENT_RAW, wifi={"capsman_device_id": host})).status_code == 200
+        # nastavení Wi-Fi bez klíče groups skupiny nemaže
+        assert c.put(S + "/intent", json_body=dict(INTENT_RAW, wifi={"capsman_device_id": host})).json()["intent"]["wifi"]["groups"]
+        assert c.put(S + "/intent", json_body=dict(INTENT_RAW, wifi={"capsman_device_id": host, "groups": []})).status_code == 200
         lst = c.get(S + "/ssids").json()["ssids"]
         assert lst[0]["groups"] == []
         with operator_scope(db) as tx:

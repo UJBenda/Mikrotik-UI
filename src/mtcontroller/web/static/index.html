@@ -157,19 +157,25 @@
           </div>
           <ul id="intent-devs" class="intent-devs"></ul>
           <ul id="intent-result"></ul>
-          <h4>Wi-Fi</h4>
+          <div class="wifi-head"><h4>Wi-Fi</h4>
+            <span class="ctx-hint" title="Na kartě SSID, AP i ve skupině funguje pravé tlačítko (nebo ⋯)">pravé tlačítko = akce</span></div>
           <p class="muted">Rádia všech AP s rolí „AP + switch“ řídí jeden CAPsMAN lokality (běží na řízeném zařízení,
-            nejlépe na páteřním switchi). Roaming 802.11r/k/v je zapnutý, kanály a šířky rozdělí controller sám.</p>
+            nejlépe na páteřním switchi). Roaming 802.11r/k/v je zapnutý, kanály a šířky rozdělí controller sám.
+            VLAN každého SSID dá do bridge na AP skript podle MAC rádia – funguje stejně pro cAP ax i starší cAP ac.</p>
           <div class="intent-opts">
             <label>CAPsMAN na <select id="wifi-host"></select></label>
             <label>Max. šířka 5 GHz <select id="wifi-width"><option value="80">80 MHz</option><option value="40">40 MHz</option><option value="20">20 MHz</option></select></label>
             <label><input type="checkbox" id="wifi-dfs"> i DFS kanály (52–140)</label>
             <label>Země <input id="wifi-country" size="14"></label>
-          </div>
-          <table class="intent-nets"><thead><tr><th>SSID</th><th>Síť</th><th>Pásma</th><th>Heslo</th><th>Izolace klientů</th><th>Roaming (FT)</th><th>Zapnuto</th><th></th></tr></thead>
-          <tbody id="ssid-rows"></tbody></table>
-          <div class="intent-acts">
             <button id="wifi-save" type="button" class="small secondary">Uložit nastavení Wi-Fi</button>
+          </div>
+          <div id="ssid-cards" class="ssid-grid"></div>
+          <div class="wifi-sub"><h4>Skupiny AP</h4>
+            <button id="apg-add" type="button" class="small secondary">+ Skupina</button></div>
+          <p class="muted">Přetáhni AP do skupiny (Ctrl+klik vybere víc AP najednou). SSID bez skupiny se vysílá na všech AP,
+            SSID se skupinami jen na AP v nich. Změna se na AP projeví po „Nasadit Wi-Fi“.</p>
+          <div id="apg-board" class="apg-board"></div>
+          <div class="intent-acts">
             <button id="ssid-add" type="button" class="small secondary">+ SSID</button>
             <button id="wifi-deploy" type="button" class="small">Nasadit Wi-Fi</button>
           </div>
@@ -460,9 +466,49 @@
       </div>
     </div>
   </section>
+  <div id="ssid-dlg" class="modal" hidden>
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="sd-title">
+      <div class="sd-head"><h3 id="sd-title">Wi-Fi síť</h3><button id="sd-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <div class="sd-grid">
+        <label class="pe-field"><span>SSID</span><input id="sd-ssid" maxlength="32" placeholder="např. Firma"></label>
+        <label class="pe-field"><span>Síť (VLAN)</span><select id="sd-vlan"></select></label>
+        <div class="pe-field"><span>Pásma</span><span id="sd-bands" class="seg"></span></div>
+        <label class="pe-field"><span>Heslo</span><span class="ipbox"><input id="sd-psk" type="password" autocomplete="new-password" maxlength="63">
+          <button id="sd-psk-eye" type="button" class="small secondary" title="Ukázat zadané heslo">👁</button></span></label>
+      </div>
+      <div class="sd-toggles">
+        <label class="tgl"><input type="checkbox" id="sd-en"> Zapnuto</label>
+        <label class="tgl"><input type="checkbox" id="sd-ft"> Roaming (FT, 802.11r)</label>
+        <label class="tgl"><input type="checkbox" id="sd-iso"> Izolace klientů</label>
+      </div>
+      <div class="sd-sec"><span class="sd-label">Kde se vysílá</span><div id="sd-groups" class="chips"></div></div>
+      <div class="sd-sec">
+        <div class="sd-label">Více hesel → každé do své VLAN <span class="badge-ax">jen cAP ax</span></div>
+        <p class="muted small">Klient se pozná podle hesla a dostane jeho VLAN. Jen WPA2; na AP s 802.11ac (wifi-qcom-ac)
+          se takové SSID nevysílá. Prázdné heslo u uložené položky = ponechat.</p>
+        <table class="ptable ppsk"><thead><tr><th>Jméno</th><th>VLAN</th><th>Heslo</th><th></th></tr></thead><tbody id="sd-ppsk"></tbody></table>
+        <div class="intent-acts">
+          <button id="sd-ppsk-add" type="button" class="small secondary">+ Heslo</button>
+          <button id="sd-ppsk-csv" type="button" class="small secondary">Import CSV…</button>
+          <button id="sd-ppsk-reveal" type="button" class="small secondary">Zobrazit uložená hesla</button>
+        </div>
+        <div id="sd-csv-box" hidden><textarea id="sd-csv" rows="4" placeholder="jméno;vlan;heslo – jeden řádek na heslo"></textarea>
+          <button id="sd-csv-ok" type="button" class="small">Načíst</button></div>
+      </div>
+      <ul id="sd-warn"></ul>
+      <div class="modal-acts">
+        <button id="sd-delete" type="button" class="danger">Smazat</button>
+        <span class="grow"></span>
+        <button id="sd-cancel" type="button" class="secondary">Zrušit</button>
+        <button id="sd-save" type="button">Uložit</button>
+      </div>
+    </div>
+  </div>
+  <div id="ctx" class="ctx" role="menu" hidden></div>
   <div id="ask" class="modal" hidden>
     <div class="modal-box" role="alertdialog" aria-modal="true" aria-labelledby="ask-text">
       <p id="ask-text"></p>
+      <input id="ask-input" hidden maxlength="40">
       <div class="modal-acts">
         <button id="ask-cancel" type="button" class="secondary">Zrušit</button>
         <button id="ask-ok" type="button">Potvrdit</button>

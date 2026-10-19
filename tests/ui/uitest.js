@@ -106,7 +106,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
     if (byId["intent-rows"].children.length !== 3) errors.push("záměr: řádky " + byId["intent-rows"].children.length);
     if (byId["intent-access"].value !== "10" || !byId["intent-native"].checked) errors.push("záměr: volby");
-    if (byId["intent-devs"].children.length !== 2 || !byId["intent-devs"].textContent.includes("řízené")) errors.push("záměr: zařízení");
+    if (byId["intent-devs"].children.length !== 4 || !byId["intent-devs"].textContent.includes("řízené")) errors.push("záměr: zařízení");
     {
       const n0 = requests.length;
       await byId["intent-add"].fire("click");
@@ -117,25 +117,77 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!rq.some((r) => r.startsWith("PUT") && r.endsWith("/intent"))) errors.push("záměr: uložení");
       if (!rq.some((r) => r.startsWith("POST") && r.endsWith("/intent/reconcile"))) errors.push("záměr: sladění");
     }
-    // Wi-Fi: CAPsMAN jen z řízených zařízení, SSID řádky, nasazení přes dialog
+    // Wi-Fi: CAPsMAN jen z řízených zařízení, karty SSID, editor, skupiny AP, pravé tlačítko, nasazení přes dialog
     {
       const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      const ctxItem = (label) => find(byId["ctx"], (n) => n.tagName === "BUTTON" && n.textContent.includes(label));
       await tick();
-      if (byId["wifi-host"].children.length !== 2 || byId["wifi-host"].value !== api.sw) errors.push("wifi: CAPsMAN výběr");
-      if (byId["ssid-rows"].children.length !== 2) errors.push("wifi: SSID řádky " + byId["ssid-rows"].children.length);
+      if (byId["wifi-host"].children.length !== 4 || byId["wifi-host"].value !== api.sw) errors.push("wifi: CAPsMAN výběr " + byId["wifi-host"].children.length);
+      const cards = byId["ssid-cards"].children;
+      if (cards.length !== 3) errors.push("wifi: karty SSID " + cards.length);
+      if (!cards[1].textContent.includes("2× heslo") || !cards[1].textContent.includes("Sklad") || !cards[0].textContent.includes("všechna AP"))
+        errors.push("wifi: karta " + cards[1].textContent);
       if (byId["wifi-deploy"].disabled) errors.push("wifi: nasazení zakázané");
-      const n0 = requests.length;
-      const row = byId["ssid-rows"].children[0];
-      await row.children[7].children[0].fire("click");
+      // tabule skupin: bez skupiny + 2 skupiny, AP ve správných sloupcích
+      const cols = byId["apg-board"].children;
+      if (cols.length !== 3 || !cols[0].textContent.includes("AP-chodba") || !cols[1].textContent.includes("AP-sklad"))
+        errors.push("wifi: tabule skupin " + cols.length + " " + (cols[1] || {}).textContent);
+      if (!cols[1].textContent.includes("Hoste") || cols[0].textContent.includes("Hoste")) errors.push("wifi: SSID ve skupině");
+      let n0 = requests.length;
+      // pravé tlačítko na kartě SSID
+      await cards[1].fire("contextmenu", { clientX: 50, clientY: 60 });
+      if (byId["ctx"].hidden || !ctxItem("Zobrazit hesla") || !ctxItem("Kancelář")) errors.push("ctx: menu SSID " + byId["ctx"].textContent);
+      else {
+        await ctxItem("Vypnout").fire("click");
+        if (!byId["ctx"].hidden) errors.push("ctx: menu se po volbě nezavřelo");
+        if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.includes("/ssids/0b9a3c1e-0000-4000-8000-000000000002"))) errors.push("ctx: vypnutí SSID");
+      }
+      // editor SSID: skupiny, více hesel, uložení
+      await tick();
+      await byId["ssid-cards"].children[0].fire("click", { target: byId["ssid-cards"].children[0] });
+      if (byId["ssid-dlg"].hidden || byId["sd-ssid"].value !== "Firma") errors.push("wifi: editor SSID");
+      if (byId["sd-groups"].children.length !== 3 || byId["sd-bands"].children.length !== 3) errors.push("wifi: editor skupiny/pásma");
+      await byId["sd-groups"].children[1].fire("click");
+      await byId["sd-ppsk-add"].fire("click");
+      if (byId["sd-ppsk"].children.length !== 1) errors.push("wifi: více hesel řádek");
+      byId["sd-csv"].value = "Vyroba;Hosté;vyroba-heslo-1\nnesmysl";
+      await byId["sd-csv-ok"].fire("click");
+      if (byId["sd-ppsk"].children.length !== 2 || byId["sd-csv"].value !== "nesmysl") errors.push("wifi: import CSV " + byId["sd-ppsk"].children.length);
+      n0 = requests.length;
+      await byId["sd-save"].fire("click");
       if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.includes("/ssids/"))) errors.push("wifi: uložení SSID");
-      await byId["ssid-add"].fire("click");
-      if (byId["ssid-rows"].children.length !== 3) errors.push("wifi: nový SSID");
+      if (!byId["ssid-dlg"].hidden) errors.push("wifi: editor po uložení zůstal");
+      await tick();
+      // AP: pravé tlačítko → přesun do skupiny; přetažení do sloupce
+      const chip = find(byId["apg-board"], (n) => /^ap-chip/.test(n.className) && n.textContent.includes("AP-chodba"));
+      n0 = requests.length;
+      await chip.fire("contextmenu", {});
+      if (!ctxItem("Kancelář")) errors.push("ctx: menu AP " + byId["ctx"].textContent);
+      else await ctxItem("Kancelář").fire("click");
+      await tick();
+      const col = byId["apg-board"].children[2];
+      await col.fire("drop", { dataTransfer: { getData: () => "d1" } });
+      if (requests.slice(n0).filter((r) => r.startsWith("POST") && r.endsWith("/ap-groups")).length !== 2) errors.push("wifi: přesun AP");
+      // nová skupina přes dialog
+      n0 = requests.length;
+      const pg = byId["apg-add"].fire("click");
+      await tick();
+      if (byId["ask"].hidden || byId["ask-input"].hidden) errors.push("wifi: dialog nové skupiny");
+      else { byId["ask-input"].value = "Venku"; byId["ask-ok"].onclick(); await pg; }
+      if (!requests.slice(n0).some((r) => r.startsWith("PUT") && r.endsWith("/intent"))) errors.push("wifi: uložení skupiny");
+      await tick();
+      // pravé tlačítko na řádku zařízení
+      await byId["devices"].children[0].fire("contextmenu", {});
+      if (!ctxItem("Restart") || !ctxItem("Otevřít detail")) errors.push("ctx: menu zařízení " + byId["ctx"].textContent);
+      byId["ctx"].hidden = true;
+      n0 = requests.length;
       const p = byId["wifi-deploy"].fire("click");
       await tick();
       if (byId["ask"].hidden || !byId["ask-text"].textContent.includes("Wi-Fi: 2 SSID")) errors.push("wifi: dialog " + byId["ask-text"].textContent.slice(0, 60));
       else { byId["ask-ok"].onclick(); await p; }
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/wifi/plan"))) errors.push("wifi: plán");
-      if (byId["wifi-result"].children.length < 4) errors.push("wifi: přehled rádií");
+      if (byId["wifi-result"].children.length < 5 || !byId["wifi-result"].textContent.includes("doladí")) errors.push("wifi: přehled rádií");
     }
     if (!byId["dg-rogue"].textContent.includes("E4:5F:01:00:00:09")) errors.push("DHCP: cizí server");
     if (!byId["dg-missing"].textContent.includes("192.168.30.10")) errors.push("DHCP: nedohledaný server");

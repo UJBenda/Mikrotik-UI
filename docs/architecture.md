@@ -710,6 +710,28 @@ rádia s `datapath.vlan-id` na CAP, řízení vlastních rádií hostitele přes
 `/interface wifi radio provision`, FT s WPA3 a staršími klienty. Nové AP se do provisioningu dostane
 dalším „Nasadit Wi-Fi“ (rádia se berou z inventury řízených AP).
 
+### Skupiny AP, více hesel na SSID, VLAN rádií podle MAC
+
+Proč: na lokalitě s desítkami AP chce správce na různých AP různé sady SSID, na cAP ax jedno
+SSID s více hesly (každé heslo jiná VLAN) a starší cAP ac neumí VLAN v `datapath` (802.11ac
+`vlan-id` nepodporuje) a jména jeho slave rozhraní se mění (`wifi3`/`wifi4`… podle pořadí vytvoření).
+
+| Téma | Implementace | Důvod |
+| --- | --- | --- |
+| Skupiny AP | záměr `wifi.groups` `[{id, name}]` (id `g-…`), AP → skupina v `device_intent.ap_group` (migrace 0016), SSID → `site_ssid.groups` (`[]` = všechna AP); zrušená skupina vrátí SSID i AP na „všechna AP“ | skupiny jsou součást záměru, ne objekt RouterOS |
+| Kde se SSID vysílá | `wificfg.manager` dává rádiu jen SSID jeho skupiny a pásma; >4 SSID na rádio varování, >8 překážka | beacony každého SSID berou vysílací čas |
+| Více hesel | `multi-passphrase` skupina `mtc-mp<n>`, security jen `wpa2-psk` (WPA3 multi-passphrase neumí), FT zůstává; hesla šifrovaně jako jeden blob (kontext `ssid:<id>:ppsk`), jména a VLAN v `ppsk_meta` (bez hesel – kontrola sítí záměru bez dešifrování); ve skriptu token `MTCMP<id>X<i>`, heslo se dosadí až při doručení (jeden průchod – dosazené heslo se znovu neprohledává) | tajemství nikdy v DB ani v plánu v plaintextu |
+| ax vs. ac | SSID s více hesly se na rádio bez `wifi-qcom` (čip z `packages.chip`) nedá, s poznámkou v náhledu i na kartě SSID | klient s heslem s VLAN by se na ac nepřipojil |
+| VLAN rádií | datapath jen `client-isolation` (bez `bridge`/`vlan-id`); na AP skript `mtc-wifi-vlan` (scheduler 20 s) s tabulkou MAC → `pvid|tagged`: najde rozhraní podle MAC, dá ho do bridge s `pvid` (komentář `mtc-wifi`), tagovaně do VLAN z více hesel, porty `mtc-wifi` mimo tabulku odebere | jeden mechanismus pro ax i ac; MAC rozhraní jsou stálé (`slaves-static=yes`), jména ne |
+| Tabulka | z inventury CAPsMANu (rozhraní CAP: MAC + `configuration`) a `config_map` posledního nasazeného plánu `capsman` (`mtc-s<n>` / `mtc-r-<mac>` → SSID); otisk tabulky v komentáři skriptu `mtc-wifi:<sha>` (inventura sekce `scripts`, jen jméno a komentář) | controller pozná, že AP má jinou tabulku |
+| Sladění | worker krok `wifitable`: kde se otisk liší, plán `wifitable` (základ = otisk nainstalované tabulky) a hned schválení; stejná tabulka se 15 min po nasazení neplánuje znovu | jen porty rádií v bridgi – správu přerušit nemůže |
+| Switch | `switchcfg.reconcile` nechává ne-fyzické členy VLAN (rádia) na pokoji | sladění switche nesmí rozbít Wi-Fi |
+| UI | karty SSID s editorem (skupiny, více hesel, import CSV, odhalení s auditem), tabule skupin AP s přetahováním, kontextové menu (pravé tlačítko / ⋯ / klávesa Menu) na SSID, AP, skupinách, zařízeních, plánech a leasech | méně klikání, akce tam, kde je objekt |
+
+K ověření v labu: že CAPsMAN v inventuře `/interface/wifi` ukazuje rozhraní CAP s `mac-address`
+a `configuration`, syntaxe `multi-passphrase` (verze RouterOS), chování `slaves-static` po restartu
+CAPu, FT s více hesly na ax (podle provozní zkušenosti funguje).
+
 ## Rychlé doručení změn
 
 Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem

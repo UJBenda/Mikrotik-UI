@@ -386,16 +386,38 @@ uplink k routeru labu; do jiného portu notebook.
 Potřebuješ převzatý switch (bod 9c) a aspoň jedno AP s balíkem `wifi` (cAP ax, hAP ax², cAP ac s wifi-qcom-ac).
 
 1. **CAPsMAN**: Lokalita → Sítě → Záměr → Wi-Fi: „CAPsMAN na“ = převzatý switch → Uložit nastavení Wi-Fi.
-2. **SSID**: + SSID – např. „Firma“ v síti Kancelář a „Hoste“ v síti Hosté s izolací klientů. Ulož každý řádek.
+2. **SSID**: karta „Nová Wi-Fi síť“ – např. „Firma“ v síti Kancelář a „Hoste“ v síti Hosté s izolací klientů.
 3. **AP**: detail AP → Řízení → Role „AP + switch“ → Uložit výjimky → Vytvořit plán převzetí → schválit.
    Po převzetí: `/interface wifi cap print` na AP (enabled, caps-man-names = identita switche).
 4. **Nasadit Wi-Fi** → přehled rádií a kanálů → plán → schválit. Na switchi:
    `/interface wifi capsman remote-cap print`, `/interface wifi print` (dynamická rozhraní AP s SSID),
    `/interface wifi steering print` (rrm, wnm – pošli výpis, kdyby příkaz hlásil chybu).
 5. **Provoz**: klient na „Firma“ dostane adresu z VLAN 10, na „Hoste“ z VLAN 20 a nevidí ostatní klienty.
-   Na AP `/interface bridge vlan print` – rádia jako netagovaní členové VLAN 10/20 (dynamicky).
+   Na AP do minuty: `/system script print where name=mtc-wifi-vlan` (komentář `mtc-wifi:<otisk>`),
+   `/interface bridge port print where comment=mtc-wifi` (každé wifi rozhraní s pvid své sítě).
 6. **Roaming**: se dvěma AP projdi s telefonem mezi nimi; na switchi
    `/log print where topics~"wireless"` – čekám „roamed“/FT. Pošli výpis, hlavně u WPA3 klientů.
+
+## 9d2. Skupiny AP, více hesel, cAP ac
+
+Potřebuješ CAPsMAN z 9d, jedno cAP ax a jedno cAP ac (wifi-qcom-ac) jako „AP + switch“.
+
+1. **Skupina**: Wi-Fi → Skupiny AP → + Skupina „Sklad“. Přetáhni cAP ax do sloupce Sklad (nebo pravé
+   tlačítko na AP → Přesunout do → Sklad). V Auditu `device.ap_group`.
+2. **SSID jen pro skupinu**: pravé tlačítko na sloupci Sklad → „Nová Wi-Fi jen pro tuto skupinu“ – „Sklad-WiFi“.
+   Nasadit Wi-Fi: v přehledu rádií má Sklad-WiFi jen cAP ax. Na cAP ac `/interface wifi print` – Sklad-WiFi tam není.
+3. **cAP ac a VLAN**: na cAP ac `/interface bridge port print where comment=mtc-wifi` – slave rozhraní
+   (wifi3/wifi4…) s pvid sítě „Hoste“. Restartuj cAP ac (jména slave rozhraní se můžou prohodit) –
+   do 20 s po naběhnutí musí mít porty zase správné pvid. Pošli výpis před a po restartu.
+4. **Více hesel**: karta „Firma“ → editor → Více hesel: „Ucetni“ → síť Hosté, heslo; Uložit, Nasadit Wi-Fi.
+   Na switchi `/interface wifi security multi-passphrase print` (skupina mtc-mp…, vlan-id). Telefon s heslem
+   „Ucetni“ dostane adresu z VLAN Hosté, s hlavním heslem z Kancelář. Na cAP ac se „Firma“ už nevysílá
+   (karta ukazuje „na 1 AP bez ax se nevysílá“).
+5. **FT s více hesly**: projdi mezi dvěma ax AP s heslem „Ucetni“ – klient zůstane ve VLAN Hosté.
+6. **Odhalení**: pravé tlačítko na kartě → Zobrazit hesla; v Auditu `site.ssid_ppsk_reveal`, v DB ani v
+   plánu (`config_plan.script`) heslo není (`MTCMP…` token).
+7. **Zrušení skupiny**: pravé tlačítko na sloupci → Smazat skupinu – AP se vrátí mezi „Bez skupiny“,
+   Sklad-WiFi se vysílá na všech AP (po Nasadit Wi-Fi).
 
 ## 9e. Výchozí konfigurace podle role a ohlášení
 

@@ -463,3 +463,104 @@ td.mode-off{color:var(--muted)}
 table.deploy td{vertical-align:top}
 table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-all;font-size:11px}
 .pw-shown{font-family:ui-monospace,monospace;background:var(--accent-weak);padding:1px 6px;border-radius:4px}
+
+/* --- kontextové menu (pravé tlačítko) --- */
+.ctx { position: fixed; z-index: 60; min-width: 200px; max-width: 300px; padding: 4px; background: var(--card);
+       border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 28px rgba(16, 24, 40, .18), 0 2px 6px rgba(16, 24, 40, .08);
+       animation: ctx-in .09s ease-out; }
+@keyframes ctx-in { from { opacity: 0; transform: scale(.97) translateY(-2px); } }
+.ctx-title { padding: 5px 10px 6px; font-weight: 600; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line);
+             margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-head { padding: 5px 10px 2px 30px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.ctx-sep { height: 1px; background: var(--line); margin: 4px 2px; }
+.ctx-item { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: transparent; color: var(--text);
+            border: 0; border-radius: 6px; padding: 6px 10px; font-weight: 400; }
+.ctx-item:hover:not(:disabled), .ctx-item:focus-visible { background: var(--accent-weak); color: var(--accent); filter: none; outline: none; }
+.ctx-item.danger { color: var(--bad); }
+.ctx-item.danger:hover:not(:disabled), .ctx-item.danger:focus-visible { background: var(--bad-weak); color: var(--bad); }
+.ctx-mark { width: 14px; flex: none; color: var(--accent); font-weight: 700; }
+.ctx-key { margin-left: auto; font-size: 11px; color: var(--muted); }
+.ctx-hint { font-size: 11px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 1px 8px; }
+.icon-btn { background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 6px; padding: 0 6px;
+            line-height: 20px; font-size: 15px; }
+.icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); filter: none; }
+[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* --- Wi-Fi: karty SSID --- */
+.wifi-head, .wifi-sub { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.wifi-head h4, .wifi-sub h4 { margin: 0; }
+.ssid-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
+.ssid-card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+             cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .12s; box-shadow: var(--shadow); }
+.ssid-card:hover { border-color: var(--accent); box-shadow: 0 4px 14px rgba(31, 111, 235, .12); transform: translateY(-1px); }
+.ssid-card.off { opacity: .6; }
+.ssid-card.add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 104px;
+                 border-style: dashed; background: transparent; color: var(--muted); font-weight: 500; }
+.ssid-card.add:hover:not(:disabled) { color: var(--accent); filter: none; }
+.sc-plus { font-size: 22px; line-height: 1; }
+.sc-head { display: flex; align-items: center; gap: 6px; }
+.sc-head b { font-size: 14px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-ico { font-size: 14px; }
+.sc-meta { display: flex; flex-wrap: wrap; gap: 4px; margin: 7px 0 5px; }
+.sc-ppsk { font-size: 12px; margin-bottom: 4px; }
+.sc-where { font-size: 12px; color: var(--muted); }
+.wpill { display: inline-block; font-size: 11px; padding: 0 7px; line-height: 18px; border-radius: 9px; background: var(--hover);
+        color: var(--text); border: 1px solid var(--line); white-space: nowrap; }
+.wpill.vlan { background: var(--accent-weak); color: var(--accent); border-color: transparent; }
+.wpill.ok { background: var(--ok-weak); color: var(--ok); border-color: transparent; }
+.wpill.bad { background: var(--bad-weak); color: var(--bad); border-color: transparent; }
+.badge-ax { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 6px; line-height: 16px; border-radius: 8px;
+            background: linear-gradient(135deg, #7c3aed, #4c8dff); color: #fff; letter-spacing: .02em; }
+
+/* --- editor SSID --- */
+.modal-box.wide { max-width: 680px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.sd-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.sd-head h3 { margin: 0; font-size: 16px; }
+.sd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 14px; }
+.sd-grid .pe-field { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.sd-grid .pe-field > span:first-child { font-size: 12px; color: var(--muted); }
+.sd-grid input, .sd-grid select { width: 100%; }
+.sd-grid .ipbox { display: flex; gap: 4px; }
+.sd-toggles { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 4px; }
+.tgl { display: flex; align-items: center; gap: 6px; margin: 0; cursor: pointer; }
+.sd-sec { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.sd-label { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gchip { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 2px 12px; font-weight: 400; }
+.gchip:hover { border-color: var(--accent); filter: none; }
+.gchip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.ppsk td { padding: 2px 4px; }
+.ppsk input, .ppsk select { width: 100%; }
+#sd-csv { width: 100%; font: 12px/1.4 ui-monospace, monospace; margin: 6px 0; }
+.modal-acts .grow { flex: 1; }
+
+/* --- tabule skupin AP --- */
+.apg-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 10px; overflow-x: auto;
+             padding: 4px 2px 10px; margin: 8px 0; }
+.apg-col { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 150px;
+           display: flex; flex-direction: column; gap: 6px; transition: border-color .12s, background .12s; }
+.apg-col.nogroup { background: transparent; border-style: dashed; }
+.apg-col.drop { border-color: var(--accent); background: var(--accent-weak); }
+.apg-head { display: flex; align-items: center; gap: 6px; }
+.apg-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apg-n { font-size: 11px; font-weight: 700; color: var(--muted); background: var(--card); border: 1px solid var(--line);
+         border-radius: 9px; padding: 0 6px; }
+.apg-ssids { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; border-bottom: 1px dashed var(--line); }
+.apg-ssids .wpill { cursor: pointer; }
+.apg-list { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.apg-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 14px 0; border: 1px dashed var(--line); border-radius: 8px; }
+.ap-chip { display: flex; align-items: center; gap: 7px; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+           padding: 5px 8px; cursor: grab; box-shadow: var(--shadow); user-select: none; transition: border-color .1s, box-shadow .1s; }
+.ap-chip:hover { border-color: var(--accent); }
+.ap-chip:active { cursor: grabbing; }
+.ap-chip.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-weak); background: var(--accent-weak); }
+.ap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.ap-chip.offline .ap-dot { background: var(--bad); }
+.ap-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-std { font-size: 10px; font-weight: 700; border-radius: 6px; padding: 0 5px; line-height: 16px; margin-left: 4px; }
+.ap-std.ax { background: linear-gradient(135deg, #7c3aed, #4c8dff); color: #fff; }
+.ap-std.ac { background: var(--warn-weak); color: var(--warn); }
+.ap-std.legacy { background: var(--bad-weak); color: var(--bad); }
+#ask-input { width: 100%; margin: 0 0 14px; }
+.sc-warn { font-size: 12px; color: var(--warn); margin-bottom: 4px; }
+.sd-grid .seg button { white-space: nowrap; }
