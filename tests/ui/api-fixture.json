@@ -3958,6 +3958,744 @@
      "to_name": "sw"
     }
    ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/wifi/journey?mac=B0%3ABE%3A76%3A12%3A34%3A56&hours=6": {
+   "lanes": [
+    {
+     "key": "ap1|wifi1",
+     "ap": "AP-chodba",
+     "ap_id": "ap1",
+     "radio": "wifi1",
+     "band": "5"
+    },
+    {
+     "key": "ap2|wifi1",
+     "ap": "AP-sklad",
+     "ap_id": "ap2",
+     "radio": "wifi1",
+     "band": "5"
+    }
+   ],
+   "segments": [
+    {
+     "lane": "ap1|wifi1",
+     "start": "2026-10-19T12:05:00+00:00",
+     "end": "2026-10-19T13:00:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T12:05:00+00:00",
+       "signal": -52
+      },
+      {
+       "at": "2026-10-19T12:10:00+00:00",
+       "signal": -50
+      },
+      {
+       "at": "2026-10-19T12:15:00+00:00",
+       "signal": -51
+      },
+      {
+       "at": "2026-10-19T12:20:00+00:00",
+       "signal": -52
+      },
+      {
+       "at": "2026-10-19T12:25:00+00:00",
+       "signal": -53
+      },
+      {
+       "at": "2026-10-19T12:30:00+00:00",
+       "signal": -50
+      },
+      {
+       "at": "2026-10-19T12:35:00+00:00",
+       "signal": -51
+      },
+      {
+       "at": "2026-10-19T12:40:00+00:00",
+       "signal": -52
+      },
+      {
+       "at": "2026-10-19T12:45:00+00:00",
+       "signal": -53
+      },
+      {
+       "at": "2026-10-19T12:50:00+00:00",
+       "signal": -50
+      },
+      {
+       "at": "2026-10-19T12:55:00+00:00",
+       "signal": -51
+      }
+     ]
+    },
+    {
+     "lane": "ap2|wifi1",
+     "start": "2026-10-19T13:00:00+00:00",
+     "end": "2026-10-19T13:03:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T13:00:00+00:00",
+       "signal": -67
+      }
+     ]
+    },
+    {
+     "lane": "ap1|wifi1",
+     "start": "2026-10-19T13:03:00+00:00",
+     "end": "2026-10-19T13:06:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T13:03:00+00:00",
+       "signal": -67
+      }
+     ]
+    },
+    {
+     "lane": "ap2|wifi1",
+     "start": "2026-10-19T13:06:00+00:00",
+     "end": "2026-10-19T13:09:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T13:06:00+00:00",
+       "signal": -67
+      }
+     ]
+    },
+    {
+     "lane": "ap1|wifi1",
+     "start": "2026-10-19T13:09:00+00:00",
+     "end": "2026-10-19T13:12:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T13:09:00+00:00",
+       "signal": -67
+      }
+     ]
+    },
+    {
+     "lane": "ap2|wifi1",
+     "start": "2026-10-19T13:12:00+00:00",
+     "end": "2026-10-19T15:20:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T13:12:00+00:00",
+       "signal": -67
+      },
+      {
+       "at": "2026-10-19T14:01:00+00:00",
+       "signal": -63
+      }
+     ]
+    },
+    {
+     "lane": "ap1|wifi1",
+     "start": "2026-10-19T15:24:00+00:00",
+     "end": "2026-10-19T15:29:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T15:24:00+00:00",
+       "signal": -58
+      }
+     ]
+    },
+    {
+     "lane": "ap1|wifi1",
+     "start": "2026-10-19T16:10:00+00:00",
+     "end": "2026-10-19T17:50:00+00:00",
+     "signals": [
+      {
+       "at": "2026-10-19T16:10:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T16:15:00+00:00",
+       "signal": -75
+      },
+      {
+       "at": "2026-10-19T16:20:00+00:00",
+       "signal": -76
+      },
+      {
+       "at": "2026-10-19T16:25:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T16:30:00+00:00",
+       "signal": -75
+      },
+      {
+       "at": "2026-10-19T16:35:00+00:00",
+       "signal": -76
+      },
+      {
+       "at": "2026-10-19T16:40:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T16:45:00+00:00",
+       "signal": -75
+      },
+      {
+       "at": "2026-10-19T16:50:00+00:00",
+       "signal": -76
+      },
+      {
+       "at": "2026-10-19T16:55:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T17:00:00+00:00",
+       "signal": -75
+      },
+      {
+       "at": "2026-10-19T17:05:00+00:00",
+       "signal": -76
+      },
+      {
+       "at": "2026-10-19T17:10:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T17:15:00+00:00",
+       "signal": -75
+      },
+      {
+       "at": "2026-10-19T17:20:00+00:00",
+       "signal": -76
+      },
+      {
+       "at": "2026-10-19T17:25:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T17:30:00+00:00",
+       "signal": -75
+      },
+      {
+       "at": "2026-10-19T17:35:00+00:00",
+       "signal": -76
+      },
+      {
+       "at": "2026-10-19T17:40:00+00:00",
+       "signal": -74
+      },
+      {
+       "at": "2026-10-19T17:45:00+00:00",
+       "signal": -75
+      }
+     ]
+    }
+   ],
+   "roams": [
+    {
+     "at": "2026-10-19T13:00:00+00:00",
+     "from": "ap1|wifi1",
+     "to": "ap2|wifi1",
+     "how": "ft"
+    },
+    {
+     "at": "2026-10-19T13:03:00+00:00",
+     "from": "ap2|wifi1",
+     "to": "ap1|wifi1",
+     "how": "ft"
+    },
+    {
+     "at": "2026-10-19T13:06:00+00:00",
+     "from": "ap1|wifi1",
+     "to": "ap2|wifi1",
+     "how": "ft"
+    },
+    {
+     "at": "2026-10-19T13:09:00+00:00",
+     "from": "ap2|wifi1",
+     "to": "ap1|wifi1",
+     "how": "ft"
+    },
+    {
+     "at": "2026-10-19T13:12:00+00:00",
+     "from": "ap1|wifi1",
+     "to": "ap2|wifi1",
+     "how": "ft"
+    }
+   ],
+   "events": [
+    {
+     "at": "2026-10-19T12:05:00+00:00",
+     "kind": "connected",
+     "signal": -52,
+     "ft": false,
+     "reason": "",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T13:00:00+00:00",
+     "kind": "roamed",
+     "signal": -67,
+     "ft": true,
+     "reason": "",
+     "lane": "ap2|wifi1"
+    },
+    {
+     "at": "2026-10-19T13:03:00+00:00",
+     "kind": "roamed",
+     "signal": -67,
+     "ft": true,
+     "reason": "",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T13:06:00+00:00",
+     "kind": "roamed",
+     "signal": -67,
+     "ft": true,
+     "reason": "",
+     "lane": "ap2|wifi1"
+    },
+    {
+     "at": "2026-10-19T13:09:00+00:00",
+     "kind": "roamed",
+     "signal": -67,
+     "ft": true,
+     "reason": "",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T13:12:00+00:00",
+     "kind": "roamed",
+     "signal": -67,
+     "ft": true,
+     "reason": "",
+     "lane": "ap2|wifi1"
+    },
+    {
+     "at": "2026-10-19T14:00:00+00:00",
+     "kind": "disconnected",
+     "signal": -81,
+     "ft": false,
+     "reason": "connection lost",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T14:01:00+00:00",
+     "kind": "connected",
+     "signal": -63,
+     "ft": false,
+     "reason": "",
+     "lane": "ap2|wifi1"
+    },
+    {
+     "at": "2026-10-19T15:20:00+00:00",
+     "kind": "disconnected",
+     "signal": -84,
+     "ft": false,
+     "reason": "extensive data loss",
+     "lane": "ap2|wifi1"
+    },
+    {
+     "at": "2026-10-19T15:22:00+00:00",
+     "kind": "auth_fail",
+     "signal": null,
+     "ft": false,
+     "reason": "4-way handshake timeout",
+     "lane": "ap2|wifi1"
+    },
+    {
+     "at": "2026-10-19T15:24:00+00:00",
+     "kind": "connected",
+     "signal": -58,
+     "ft": false,
+     "reason": "",
+     "lane": "ap1|wifi1"
+    }
+   ],
+   "samples": [
+    {
+     "at": "2026-10-19T12:10:00+00:00",
+     "signal": -50,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:15:00+00:00",
+     "signal": -51,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:20:00+00:00",
+     "signal": -52,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:25:00+00:00",
+     "signal": -53,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:30:00+00:00",
+     "signal": -50,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:35:00+00:00",
+     "signal": -51,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:40:00+00:00",
+     "signal": -52,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:45:00+00:00",
+     "signal": -53,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:50:00+00:00",
+     "signal": -50,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T12:55:00+00:00",
+     "signal": -51,
+     "tx_rate": "433Mbps",
+     "rx_rate": "433Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:10:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:15:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:20:00+00:00",
+     "signal": -76,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:25:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:30:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:35:00+00:00",
+     "signal": -76,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:40:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:45:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:50:00+00:00",
+     "signal": -76,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T16:55:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:00:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:05:00+00:00",
+     "signal": -76,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:10:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:15:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:20:00+00:00",
+     "signal": -76,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:25:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:30:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:35:00+00:00",
+     "signal": -76,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:40:00+00:00",
+     "signal": -74,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    },
+    {
+     "at": "2026-10-19T17:45:00+00:00",
+     "signal": -75,
+     "tx_rate": "24Mbps",
+     "rx_rate": "24Mbps",
+     "ssid": "Firma",
+     "lane": "ap1|wifi1"
+    }
+   ],
+   "findings": [
+    {
+     "severity": "warning",
+     "code": "auth_fail",
+     "text": "1× neúspěšné přihlášení (4-way handshake timeout)",
+     "fix": "Klient má nejspíš staré heslo uložené v profilu – smazat síť v klientovi a připojit znovu."
+    },
+    {
+     "severity": "warning",
+     "code": "pingpong",
+     "text": "přeskakuje mezi AP-chodba wifi1 a AP-sklad wifi1 (4× za 9 min)",
+     "fix": "Překrytí AP se stejně silným signálem – snížit vysílací výkon jednoho z AP nebo je posunout; zkontrolovat, že obě AP mají různé kanály."
+    },
+    {
+     "severity": "warning",
+     "code": "sticky",
+     "text": "drží se slabého AP AP-chodba wifi1 (signál až -76 dBm po 90 min)",
+     "fix": "Klient sám nepřejde: zapnout 802.11k/v (steering je v našem CAPsMANu), případně snížit výkon vzdáleného AP, aby klient dřív hledal lepší."
+    },
+    {
+     "severity": "warning",
+     "code": "weak",
+     "text": "slabý signál – medián -74 dBm",
+     "fix": "Klient je na okraji pokrytí – přidat nebo přesunout AP blíž, u 5 GHz zkusit 2,4 GHz."
+    },
+    {
+     "severity": "info",
+     "code": "low_rate",
+     "text": "nízká rychlost spojení – medián 24 Mb/s",
+     "fix": "Slabý signál, rušení nebo starý klient (802.11g/n 1×1); zkontrolovat kanál a šířku."
+    }
+   ],
+   "from": "2026-10-19T12:00:00+00:00",
+   "until": "2026-10-19T18:00:00+00:00",
+   "client": {
+    "mac": "B0:BE:76:12:34:56",
+    "label": "",
+    "icon": "laptop",
+    "logo": null,
+    "vendor": "TP-LINK TECHNOLOGIES CO.,LTD.",
+    "vendor_key": "tp link",
+    "note": "",
+    "hostname": "ntb-novak",
+    "ip": "192.168.10.150"
+   }
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/wifi/roaming?hours=24": {
+   "clients": [
+    {
+     "mac": "B0:BE:76:12:34:56",
+     "roams": 5,
+     "disconnects": 2,
+     "min_signal": -84,
+     "last_ap": "ap1|wifi1",
+     "findings": [
+      {
+       "severity": "warning",
+       "code": "auth_fail",
+       "text": "1× neúspěšné přihlášení (4-way handshake timeout)",
+       "fix": "Klient má nejspíš staré heslo uložené v profilu – smazat síť v klientovi a připojit znovu."
+      },
+      {
+       "severity": "warning",
+       "code": "pingpong",
+       "text": "přeskakuje mezi AP-chodba wifi1 a AP-sklad wifi1 (4× za 9 min)",
+       "fix": "Překrytí AP se stejně silným signálem – snížit vysílací výkon jednoho z AP nebo je posunout; zkontrolovat, že obě AP mají různé kanály."
+      },
+      {
+       "severity": "warning",
+       "code": "sticky",
+       "text": "drží se slabého AP AP-chodba wifi1 (signál až -76 dBm po 90 min)",
+       "fix": "Klient sám nepřejde: zapnout 802.11k/v (steering je v našem CAPsMANu), případně snížit výkon vzdáleného AP, aby klient dřív hledal lepší."
+      },
+      {
+       "severity": "warning",
+       "code": "weak",
+       "text": "slabý signál – medián -74 dBm",
+       "fix": "Klient je na okraji pokrytí – přidat nebo přesunout AP blíž, u 5 GHz zkusit 2,4 GHz."
+      },
+      {
+       "severity": "info",
+       "code": "low_rate",
+       "text": "nízká rychlost spojení – medián 24 Mb/s",
+       "fix": "Slabý signál, rušení nebo starý klient (802.11g/n 1×1); zkontrolovat kanál a šířku."
+      }
+     ],
+     "score": 9,
+     "label": "",
+     "icon": "laptop",
+     "logo": null,
+     "vendor": "TP-LINK TECHNOLOGIES CO.,LTD.",
+     "vendor_key": "tp link",
+     "note": "",
+     "hostname": "ntb-novak"
+    },
+    {
+     "mac": "11:11:11:11:11:11",
+     "roams": 2,
+     "disconnects": 0,
+     "min_signal": -58,
+     "last_ap": "ap2|wifi1",
+     "findings": [],
+     "score": 0,
+     "label": "NAS kancelář",
+     "icon": "nas",
+     "logo": null,
+     "vendor": "Synology",
+     "vendor_key": "synology",
+     "note": "",
+     "hostname": "pc"
+    }
+   ],
+   "lanes": [
+    {
+     "key": "ap1|wifi1",
+     "ap": "AP-chodba",
+     "ap_id": "ap1",
+     "radio": "wifi1",
+     "band": "5"
+    },
+    {
+     "key": "ap2|wifi1",
+     "ap": "AP-sklad",
+     "ap_id": "ap2",
+     "radio": "wifi1",
+     "band": "5"
+    }
+   ],
+   "matrix": [
+    {
+     "from": "ap1|wifi1",
+     "to": "ap2|wifi1",
+     "n": 7
+    },
+    {
+     "from": "ap2|wifi1",
+     "to": "ap1|wifi1",
+     "n": 5
+    }
+   ],
+   "has_events": true,
+   "hours": 24,
+   "logging": {
+    "on_": 0,
+    "n": 4
+   }
   }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",

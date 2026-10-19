@@ -962,6 +962,8 @@ function clientMenu(c) {
     { label: "Kopírovat MAC", act: () => copyText(c.mac, "MAC") },
     c.ip ? { label: "Kopírovat IP", act: () => copyText(c.ip, "IP") } : null,
     c.device_id ? { label: `Otevřít ${c.device || "zařízení"}`, act: () => openDetail(c.device_id) } : null,
+    { sep: true },
+    { label: "Wi-Fi časová osa", act: () => openJourney(c.mac) },
   ];
 }
 
@@ -1107,6 +1109,7 @@ async function clientDhcp(c) {
 
 async function loadWifi() {
   try { renderWifi(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi`)); } catch (e) { msg(e.message, true); }
+  loadRoaming();
 }
 $("wifi-btn").addEventListener("click", loadWifi);
 
@@ -3253,6 +3256,190 @@ function bwChart(samples) {
   }
   svg.appendChild(svgEl("text", { x: W - 6, y: H - 2, class: "ax end" }, `${samples.length} s`));
   return svg;
+}
+
+// --- Wi-Fi: roaming a časová osa klienta ----------------------------------------------------------
+const roamState = { hours: 24, data: null };
+const RANGES = [[1, "1 h"], [6, "6 h"], [24, "24 h"], [72, "3 dny"], [168, "7 dní"]];
+const FIND_ICON = { warning: "⚠", info: "ⓘ", ok: "✓" };
+const ROAM_HOW = { ft: "rychlý přechod (FT)", roam: "přechod", reconnect: "přechod s plným přihlášením", inferred: "přechod (odvozený z inventury)" };
+
+async function loadRoaming() {
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/roaming?hours=${roamState.hours}`); } catch (e) { return msg(e.message, true); }
+  roamState.data = r;
+  renderRoaming();
+}
+
+const laneName = (lanes, key) => { const l = lanes.find((x) => x.key === key); return l ? `${l.ap} ${l.radio}${l.band ? " · " + l.band + " GHz" : ""}` : key; };
+
+function renderRoaming() {
+  const r = roamState.data;
+  segmented($("roam-range"), RANGES, roamState.hours, (h) => { roamState.hours = h; loadRoaming(); });
+  const lg = r.logging || { on_: 0, n: 0 };
+  $("roam-log").textContent = `Wi-Fi události: ${lg.on_} z ${lg.n} zařízení`;
+  const bn = $("roam-banner"); bn.textContent = "";
+  if (!lg.on_) {
+    const b = el("div", null, "banner info");
+    b.appendChild(document.createTextNode("Přesné časy roamingu a důvody odpojení přijdou z logů AP. Bez nich je časová osa jen podle inventury (po 5 minutách). "));
+    if (canManage()) {
+      const on = el("button", "Zapnout Wi-Fi události na lokalitě", "small"); on.type = "button";
+      on.onclick = async () => {
+        if (!(await ask("Zapnout na všech zařízeních s Wi-Fi posílání událostí klientů (připojení, odpojení, roaming)?\n\nData: obvykle desítky kB až jednotky MB denně na AP podle počtu klientů.", "Zapnout"))) return;
+        try { const x = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/syslog`, { wifi: true }); msg(`Wi-Fi události zapnuté na ${x.devices} zařízeních`); loadRoaming(); }
+        catch (e) { msg(e.message, true); }
+      };
+      b.appendChild(on);
+    }
+    bn.appendChild(b);
+  }
+  const box = $("roam-clients"); box.textContent = "";
+  for (const c of r.clients.filter((x) => x.score > 0 || x.roams).slice(0, 40)) {
+    const row = el("div", null, "roam-row clickable");
+    const nm = el("div", null, "roam-nm");
+    const txt = el("div", null, "roam-txt"); txt.append(el("b", clientName(c)), el("span", c.mac, "mono muted small"));
+    nm.append(clientAvatar(c, "sm"), txt);
+    const st = el("div", null, "roam-st");
+    st.append(el("span", `↔ ${c.roams}`, "wpill"), el("span", `✕ ${c.disconnects}`, "wpill" + (c.disconnects >= 3 ? " bad" : "")),
+              el("span", c.min_signal != null ? `${c.min_signal} dBm` : "–", "wpill" + (c.min_signal != null && c.min_signal <= -75 ? " bad" : "")));
+    const fs = el("div", null, "roam-f");
+    for (const f of c.findings.slice(0, 3)) fs.appendChild(el("span", `${FIND_ICON[f.severity] || ""} ${f.text}`, "rf " + f.severity));
+    row.append(nm, st, fs);
+    row.addEventListener("click", () => openJourney(c.mac));
+    withCtx(row, clientName(c), () => [{ label: "Wi-Fi časová osa", act: () => openJourney(c.mac) },
+      { label: "Upravit klienta…", act: () => openClient(c) }, { label: "Kopírovat MAC", act: () => copyText(c.mac, "MAC") }]);
+    box.appendChild(row);
+  }
+  if (!box.children.length) box.appendChild(el("p", r.clients.length ? "Žádný klient s problémem v tomto období ✓" : "Zatím žádná data o Wi-Fi klientech.", "muted"));
+  // matice přechodů: odkud → kam, počet
+  const mx = $("roam-matrix"); mx.textContent = "";
+  if (!r.matrix.length) { mx.appendChild(el("p", "Žádné přechody.", "muted")); return; }
+  const max = Math.max(...r.matrix.map((x) => x.n));
+  const t = el("table", null, "roam-mx");
+  for (const x of r.matrix.slice(0, 20)) {
+    const tr = el("tr");
+    const bar = el("td", null, "mxcell"); const i = el("i", null, "mxbar"); i.style.width = Math.max(6, (x.n / max) * 100) + "%"; bar.appendChild(i);
+    tr.append(el("td", laneName(r.lanes, x.from), "small"), el("td", "→", "muted"), el("td", laneName(r.lanes, x.to), "small"),
+              el("td", String(x.n), "num"), bar);
+    t.appendChild(tr);
+  }
+  mx.appendChild(t);
+}
+
+// --- časová osa klienta ---
+const jrState = { mac: null, hours: 6, data: null };
+async function openJourney(mac, hours) {
+  jrState.mac = mac; if (hours) jrState.hours = hours;
+  let j;
+  try { j = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/journey?mac=${encodeURIComponent(mac)}&hours=${jrState.hours}`); }
+  catch (e) { return msg(e.message, true); }
+  jrState.data = j;
+  renderJourney();
+  $("jr-dlg").hidden = false;
+}
+$("jr-close").addEventListener("click", () => { $("jr-dlg").hidden = true; });
+
+function renderJourney() {
+  const j = jrState.data, c = j.client;
+  $("jr-title").textContent = clientName(c);
+  $("jr-sub").textContent = `${c.mac}${c.vendor ? " · " + c.vendor : ""}${c.ip ? " · " + c.ip : ""}`;
+  $("jr-avatar").textContent = ""; $("jr-avatar").appendChild(clientAvatar(c, "big"));
+  segmented($("jr-range"), RANGES, jrState.hours, (h) => openJourney(jrState.mac, h));
+  const ul = $("jr-findings"); ul.textContent = "";
+  for (const f of j.findings) {
+    const li = el("li", null, "jf " + f.severity);
+    li.append(el("b", `${FIND_ICON[f.severity] || ""} ${f.text}`));
+    if (f.fix) li.appendChild(el("div", f.fix, "muted small"));
+    ul.appendChild(li);
+  }
+  const lg = $("jr-legend"); lg.textContent = "";
+  for (const [cls, t] of [["sig-good", "signál ≥ −60"], ["sig-mid", "−60 až −72"], ["sig-bad", "slabý < −72"], ["mk-ft", "FT přechod"],
+                          ["mk-re", "plné přihlášení"], ["mk-inf", "odvozený"], ["mk-dis", "odpojení"], ["mk-fail", "chyba přihlášení"]]) {
+    const s = el("span"); s.append(el("i", null, "lg " + cls), document.createTextNode(t)); lg.appendChild(s);
+  }
+  drawJourney(j);
+  const tb = $("jr-events"); tb.textContent = "";
+  const KIND = { connected: "připojení", disconnected: "odpojení", roamed: "přechod", reassoc: "reasociace", auth_fail: "chyba přihlášení", other: "jiné" };
+  for (const e of [...j.events].reverse()) {
+    const tr = el("tr", null, e.kind === "disconnected" || e.kind === "auth_fail" ? "lg-err" : "");
+    tr.append(el("td", new Date(e.at).toLocaleString("cs-CZ"), "mono small"), el("td", KIND[e.kind] + (e.ft ? " (FT)" : "")),
+              el("td", laneName(j.lanes, e.lane), "small"), el("td", e.signal != null ? `${e.signal} dBm` : "–"), el("td", e.reason || "", "muted"));
+    tb.appendChild(tr);
+  }
+  $("jr-evn").textContent = `(${j.events.length})`;
+}
+
+// plavecké dráhy: řádek = AP/rádio, pruh = připojení (barva podle signálu), značky = přechody a odpojení;
+// pod tím průběh signálu s hranicí −75 dBm
+function drawJourney(j) {
+  const svg = $("jr-svg"); svg.textContent = "";
+  const t0 = new Date(j.from).getTime(), t1 = new Date(j.until).getTime();
+  const lanes = j.lanes, LW = 170, W = 980, RH = 30, top = 22, sigH = 90;
+  const H = top + lanes.length * RH + 24 + sigH + 22;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("width", W); svg.setAttribute("height", H);
+  const x = (t) => LW + ((new Date(t).getTime() - t0) / Math.max(1, t1 - t0)) * (W - LW - 10);
+  const yl = (key) => top + lanes.findIndex((l) => l.key === key) * RH;
+  // časová osa
+  const ticks = 6;
+  for (let i = 0; i <= ticks; i++) {
+    const t = t0 + ((t1 - t0) * i) / ticks, xx = x(t);
+    svg.appendChild(svgEl("line", { x1: xx, x2: xx, y1: top - 4, y2: H - 18, class: "jr-grid" }));
+    const d = new Date(t);
+    svg.appendChild(svgEl("text", { x: xx, y: 12, class: "jr-ax" },
+      (t1 - t0 > 36e5 * 30 ? d.toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric" }) + " " : "") +
+      d.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })));
+  }
+  lanes.forEach((l, i) => {
+    const y = top + i * RH;
+    svg.appendChild(svgEl("rect", { x: 0, y, width: W, height: RH, class: i % 2 ? "jr-row alt" : "jr-row" }));
+    svg.appendChild(svgEl("text", { x: 8, y: y + 13, class: "jr-lane" }, shortName(l.ap, 18)));
+    svg.appendChild(svgEl("text", { x: 8, y: y + 25, class: "jr-lane2" }, `${l.radio}${l.band ? " · " + l.band + " GHz" : ""}`));
+  });
+  const sigCls = (s) => (s == null ? "sig-none" : s >= -60 ? "sig-good" : s >= -72 ? "sig-mid" : "sig-bad");
+  for (const s of j.segments) {
+    const y = yl(s.lane) + 7, x1 = x(s.start), x2 = Math.max(x1 + 3, x(s.end));
+    const sig = s.signals.map((p) => p.signal).filter((v) => v != null);
+    const avg = sig.length ? Math.round(sig.reduce((a, b) => a + b, 0) / sig.length) : null;
+    const r = svgEl("rect", { x: x1, y, width: x2 - x1, height: RH - 14, rx: 4, class: "jr-seg " + sigCls(avg) });
+    r.appendChild(svgEl("title", {}, `${laneName(lanes, s.lane)}\n${new Date(s.start).toLocaleTimeString("cs-CZ")} – ${new Date(s.end).toLocaleTimeString("cs-CZ")}` +
+      (avg != null ? `\nprůměrný signál ${avg} dBm, nejhorší ${Math.min(...sig)} dBm` : "")));
+    svg.appendChild(r);
+  }
+  // přechody mezi AP: svislá spojnice
+  for (const r of j.roams) {
+    const xx = x(r.at), y1 = yl(r.from) + RH / 2, y2 = yl(r.to) + RH / 2;
+    const cls = r.how === "ft" ? "mk-ft" : r.how === "inferred" ? "mk-inf" : "mk-re";
+    const g = svgEl("g", { class: "jr-roam " + cls });
+    g.appendChild(svgEl("line", { x1: xx, x2: xx, y1, y2 }));
+    g.appendChild(svgEl("circle", { cx: xx, cy: y2, r: 4 }));
+    g.appendChild(svgEl("title", {}, `${new Date(r.at).toLocaleTimeString("cs-CZ")} ${ROAM_HOW[r.how]}\n${laneName(lanes, r.from)} → ${laneName(lanes, r.to)}`));
+    svg.appendChild(g);
+  }
+  for (const e of j.events.filter((e) => e.kind === "disconnected" || e.kind === "auth_fail")) {
+    const xx = x(e.at), yy = yl(e.lane) + RH / 2;
+    const g = svgEl("g", { class: "jr-mark " + (e.kind === "auth_fail" ? "mk-fail" : "mk-dis") });
+    g.appendChild(svgEl("text", { x: xx, y: yy + 5 }, e.kind === "auth_fail" ? "!" : "✕"));
+    g.appendChild(svgEl("title", {}, `${new Date(e.at).toLocaleTimeString("cs-CZ")} ${e.kind === "auth_fail" ? "chyba přihlášení" : "odpojení"}` +
+      `${e.reason ? ": " + e.reason : ""}${e.signal != null ? `\nsignál ${e.signal} dBm` : ""}`));
+    svg.appendChild(g);
+  }
+  // průběh signálu (vzorky + události se signálem)
+  const sy0 = top + lanes.length * RH + 24;
+  const sy = (s) => sy0 + ((-30 - s) / 60) * sigH;   // −30 nahoře, −90 dole
+  svg.appendChild(svgEl("text", { x: 8, y: sy0 + 10, class: "jr-lane" }, "Signál"));
+  for (const v of [-50, -75]) {
+    svg.appendChild(svgEl("line", { x1: LW, x2: W - 10, y1: sy(v), y2: sy(v), class: v === -75 ? "jr-thr" : "jr-grid" }));
+    svg.appendChild(svgEl("text", { x: LW - 6, y: sy(v) + 4, class: "jr-ax end" }, `${v}`));
+  }
+  const pts = [...j.samples.map((s) => ({ at: s.at, s: s.signal })), ...j.events.map((e) => ({ at: e.at, s: e.signal }))]
+    .filter((p) => p.s != null).sort((a, b) => new Date(a.at) - new Date(b.at));
+  if (pts.length > 1) svg.appendChild(svgEl("polyline", { points: pts.map((p) => `${x(p.at).toFixed(1)},${sy(Math.max(-90, Math.min(-30, p.s))).toFixed(1)}`).join(" "), class: "jr-sig" }));
+  for (const p of pts) {
+    const c = svgEl("circle", { cx: x(p.at), cy: sy(Math.max(-90, Math.min(-30, p.s))), r: 2.5, class: "jr-pt " + sigCls(p.s) });
+    c.appendChild(svgEl("title", {}, `${new Date(p.at).toLocaleTimeString("cs-CZ")} ${p.s} dBm`));
+    svg.appendChild(c);
+  }
+  if (!lanes.length) svg.appendChild(svgEl("text", { x: 20, y: 40, class: "jr-lane" }, "V tomto období klient na Wi-Fi nebyl."));
 }
 
 boot();

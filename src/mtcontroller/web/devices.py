@@ -1152,13 +1152,13 @@ async def device_logs(request: Request, p: Principal, tid: str) -> Response:
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            d = tx.fetchone("SELECT syslog_level FROM device WHERE id = %(d)s", {"d": did})
+            d = tx.fetchone("SELECT syslog_level, syslog_wifi FROM device WHERE id = %(d)s", {"d": did})
             if not d:
                 raise NotFound("zařízení neexistuje")
             before = _int(qp.get("before"), 0, 0, 2 ** 62) or None
             logs = devlog.query(tx, did, str(qp.get("q") or "")[:100], _int(qp.get("sev"), 7, 0, 7),
                                 _int(qp.get("limit"), 300, 1, 1000), before)
-            return {"level": d["syslog_level"], "logs": logs, "volume": devlog.volume(tx, did),
+            return {"level": d["syslog_level"], "wifi": d["syslog_wifi"], "logs": logs, "volume": devlog.volume(tx, did),
                     "retention_days": st.settings.syslog.retention_days}
 
     return json_response(await run_in_threadpool(q))
@@ -1172,8 +1172,9 @@ async def device_syslog(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     did = _uuid(request.path_params["device_id"])
     data = await _json(request)
-    out = await run_in_threadpool(devlog.set_level, st.db, st.settings, tid, did, str(data.get("level") or ""),
-                                  p.user_id, client_ip(request))
+    level = str(data["level"]) if data.get("level") is not None else None
+    wifi = bool(data["wifi"]) if "wifi" in data else None
+    out = await run_in_threadpool(devlog.set_level, st.db, st.settings, tid, did, level, p.user_id, client_ip(request), wifi)
     kick(st.db, st.settings, st.box, tid, did)
     return json_response(out)
 
@@ -1187,20 +1188,73 @@ async def site_syslog(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
     data = await _json(request)
-    level = str(data.get("level") or "")
+    level = str(data["level"]) if data.get("level") is not None else None
+    wifi = bool(data["wifi"]) if "wifi" in data else None
+    if level is None and wifi is None:
+        raise ServiceError("nic ke změně (level, wifi)")
 
     def run():
         with tenant_scope(st.db, tid) as tx:
+            # Wi-Fi události jen tam, kde je Wi-Fi (rádia nebo CAPsMAN) – ostatní zařízení je nemají
             ids = [str(r["id"]) for r in tx.fetchall(
-                "SELECT id FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline')", {"s": sid})]
+                """SELECT id FROM device d WHERE site_id = %(s)s AND state IN ('adopted', 'offline')
+                     AND (%(only)s::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM device_inventory i WHERE i.device_id = d.id
+                          AND i.section IN ('wifi', 'wireless') AND jsonb_typeof(i.data) = 'array'
+                          AND jsonb_array_length(i.data) > 0))""", {"s": sid, "only": level is None})]
         for d in ids:
-            devlog.set_level(st.db, st.settings, tid, d, level, p.user_id, client_ip(request))
+            devlog.set_level(st.db, st.settings, tid, d, level, p.user_id, client_ip(request), wifi)
         return ids
 
     ids = await run_in_threadpool(run)
     for d in ids:
         kick(st.db, st.settings, st.box, tid, d)
     return json_response({"level": level, "devices": len(ids)})
+
+
+@endpoint(READ)
+async def site_wifi_journey(request: Request, p: Principal, tid: str) -> Response:
+    """Wi-Fi časová osa klienta: u kterého AP byl, signál, roaming, odpojení s důvodem, nálezy."""
+    from .. import clientmeta, leases, wifidiag
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    mac = leases.norm_mac(request.query_params.get("mac"))
+    if not mac:
+        raise ServiceError("neplatná MAC adresa")
+    hours = _int(request.query_params.get("hours"), 24, 1, 168)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            j = wifidiag.client_journey(tx, sid, mac, hours)
+            j["client"] = clientmeta.annotate(tx, [{"mac": mac}])[0]
+            c = tx.fetchone("SELECT hostname, ip FROM client WHERE site_id = %(s)s AND mac = %(m)s", {"s": sid, "m": mac})
+            j["client"].update(c or {})
+        return j
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def site_wifi_roaming(request: Request, p: Principal, tid: str) -> Response:
+    """Roaming lokality: klienti podle problémů a matice přechodů mezi AP."""
+    from .. import clientmeta, wifidiag
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    hours = _int(request.query_params.get("hours"), 24, 1, 168)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            r = wifidiag.site_roaming(tx, sid, hours)
+            clientmeta.annotate(tx, r["clients"])
+            names = {x["mac"]: x for x in tx.fetchall("SELECT mac, hostname FROM client WHERE site_id = %(s)s", {"s": sid})}
+            for c in r["clients"]:
+                c["hostname"] = (names.get(c["mac"]) or {}).get("hostname")
+            r["logging"] = tx.fetchone("""SELECT count(*) FILTER (WHERE syslog_wifi OR syslog_level = 'info') AS on_, count(*) AS n
+                                         FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
+        return r
+
+    return json_response(await run_in_threadpool(q))
 
 
 @endpoint(READ)
@@ -1372,6 +1426,8 @@ def routes() -> list[Route]:
         Route(d + "/logs", device_logs, methods=["GET"]),
         Route(d + "/syslog", device_syslog, methods=["POST"]),
         Route(s + "/syslog", site_syslog, methods=["POST"]),
+        Route(s + "/wifi/journey", site_wifi_journey, methods=["GET"]),
+        Route(s + "/wifi/roaming", site_wifi_roaming, methods=["GET"]),
         Route(d + "/bwtest", device_bwtests, methods=["GET"]),
         Route(d + "/bwtest", device_bwtest_start, methods=["POST"]),
         Route(d + "/hardening-fix", device_hardening_fix, methods=["POST"]),

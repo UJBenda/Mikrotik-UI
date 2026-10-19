@@ -547,5 +547,34 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 26) Wi-Fi události a vzorky klientů izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO wifi_event (tenant_id, device_id, mac, kind) SELECT tenant_id, id, 'AA:BB:CC:00:00:09', 'connected' FROM device WHERE serial = 'SER-B1';
+INSERT INTO wifi_sample (tenant_id, device_id, mac, signal) SELECT tenant_id, id, 'AA:BB:CC:00:00:09', -60 FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM wifi_event) + (SELECT count(*) FROM wifi_sample) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí Wi-Fi události tenanta B'; END IF;
+  DELETE FROM wifi_event; DELETE FROM wifi_sample;
+  BEGIN
+    INSERT INTO wifi_event (tenant_id, device_id, mac, kind)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', (SELECT id FROM device LIMIT 1), 'AA:BB:CC:00:00:09', 'other');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal Wi-Fi událost tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation OR not_null_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 26 Wi-Fi události izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM wifi_event) <> 1 OR (SELECT count(*) FROM wifi_sample) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: tenant A smazal Wi-Fi data B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

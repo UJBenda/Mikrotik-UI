@@ -297,6 +297,12 @@ def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], er
                        %(rx_errors)s, %(tx_errors)s, %(rx_drops)s, %(tx_drops)s, %(link_downs)s)""",
                 dict(smp, t=str(tenant_id), d=str(device_id)),
             )
+        if "wifi_clients" in data or "wireless_clients" in data:
+            # vzorky klientů pro Wi-Fi časovou osu (AP, signál, rychlost)
+            from .wifidiag import record_samples
+
+            site = tx.fetchone("SELECT site_id FROM device WHERE id = %(d)s", {"d": str(device_id)})
+            record_samples(tx, tenant_id, (site or {}).get("site_id"), device_id, data)
         # naše výchozí konfigurace (značka v bridgi) = zařízení je řízené od adopce, bez převzetí resetem
         from .defaults import role_from_inventory
 

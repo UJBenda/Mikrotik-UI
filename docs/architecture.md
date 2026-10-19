@@ -780,6 +780,23 @@ na cíli dočasný uživatel `mtc-btest` (náhodné heslo jen v paměti, povolen
 v původním stavu. Výsledek (průběh po sekundách, průměr/max, CPU obou stran, ztráty) v `bw_test`;
 cíl jen na adresu, kterou cíl podle inventury má. UI předem ukáže odhad spotřeby dat.
 
+### Wi-Fi diagnostika klientů: roaming a časová osa
+
+Když si klient stěžuje, rozhoduje **časová osa**: u kterého AP/rádia byl, s jakým signálem, kdy a jak
+přešel jinam a kdy a proč se odpojil. Navíc controller z osy sám vyvodí **nálezy s radou** (`wifidiag.diagnose`):
+přeskakování mezi dvěma AP (ping-pong), „lepkavý“ klient na slabém AP, opakovaná odpojení s nejčastějším
+důvodem, přechody bez FT (plné přihlášení = výpadek), chyby přihlášení (staré heslo), slabý signál, nízká rychlost.
+
+| Zdroj | Co dává | Přesnost |
+| --- | --- | --- |
+| události z logů (`wireless`, volba „Wi-Fi události“ u zařízení / lokality, migrace 0019 `wifi_event`) | připojení, odpojení s důvodem, roaming (FT), chyby přihlášení | na sekundu |
+| vzorky registrační tabulky při inventuře (`wifi_sample`, 7 dní) | AP/rádio, SSID, signál, rychlost | inventura (5 min); změna AP = „odvozený“ přechod |
+
+Rozhraní CAP na CAPsMANu (`cap-wifiN`) se přeloží na AP a rádio podle MAC (`iface_map`), takže je jedno, zda
+události posílá CAPsMAN nebo samo AP. UI: Lokalita → Wi-Fi → „Roaming a problémy klientů“ (klienti podle
+závažnosti, matice přechodů mezi AP), klik na klienta (nebo Klienti → pravé tlačítko → Wi-Fi časová osa)
+otevře plavecké dráhy po AP s barvou podle signálu, značkami přechodů a odpojení a průběhem signálu s hranicí −75 dBm.
+
 ## Rychlé doručení změn
 
 Zařízení si příkazy vyzvedává check-inem (scheduler jednou za minutu); změna s návratem

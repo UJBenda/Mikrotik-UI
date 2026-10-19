@@ -133,6 +133,26 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["topo-btn"].fire("click");
     await byId["clients-btn"].fire("click");
     await byId["wifi-btn"].fire("click");
+    // Wi-Fi: roaming lokality a časová osa klienta
+    {
+      const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      await tick();
+      const rows = byId["roam-clients"].children;
+      if (rows.length !== 2 || !rows[0].textContent.includes("ntb-novak") || !rows[0].textContent.includes("přeskakuje"))
+        errors.push("roaming: klienti " + byId["roam-clients"].textContent.slice(0, 160));
+      if (byId["roam-matrix"].children[0].children.length !== 2 || !byId["roam-matrix"].textContent.includes("AP-chodba wifi1"))
+        errors.push("roaming: matice " + byId["roam-matrix"].textContent.slice(0, 120));
+      if (!find(byId["roam-banner"], (n) => n.tagName === "BUTTON" && n.textContent.includes("Zapnout Wi-Fi události"))) errors.push("roaming: zapnutí událostí");
+      await rows[0].fire("click"); await tick();
+      if (byId["jr-dlg"].hidden || byId["jr-title"].textContent !== "ntb-novak") errors.push("časová osa: dialog");
+      if (byId["jr-findings"].children.length < 3) errors.push("časová osa: nálezy " + byId["jr-findings"].textContent.slice(0, 120));
+      const segs = []; find(byId["jr-svg"], (n) => { if (n.attrs && /^jr-seg/.test(n.attrs.class || "")) segs.push(n); return false; });
+      if (segs.length < 4 || !find(byId["jr-svg"], (n) => n.attrs && /jr-roam mk-ft/.test(n.attrs.class || "")) ||
+          !find(byId["jr-svg"], (n) => n.attrs && /mk-dis/.test(n.attrs.class || ""))) errors.push("časová osa: graf " + segs.length);
+      if (byId["jr-events"].children.length < 5) errors.push("časová osa: události");
+      byId["jr-dlg"].hidden = true;
+    }
     await byId["stp-btn"].fire("click");
     // sítě a DHCP snooping
     await byId["net-btn"].fire("click");

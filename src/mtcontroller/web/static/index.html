@@ -123,6 +123,15 @@
         <tbody id="clients"></tbody></table>
       </div>
       <div id="wifi-wrap" hidden class="pane">
+        <div class="roam-card">
+          <div class="roam-head"><h3>Roaming a problémy klientů</h3><span id="roam-range" class="seg"></span>
+            <span id="roam-log" class="muted small"></span></div>
+          <div id="roam-banner"></div>
+          <div class="roam-grid">
+            <div><h4>Klienti s problémy</h4><div id="roam-clients" class="roam-clients"></div></div>
+            <div><h4>Přechody mezi AP</h4><div id="roam-matrix"></div></div>
+          </div>
+        </div>
         <p id="wifi-summary" class="muted"></p>
         <ul id="wifi-warn"></ul>
         <table><thead><tr><th>Zařízení</th><th>Rádio</th><th>SSID</th><th>Režim</th><th>Pásmo</th><th>Kanál</th><th>Šířka</th><th>Klienti</th><th>Signál prům./min</th></tr></thead>
@@ -577,6 +586,20 @@
       <div class="modal-acts"><span class="grow"></span>
         <button id="cl-cancel" type="button" class="secondary">Zrušit</button>
         <button id="cl-save" type="button">Uložit</button></div>
+    </div>
+  </div>
+  <div id="jr-dlg" class="modal" hidden>
+    <div class="modal-box xwide" role="dialog" aria-modal="true" aria-labelledby="jr-title">
+      <div class="sd-head"><div class="cl-headl"><span id="jr-avatar"></span><div><h3 id="jr-title">Klient</h3>
+        <div id="jr-sub" class="muted small mono"></div></div></div>
+        <span id="jr-range" class="seg"></span>
+        <button id="jr-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <ul id="jr-findings" class="jr-findings"></ul>
+      <div id="jr-legend" class="jr-legend"></div>
+      <div class="jr-canvas"><svg id="jr-svg" role="img" aria-label="Wi-Fi časová osa klienta"></svg></div>
+      <details class="fold"><summary>Události <span id="jr-evn" class="muted"></span></summary>
+        <table class="ptable"><thead><tr><th>Čas</th><th>Co</th><th>AP</th><th>Signál</th><th>Důvod</th></tr></thead>
+        <tbody id="jr-events"></tbody></table></details>
     </div>
   </div>
   <div id="ctx" class="ctx" role="menu" hidden></div>
