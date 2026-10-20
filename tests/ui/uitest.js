@@ -479,7 +479,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         errors.push("řízení: jména/důvody portů");
       if (byId["ctl-vlans"].children.length !== 3 || byId["ctl-badge"].textContent !== "sledované") errors.push("řízení: VLAN/stav");
       if (byId["ctl-go"].disabled) errors.push("řízení: tlačítko převzetí");
-      if (byId["ctl-role"].children.length !== 2 || byId["ctl-role"].children[1].disabled) errors.push("řízení: role AP");
+      // role: switch / switch + CAPsMAN (jen řízené) / AP (lokalita má CAPsMAN jinde)
+      if (byId["ctl-role"].children.length !== 3 || byId["ctl-role"].children[2].disabled || !byId["ctl-role"].children[1].disabled)
+        errors.push("řízení: role AP / CAPsMAN");
       const sel = byId["ctl-ports"].children[1].children[1].children[0];
       sel.value = "access:20"; await sel.fire("change");
       const n0 = requests.length;

@@ -4304,13 +4304,31 @@ function renderControl() {
   }
   const role = $("ctl-role");
   role.textContent = "";
-  for (const [v, l] of [["switch", "switch"], ["ap", "AP + switch (Wi-Fi z CAPsMANu)"]]) { const o = el("option", l); o.value = v; role.appendChild(o); }
-  role.value = (c.device_intent && c.device_intent.role) || c.model.role || "switch";
-  const apOk = c.wifi === true && !!c.capsman;
-  role.children[1].disabled = !apOk && role.value !== "ap";
-  $("ctl-role-why").textContent = c.wifi === false ? "rádia jen se starým balíkem wireless – AP nejde řídit"
-    : c.wifi == null ? "zařízení nemá Wi-Fi" : !c.capsman ? "AP jde vybrat až po výběru CAPsMANu v záměru lokality (Wi-Fi)"
-    : role.value === "ap" ? `rádia řídí CAPsMAN na ${c.capsman}` : "";
+  // role: switch / switch + CAPsMAN (toto zařízení řídí Wi-Fi lokality) / AP (CAP – rádia řídí CAPsMAN)
+  for (const [v, l] of [["switch", "switch"], ["capsman", "switch + CAPsMAN (řídí Wi-Fi lokality)"],
+                        ["ap", "AP + switch (CAP – Wi-Fi z CAPsMANu)"]]) { const o = el("option", l); o.value = v; role.appendChild(o); }
+  const curRole = (c.device_intent && c.device_intent.role) || c.model.role || "switch";
+  role.value = c.capsman_here && curRole !== "ap" ? "capsman" : curRole;
+  role.dataset0 = role.value;
+  const apOk = c.wifi === true && !!c.capsman && !c.capsman_here;
+  role.children[1].disabled = !c.managed;
+  role.children[2].disabled = !apOk && role.value !== "ap";
+  role.onchange = async () => {
+    if (role.value === "capsman" && role.dataset0 !== "capsman") {
+      await setCapsmanHost(detailId, c.site_id);
+      loadControl(detailId);
+    } else if (role.dataset0 === "capsman" && role.value !== "capsman") {
+      await setCapsmanHost(null, c.site_id);
+      loadControl(detailId);
+    }
+  };
+  const why = $("ctl-role-why"); why.textContent = "";
+  why.textContent = c.wifi === false ? "rádia jen se starým balíkem wireless – AP nejde řídit"
+    : role.value === "capsman" ? "tady běží CAPsMAN lokality – SSID a nasazení v Sítě a DHCP → Záměr → Wi-Fi"
+    : !c.managed ? "CAPsMAN lze nastavit po převzetí do řízení"
+    : c.wifi == null ? "zařízení nemá Wi-Fi – může být jen CAPsMAN, ne AP"
+    : !c.capsman ? "AP (CAP) jde vybrat, až lokalita má CAPsMAN – nastav ho tady (switch + CAPsMAN) nebo na jiném řízeném zařízení"
+    : role.value === "ap" ? `rádia řídí CAPsMAN na ${c.capsman}` : `CAPsMAN lokality je na ${c.capsman}`;
   const dm = (c.device_intent && c.device_intent.mgmt) || {};
   $("ctl-mgmt-mode").value = dm.mode || "";
   $("ctl-mgmt-addr").value = dm.address || "";
@@ -4362,7 +4380,8 @@ function renderCtlPorts() {
 $("ctl-mgmt-mode").addEventListener("change", () => { $("ctl-mgmt-addr").hidden = $("ctl-mgmt-mode").value !== "static"; });
 $("ctl-save").addEventListener("click", async () => {
   const mode = $("ctl-mgmt-mode").value;
-  const body = { ports: ctlOver, mgmt: mode ? { mode, address: $("ctl-mgmt-addr").value.trim() } : {}, role: $("ctl-role").value };
+  const body = { ports: ctlOver, mgmt: mode ? { mode, address: $("ctl-mgmt-addr").value.trim() } : {},
+                 role: $("ctl-role").value === "capsman" ? "switch" : $("ctl-role").value };
   try { await api("PUT", `/tenants/${tenantId}/devices/${detailId}/intent`, body); msg("Výjimky uloženy"); loadControl(detailId); }
   catch (e) { msg(e.message, true); }
 });

@@ -199,7 +199,9 @@ def preview(db: Database, tenant_id: Any, device_id: Any) -> dict:
         d = _device(tx, device_id)
         inv = inventory.load(tx, device_id)
         model, dev_intent = _model(tx, d, inv)
-        cap_host = capsman_identity(tx, load_intent(tx, d["site_id"]) or {}) if d["site_id"] else None
+        site_intent = (load_intent(tx, d["site_id"]) or {}) if d["site_id"] else {}
+        cap_host = capsman_identity(tx, site_intent) if d["site_id"] else None
+        cap_id = (site_intent.get("wifi") or {}).get("capsman_device_id")
         active = tx.fetchone(
             """SELECT id, module, status FROM config_plan WHERE device_id = %(d)s AND module IN ('takeover', 'switch')
                AND status IN ('draft', 'queued', 'confirming') ORDER BY id DESC LIMIT 1""", {"d": str(device_id)})
@@ -224,7 +226,8 @@ def preview(db: Database, tenant_id: Any, device_id: Any) -> dict:
     from .wificfg import supports_wifi
 
     out.update(model=model, classification=cls, blockers=blockers, warnings=model["warnings"],
-               wifi=supports_wifi(inv), capsman=cap_host)
+               wifi=supports_wifi(inv), capsman=cap_host, capsman_here=cap_id == str(device_id),
+               site_id=str(d["site_id"]) if d["site_id"] else None)
     if d["managed_at"] is not None and d["role"] == "gateway":
         out["blockers"] = ["firewall/router: konfiguraci nastavila výchozí konfigurace (zóny WAN/LAN); "
                            "správa sítí a matice zón routeru přijde v další fázi"]
