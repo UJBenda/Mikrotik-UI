@@ -77,8 +77,18 @@
         </div>
     <div class="card">
       <h2>Zařízení <button id="refresh" type="button" class="small">Obnovit</button></h2>
-      <table>
-        <thead><tr><th>Stav</th><th>Zařízení</th><th>Poznámka</th><th>Model</th><th>RouterOS</th><th>Lokalita</th><th>Tunel IP</th><th>SSTP</th><th>Poslední check-in</th><th>Akce</th></tr></thead>
+      <div class="dev-bar">
+        <input id="dev-q" placeholder="Hledat jméno, sériové č., model, poznámku, IP…" size="34">
+        <span id="dev-state" class="seg"></span>
+        <span class="grow"></span>
+        <span id="dev-count" class="muted small"></span>
+        <div class="dev-cols-wrap">
+          <button id="dev-cols" type="button" class="small secondary" aria-haspopup="true">Sloupce ▾</button>
+          <div id="dev-cols-pop" class="dev-cols-pop" hidden></div>
+        </div>
+      </div>
+      <table class="dev-table">
+        <thead><tr id="devices-head"></tr></thead>
         <tbody id="devices"></tbody>
       </table>
     </div>

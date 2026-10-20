@@ -57,3 +57,57 @@ def test_tree_ports_wan_stp():
 
 def test_empty():
     assert infra.site_infra([], {}) == {"nodes": [], "wans": [], "externals": [], "warnings": []}
+
+
+def _sw(mac):
+    return {"interfaces": [_if("ether1", mac)], "bridges": [{"name": "bridge"}]}
+
+
+def test_unmanaged_switch_hub_upstream_and_lonely_stp_roots():
+    """Situace z labu: 4 MikroTiky za nespravovaným switchem, MNDP je ukazuje všechny na uplinku,
+    mgmt přes DHCP na bridgi (to není WAN) a každý se považuje za STP root."""
+    ids = ["ax", "cm", "sw", "ac"]
+    macs = {"ax": "10:00:00:00:00:01", "cm": "10:00:00:00:00:02", "sw": "10:00:00:00:00:03", "ac": "10:00:00:00:00:04"}
+    devs = [{"id": i, "identity": i.upper(), "role": "switch", "state": "adopted"} for i in ids]
+    invs = {}
+    for i in ids:
+        inv = _sw(macs[i])
+        inv["neighbors"] = [{"interface": "bridge/ether1", "mac-address": macs[o], "identity": o.upper(),
+                             "discovered-by": "mndp"} for o in ids if o != i]
+        inv["neighbors"].append({"interface": "bridge/ether1", "mac-address": "AA:AA:AA:AA:AA:AA", "identity": "router-zakaznika"})
+        inv["dhcp_client"] = [{"interface": "bridge", "address": "192.168.77.8/24", "gateway": "192.168.77.1", "status": "bound"}]
+        inv["routes_default"] = [{"dst-address": "0.0.0.0/0", "gateway": "192.168.77.1", "immediate-gw": "192.168.77.1%bridge",
+                                  "distance": "1", "active": "true"}]
+        inv["stp_bridges"] = [{"name": "bridge", "root-bridge": "true" if i != "ac" else "false",
+                               "root-bridge-id": f"0x8000.{macs[i] if i != 'ac' else macs['ax']}", "root-port": "ether1"}]
+        inv["bridges"] = [{"name": "bridge", "protocol-mode": "rstp"}]
+        invs[i] = inv
+    r = infra.site_infra(devs, invs)
+    n = {x["id"]: x for x in r["nodes"]}
+    hub = r["nodes"][0]
+    assert hub["kind"] == "hub" and hub["parent"] is None and sorted(hub["members"]) == sorted(ids)
+    assert all(n[i]["parent"] == hub["id"] and n[i]["uplink_port"] == "ether1" for i in ids)
+    # DHCP na bridgi není WAN; brána mimo správu nad hubem, router zákazníka jen jednou pod hubem
+    assert r["wans"] == [{"interface": None, "port": None, "gateway": "192.168.77.1", "address": None, "distance": None,
+                          "active": True, "dhcp": None, "comment": None, "device_id": hub["id"], "upstream": True}]
+    assert [e["label"] for e in r["externals"]] == ["router-zakaznika"] and r["externals"][0]["parent"] == hub["id"]
+    # STP: korunka jen tomu, koho vidí i ostatní (AX má za root i AC); CM a SW jen sami pro sebe
+    assert [i for i in ids if n[i]["stp_root"]] == ["ax"]
+    assert any("jen sám pro sebe" in w["text"] for w in r["warnings"])
+    assert any("nespravovaný switch" in w["text"] for w in r["warnings"])
+
+
+def test_chain_with_mndp_flooding_is_direct():
+    """GW → SW1 → SW2 v řadě: MNDP projde bridgem, GW vidí na ether3 obě, ale přímý spoj je jen GW–SW1."""
+    devs = [{"id": "gw", "identity": "GW", "role": "gateway", "state": "adopted"},
+            {"id": "s1", "identity": "S1", "role": "switch", "state": "adopted"},
+            {"id": "s2", "identity": "S2", "role": "switch", "state": "adopted"}]
+    m = {"gw": "20:00:00:00:00:01", "s1": "20:00:00:00:00:02", "s2": "20:00:00:00:00:03"}
+    nb = lambda iface, o: {"interface": iface, "mac-address": m[o], "identity": o.upper()}  # noqa: E731
+    invs = {"gw": {"interfaces": [_if("ether3", m["gw"])], "neighbors": [nb("ether3", "s1"), nb("ether3", "s2")]},
+            "s1": {"interfaces": [_if("ether24", m["s1"])], "neighbors": [nb("ether24", "gw"), nb("ether1", "s2")]},
+            "s2": {"interfaces": [_if("ether1", m["s2"])], "neighbors": [nb("ether1", "gw"), nb("ether1", "s1")]}}
+    n = {x["id"]: x for x in infra.site_infra(devs, invs)["nodes"]}
+    assert (n["s1"]["parent"], n["s1"]["parent_port"], n["s1"]["uplink_port"]) == ("gw", "ether3", "ether24")
+    assert (n["s2"]["parent"], n["s2"]["parent_port"], n["s2"]["uplink_port"]) == ("s1", "ether1", "ether1")
+    assert not any(x.get("kind") == "hub" for x in n.values())

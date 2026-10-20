@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from .. import auth, ros_versions, services
+from .. import auth, health, ros_versions, services
 from ..auth import MANAGE, OPERATE, READ, AuthError, Principal
 from ..db import operator_scope, tenant_scope
 from ..services import NotFound, ServiceError
@@ -314,7 +314,11 @@ _DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model, d.managed_at IS N
                   (SELECT count(*) FROM device_inventory i,
                           jsonb_array_elements(CASE WHEN jsonb_typeof(i.data) = 'array' THEN i.data ELSE '[]' END) f
                     WHERE i.device_id = d.id AND i.section = 'hardening'
-                      AND f->>'severity' IN ('critical', 'warning')) AS security_issues"""
+                      AND f->>'severity' IN ('critical', 'warning')) AS security_issues,
+                  (SELECT i.data FROM device_inventory i WHERE i.device_id = d.id AND i.section = 'resource') AS resource,
+                  (SELECT count(*) FROM client c WHERE c.device_id = d.id
+                     AND c.last_seen > now() - interval '10 minutes') AS clients,
+                  (SELECT count(*) FROM alert a WHERE a.device_id = d.id AND a.resolved_at IS NULL) AS alerts"""
 
 
 @endpoint(READ)
@@ -331,6 +335,17 @@ async def devices(request: Request, p: Principal, tid: str) -> Response:
                              for i in ros_versions.issues_for(r.get("ros_version") or "")]
             lv = r.get("latest_version")
             r["update_available"] = bool(lv) and ros_versions.parse(lv) > ros_versions.parse(r.get("ros_version") or "")
+            # z inventury jen pár čísel pro sloupce přehledu (uptime, CPU, paměť, teplota)
+            res = r.pop("resource", None) or {}
+            res = res if isinstance(res, dict) else {}
+            r["uptime"] = res.get("uptime")
+            r["uptime_s"] = health.uptime_seconds(res.get("uptime")) if res.get("uptime") else None
+            r["cpu"] = int(res["cpu-load"]) if str(res.get("cpu-load", "")).isdigit() else None
+            try:
+                r["mem_pct"] = round(100 - 100 * int(res["free-memory"]) / int(res["total-memory"]))
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                r["mem_pct"] = None
+            r["arch"] = res.get("architecture-name")
         return rows
 
     return json_response(await run_in_threadpool(q))

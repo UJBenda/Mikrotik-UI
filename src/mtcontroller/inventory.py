@@ -52,7 +52,8 @@ SECTIONS: list[Section] = [
     Section("vlans", "/interface/vlan", "name,vlan-id,interface,disabled,comment"),
     Section("addresses", "/ip/address", "address,interface,network,disabled,dynamic"),
     Section("neighbors", "/ip/neighbor",
-            "interface,address,mac-address,identity,platform,board,version,interface-name,system-caps,system-caps-enabled"),
+            "interface,address,mac-address,identity,platform,board,version,interface-name,system-caps,system-caps-enabled,"
+            "discovered-by"),
     Section("ntp_client", "/system/ntp/client"),
     Section("ntp_server", "/system/ntp/server"),
     Section("dhcp_servers", "/ip/dhcp-server", "name,interface,disabled,address-pool,lease-time"),

@@ -496,85 +496,6 @@ $("token-copy").addEventListener("click", () => {
   navigator.clipboard.writeText($("token-cmd").textContent).then(() => msg("Zkopírováno"));
 });
 
-async function loadDevices() {
-  const list = await api("GET", `/tenants/${tenantId}/devices`);
-  const tb = $("devices");
-  tb.textContent = "";
-  devicesCache = list;
-  setBadge("overview", list.filter((d) => d.state === "pending").length, "warn");
-  for (const d of list) {
-    const tr = el("tr");
-    if (d.state !== "pending") {
-      tr.className = "clickable";
-      tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON" && ev.target.tagName !== "SELECT") openDetail(d.id); });
-      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
-    }
-    withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
-    tr.appendChild(el("td", d.state, "state " + d.state));
-    // identita z RouterOS a pod ní sériové číslo (identita může chybět u čekajících)
-    const who = el("td", null, "dev-who");
-    who.appendChild(el("b", d.identity || d.serial));
-    if (d.identity_pending && d.identity_pending !== d.identity) {
-      const pend = el("span", ` → ${d.identity_pending}`, "id-pending"); pend.title = "nové jméno čeká na potvrzení zařízením";
-      who.appendChild(pend);
-    }
-    if (d.identity) who.appendChild(el("div", d.serial, "muted small mono"));
-    if (d.state !== "pending" && d.state !== "removed") {
-      who.title = "Dvojklik = přejmenovat";
-      who.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); renameDevice(d); });
-    }
-    tr.appendChild(who);
-    const nt = el("td", d.note || "", "dev-note" + (d.note ? "" : " muted"));
-    if (d.note) nt.title = d.note;
-    if (d.state !== "pending" && d.state !== "removed") {
-      nt.title = (d.note ? d.note + "\n\n" : "") + "Dvojklik = upravit poznámku";
-      nt.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); editNote(d); });
-    }
-    tr.appendChild(nt);
-    tr.appendChild(el("td", d.model));
-    const verTd = el("td", d.ros_version);
-    if (d.update_available) {
-      const u = el("span", ` ↑ ${d.latest_version}`, "warn");
-      u.title = `Dostupná aktualizace v kanálu ${d.update_channel || "?"}`;
-      verTd.appendChild(u);
-    }
-    if (d.warnings && d.warnings.length) {
-      const w = el("span", d.warnings.some((x) => x.severity === "critical") ? " ⚠" : " ⓘ", "warn");
-      w.title = d.warnings.map((x) => x.text).join("\n");
-      verTd.appendChild(w);
-    }
-    tr.appendChild(verTd);
-    tr.appendChild(el("td", d.site || "–"));
-    tr.appendChild(el("td", d.tunnel_ip || "–"));
-    tr.appendChild(el("td", (d.last_status && d.last_status.sstp) || "–"));
-    tr.appendChild(el("td", fmtTime(d.last_checkin_at)));
-    const act = el("td");
-    if (d.state === "pending") act.append(approveControls(d), " ");
-    else {
-      if (d.update_available && d.state === "adopted") {
-        const b = el("button", `Aktualizovat → ${d.latest_version}`, "small");
-        b.onclick = () => upgradeDevice(d);
-        act.append(b, " ");
-      }
-      for (const [kind, label, cls] of [["provision", "Znovu provisioning", "secondary"],
-                                        ["reboot", "Restart", "secondary"],
-                                        ["deprovision", "Odebrat", "danger"]]) {
-        const b = el("button", label, "small " + cls);
-        b.onclick = () => sendCommand(d, kind, label);
-        act.appendChild(b);
-        act.appendChild(document.createTextNode(" "));
-      }
-    }
-    if (d.state !== "removed") act.appendChild(forgetButton(d));
-    tr.appendChild(act);
-    tb.appendChild(tr);
-  }
-  if (!list.length) {
-    const tr = el("tr"); const td = el("td", "Žádná zařízení", "muted"); td.colSpan = 10;
-    tr.appendChild(td); tb.appendChild(tr);
-  }
-  if (ovDrill) renderOverview();  // otevřený proklik z přehledu ukazuje aktuální stav
-}
 
 // odebrání jen v controlleru – když zařízení „Odebrat“ neprovede (nedostupné, zaseknuté)
 function forgetButton(d) {
@@ -2239,6 +2160,7 @@ function renderInfra() {
   // seznam vlevo
   const list = $("infra-list"); list.textContent = "";
   for (const n of d.nodes) {
+    if (n.kind === "hub") continue;  // nespravovaný switch jen ve stromu
     const c = el("div", null, "infra-dev" + (n.state === "offline" ? " offline" : ""));
     const head = el("div", null, "row1");
     head.append(el("b", n.label), el("span", n.model || "", "muted"));
@@ -2339,15 +2261,18 @@ function drawInfra() {
     const wx = cx(host) + (k - (n - 1) / 2) * 360, wy = TOP;
     const card = g("wan" + (w.active ? "" : " standby"));
     card.appendChild(svgEl("rect", { x: wx - 160, y: wy, width: 320, height: WH, rx: 10, class: "card" }));
-    card.appendChild(svgEl("text", { x: wx - 144, y: wy + 23, class: "title" }, `WAN · ${w.interface || "?"}`));
-    card.appendChild(svgEl("text", { x: wx - 144, y: wy + 43, class: "sub" },
+    card.appendChild(svgEl("text", { x: wx - 144, y: wy + 23, class: "title" }, w.upstream ? "Brána lokality · mimo správu" : `WAN · ${w.interface || "?"}`));
+    card.appendChild(svgEl("text", { x: wx - 144, y: wy + 43, class: "sub" }, w.upstream ? `výchozí brána ${w.gateway || "?"}` :
       `${w.address || "bez adresy"}${w.gateway ? " → " + w.gateway : ""}${w.dhcp ? " (DHCP)" : ""}`));
-    card.appendChild(svgEl("text", { x: wx + 144, y: wy + 23, class: "stat " + (w.active ? "ok" : "muted") }, w.active ? "aktivní" : "záloha"));
+    card.appendChild(svgEl("text", { x: wx + 144, y: wy + 23, class: "stat " + (w.upstream ? "muted" : w.active ? "ok" : "muted") },
+      w.upstream ? "" : w.active ? "aktivní" : "záloha"));
     if (w.distance) card.appendChild(svgEl("text", { x: wx + 144, y: wy + 43, class: "stat muted" }, `distance ${w.distance}`));
     nodes.appendChild(card);
     const px = cx(host) + (k - (n - 1) / 2) * 70, py = y(host) - 26;
-    links.appendChild(curve(wx, wy + WH, px, py - 14, w.active ? "up" : "standby"));
-    nodes.appendChild(badge(px, py, num(w.port), "wan"));
+    if (w.port) {
+      links.appendChild(curve(wx, wy + WH, px, py - 14, w.active ? "up" : "standby"));
+      nodes.appendChild(badge(px, py, num(w.port), "wan"));
+    } else links.appendChild(curve(wx, wy + WH, px, y(host), w.upstream ? "ext" : w.active ? "up" : "standby"));
   });
   for (const n of all) {
     const x = cx(n), top = y(n);
@@ -2355,8 +2280,9 @@ function drawInfra() {
     ch.forEach((c, k) => {
       const bx = x + (k - (ch.length - 1) / 2) * 70, by = top + NH + 26;
       links.appendChild(curve(bx, by + 14, cx(c), leaf(c) ? y(c) : y(c) - 40, leaf(c) ? (c.client ? "client" : "ext") : c.state === "offline" ? "down" : "up"));
-      if (!c.more) nodes.appendChild(badge(bx, by, c.client && c.client.ssid ? "≋" : num(c.parent_port), "down"));
-      if (!leaf(c)) nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));
+      const fromHub = n.kind === "hub";
+      if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, c.client && c.client.ssid ? "≋" : num(c.parent_port), "down"));
+      if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));
     });
     if (n.client) {
       // klient: avatar (logo / ikona / iniciály výrobce), jméno a MAC
@@ -2389,6 +2315,16 @@ function drawInfra() {
       pill.appendChild(svgEl("text", { x, y: top + 17, class: "t1" }, shortName(n.label || "?", 18)));
       pill.appendChild(svgEl("text", { x, y: top + 32, class: "t2" }, n.platform ? shortName(n.platform, 20) : "nespravované"));
       nodes.appendChild(pill);
+      continue;
+    }
+    if (n.kind === "hub") {
+      // nespravovaný switch / síť: zařízení se na něm vidí navzájem (MNDP), přímé spoje nejdou určit
+      const hub = g("hub");
+      hub.appendChild(svgEl("title", {}, "Zařízení se vidí na stejném portu – je mezi nimi nespravovaný switch nebo síť.\nPro přesnou mapu zapni LLDP."));
+      hub.appendChild(svgEl("rect", { x: x - NW / 2, y: top + 8, width: NW, height: NH - 16, rx: 10, class: "card" }));
+      hub.appendChild(svgEl("text", { x, y: top + 31, class: "title c" }, "⇄ nespravovaný switch / síť"));
+      hub.appendChild(svgEl("text", { x, y: top + 48, class: "sub c" }, `propojuje ${n.members.length} zařízení`));
+      nodes.appendChild(hub);
       continue;
     }
     const card = g("node" + (n.state === "offline" ? " offline" : ""));
@@ -3487,6 +3423,180 @@ function drawJourney(j) {
     svg.appendChild(c);
   }
   if (!lanes.length) svg.appendChild(svgEl("text", { x: 20, y: 40, class: "jr-lane" }, "V tomto období klient na Wi-Fi nebyl."));
+}
+
+// --- přehled zařízení: volitelné sloupce, třídění, filtr ---------------------------------------------
+const pctCell = (v, warn = 80, bad = 90) => {
+  const td = el("td", null, "num");
+  if (v == null) { td.textContent = "–"; td.className += " muted"; return td; }
+  const bar = el("span", null, "pbar " + (v >= bad ? "bad" : v >= warn ? "warn" : "ok"));
+  const i = el("i"); i.style.width = Math.min(100, v) + "%"; bar.appendChild(i);
+  td.append(el("span", `${v} %`), bar);
+  return td;
+};
+// klíč, popisek, výchozí viditelnost, hodnota pro třídění/filtr, vykreslení buňky
+const DEV_COLS = [
+  ["state", "Stav", true, (d) => d.state, (d) => el("td", d.state, "state " + d.state)],
+  ["name", "Zařízení", true, (d) => (d.identity || d.serial || "").toLowerCase(), devNameCell],
+  ["note", "Poznámka", true, (d) => (d.note || "").toLowerCase(), devNoteCell],
+  ["model", "Model", true, (d) => d.model || "", (d) => el("td", d.model || "–")],
+  ["role", "Role", false, (d) => d.role || "", (d) => el("td", (d.role || "–") + (d.managed ? " · řízené" : ""), d.managed ? "" : "muted")],
+  ["ros", "RouterOS", true, (d) => d.ros_version || "", devVersionCell],
+  ["site", "Lokalita", true, (d) => d.site || "", (d) => el("td", d.site || "–")],
+  ["uptime", "Uptime", true, (d) => d.uptime_s ?? -1, (d) => el("td", fmtUptime(d.uptime_s), d.uptime_s != null && d.uptime_s < 3600 ? "warn" : "")],
+  ["cpu", "CPU", true, (d) => d.cpu ?? -1, (d) => pctCell(d.cpu)],
+  ["mem", "RAM", true, (d) => d.mem_pct ?? -1, (d) => pctCell(d.mem_pct)],
+  ["clients", "Klienti", true, (d) => Number(d.clients) || 0, (d) => el("td", d.clients ? String(d.clients) : "–", "num")],
+  ["alerts", "Alerty", false, (d) => Number(d.alerts) || 0, (d) => el("td", d.alerts ? `⚠ ${d.alerts}` : "–", d.alerts ? "num warn" : "num muted")],
+  ["security", "Bezpečnost", false, (d) => Number(d.security_issues) || 0,
+    (d) => el("td", d.security_issues ? String(d.security_issues) : "✓", d.security_issues ? "num warn" : "num ok")],
+  ["arch", "Architektura", false, (d) => d.arch || "", (d) => el("td", d.arch || "–", "muted")],
+  ["tunnel", "Tunel IP", false, (d) => ipSortKey(d.tunnel_ip), (d) => el("td", d.tunnel_ip || "–", "mono")],
+  ["sstp", "SSTP", false, (d) => (d.last_status && d.last_status.sstp) || "", (d) => el("td", (d.last_status && d.last_status.sstp) || "–")],
+  ["checkin", "Check-in", true, (d) => (d.last_checkin_at ? new Date(d.last_checkin_at).getTime() : 0), (d) => el("td", fmtTime(d.last_checkin_at))],
+  ["adopted", "Adoptováno", false, (d) => (d.adopted_at ? new Date(d.adopted_at).getTime() : 0), (d) => el("td", d.adopted_at ? new Date(d.adopted_at).toLocaleDateString("cs-CZ") : "–")],
+];
+const DEV_STATES = [["all", "Vše"], ["adopted", "Online"], ["offline", "Offline"], ["pending", "Čekající"], ["problem", "S problémem"]];
+const devView = Object.assign({ cols: null, sort: "name", dir: 1, state: "all" }, prefs.devView || {});
+const visibleCols = () => DEV_COLS.filter(([k, , def]) => (devView.cols ? devView.cols.includes(k) : def));
+function saveDevView() { prefs.devView = devView; savePrefs(); }
+
+function ipSortKey(ip) { return ip ? ip.split(".").map((x) => x.padStart(3, "0")).join(".") : ""; }
+function fmtUptime(s) {
+  if (s == null) return "–";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+function devNameCell(d) {
+  const who = el("td", null, "dev-who");
+  who.appendChild(el("b", d.identity || d.serial));
+  if (d.identity_pending && d.identity_pending !== d.identity) {
+    const pend = el("span", ` → ${d.identity_pending}`, "id-pending"); pend.title = "nové jméno čeká na potvrzení zařízením";
+    who.appendChild(pend);
+  }
+  if (d.identity) who.appendChild(el("div", d.serial, "muted small mono"));
+  if (d.state !== "pending" && d.state !== "removed") {
+    who.title = "Dvojklik = přejmenovat";
+    who.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); renameDevice(d); });
+  }
+  return who;
+}
+function devNoteCell(d) {
+  const nt = el("td", d.note || "", "dev-note" + (d.note ? "" : " muted"));
+  if (d.note) nt.title = d.note;
+  if (d.state !== "pending" && d.state !== "removed") {
+    nt.title = (d.note ? d.note + "\n\n" : "") + "Dvojklik = upravit poznámku";
+    nt.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); editNote(d); });
+  }
+  return nt;
+}
+function devVersionCell(d) {
+  const td = el("td", d.ros_version);
+  if (d.update_available) {
+    const u = el("span", ` ↑ ${d.latest_version}`, "warn");
+    u.title = `Dostupná aktualizace v kanálu ${d.update_channel || "?"}`;
+    td.appendChild(u);
+  }
+  if (d.warnings && d.warnings.length) {
+    const w = el("span", d.warnings.some((x) => x.severity === "critical") ? " ⚠" : " ⓘ", "warn");
+    w.title = d.warnings.map((x) => x.text).join("\n");
+    td.appendChild(w);
+  }
+  return td;
+}
+
+async function loadDevices() {
+  const list = await api("GET", `/tenants/${tenantId}/devices`);
+  devicesCache = list;
+  setBadge("overview", list.filter((d) => d.state === "pending").length, "warn");
+  renderDevices();
+  if (ovDrill) renderOverview();  // otevřený proklik z přehledu ukazuje aktuální stav
+}
+
+function renderDevices() {
+  const cols = visibleCols();
+  // hlavička s tříděním
+  const head = $("devices-head"); head.textContent = "";
+  for (const [k, label] of cols) {
+    const th = el("th", null, "sortable" + (devView.sort === k ? " sorted" : ""));
+    th.append(document.createTextNode(label), el("span", devView.sort === k ? (devView.dir > 0 ? " ▲" : " ▼") : "", "sort-ind"));
+    th.title = "Seřadit";
+    th.addEventListener("click", () => { devView.dir = devView.sort === k ? -devView.dir : 1; devView.sort = k; saveDevView(); renderDevices(); });
+    head.appendChild(th);
+  }
+  head.appendChild(el("th", ""));
+  segmented($("dev-state"), DEV_STATES.map(([k, l]) => [k, `${l}${k === "all" ? "" : " " + devCount(k)}`]), devView.state,
+            (st) => { devView.state = st; saveDevView(); renderDevices(); });
+  // filtr a třídění
+  const q = ($("dev-q").value || "").trim().toLowerCase();
+  const col = DEV_COLS.find((c) => c[0] === devView.sort) || DEV_COLS[1];
+  const list = devicesCache.filter((d) => devMatchesState(d, devView.state) && (!q ||
+      [d.identity, d.serial, d.note, d.model, d.site, d.tunnel_ip, d.ros_version, d.role, d.identity_pending]
+        .some((v) => v && String(v).toLowerCase().includes(q))))
+    .sort((a, b) => { const x = col[3](a), y = col[3](b); return (x < y ? -1 : x > y ? 1 : 0) * devView.dir; });
+  $("dev-count").textContent = list.length === devicesCache.length ? `${list.length} zařízení` : `${list.length} z ${devicesCache.length}`;
+  const tb = $("devices"); tb.textContent = "";
+  for (const d of list) {
+    const tr = el("tr");
+    if (d.state !== "pending") {
+      tr.className = "clickable";
+      tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON" && ev.target.tagName !== "SELECT" && ev.target.tagName !== "INPUT") openDetail(d.id); });
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
+    }
+    withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
+    for (const c of cols) tr.appendChild(c[4](d));
+    // akce: schválení u čekajících, jinak aktualizace a ⋯ (vše ostatní v menu – pravé tlačítko)
+    const act = el("td", null, "dev-act");
+    if (d.state === "pending") act.append(approveControls(d), " ", forgetButton(d));
+    else {
+      if (d.update_available && d.state === "adopted") {
+        const b = el("button", `↑ ${d.latest_version}`, "small"); b.title = `Aktualizovat na ${d.latest_version}`;
+        b.onclick = () => upgradeDevice(d);
+        act.append(b, " ");
+      }
+      act.appendChild(moreButton(d.identity || d.serial, () => deviceMenu(d)));
+    }
+    tr.appendChild(act);
+    tb.appendChild(tr);
+  }
+  if (!list.length) {
+    const tr = el("tr"); const td = el("td", devicesCache.length ? "Filtru nic neodpovídá" : "Žádná zařízení", "muted"); td.colSpan = cols.length + 1;
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+function devMatchesState(d, st) {
+  if (st === "all") return true;
+  if (st === "problem") return d.state === "offline" || Number(d.alerts) > 0 || d.update_available || Number(d.security_issues) > 0 ||
+    (d.warnings || []).some((w) => w.severity === "critical");
+  return d.state === st;
+}
+function devCount(st) { return devicesCache.filter((d) => devMatchesState(d, st)).length; }
+
+$("dev-q").addEventListener("input", () => renderDevices());
+$("dev-cols").addEventListener("click", (ev) => {
+  if (ev.stopPropagation) ev.stopPropagation();
+  const pop = $("dev-cols-pop");
+  if (!pop.hidden) { pop.hidden = true; return; }
+  pop.textContent = "";
+  const vis = new Set(visibleCols().map((c) => c[0]));
+  for (const [k, label] of DEV_COLS) {
+    const l = el("label", null, "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = vis.has(k);
+    cb.disabled = k === "name";
+    cb.addEventListener("change", () => {
+      const cur = new Set(visibleCols().map((c) => c[0]));
+      if (cb.checked) cur.add(k); else cur.delete(k);
+      devView.cols = DEV_COLS.map((c) => c[0]).filter((x) => cur.has(x));
+      saveDevView(); renderDevices();
+    });
+    l.append(cb, document.createTextNode(" " + label)); pop.appendChild(l);
+  }
+  const rs = el("button", "Výchozí sloupce", "small secondary"); rs.type = "button";
+  rs.addEventListener("click", () => { devView.cols = null; saveDevView(); pop.hidden = true; renderDevices(); });
+  pop.appendChild(rs);
+  pop.hidden = false;
+});
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("click", (e) => { const p = $("dev-cols-pop"); if (p && !p.hidden && !p.contains(e.target) && e.target !== $("dev-cols")) p.hidden = true; });
 }
 
 boot();

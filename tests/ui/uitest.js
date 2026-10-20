@@ -77,6 +77,31 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
     if (visible.join() !== "app") errors.push("po bootu je vidět " + visible.join());
     const devRows = byId["devices"].children.length;
+    // přehled zařízení: třídění, filtr, volba sloupců
+    {
+      const head = () => byId["devices-head"].children.map((th) => th.textContent);
+      if (!head().some((h) => h.startsWith("Uptime")) || head().some((h) => h.startsWith("Alerty"))) errors.push("zařízení: výchozí sloupce " + head());
+      const iUp = head().findIndex((h) => h.startsWith("Uptime"));
+      await byId["devices-head"].children[iUp].fire("click");
+      if (!byId["devices"].children[0].textContent.includes("SW1")) errors.push("zařízení: třídění podle uptime");
+      if (!byId["devices"].children[0].children[iUp].textContent.includes("20 min")) errors.push("zařízení: uptime " + byId["devices"].children[0].children[iUp].textContent);
+      await byId["devices-head"].children[iUp].fire("click");
+      if (!byId["devices"].children[0].textContent.includes("GW1")) errors.push("zařízení: třídění sestupně");
+      byId["dev-q"].value = "sw"; await byId["dev-q"].fire("input");
+      if (byId["devices"].children.length !== 1 || byId["dev-count"].textContent !== "1 z 2") errors.push("zařízení: filtr " + byId["dev-count"].textContent);
+      byId["dev-q"].value = ""; await byId["dev-q"].fire("input");
+      await byId["dev-state"].children[2].fire("click");
+      if (!byId["devices"].textContent.includes("Filtru nic neodpovídá")) errors.push("zařízení: filtr stavu");
+      await byId["dev-state"].children[4].fire("click");
+      if (byId["devices"].children.length !== 2) errors.push("zařízení: s problémem " + byId["devices"].children.length);
+      await byId["dev-state"].children[0].fire("click");
+      byId["dev-cols-pop"].hidden = true;  // falešný DOM nečte atribut hidden z HTML
+      await byId["dev-cols"].fire("click");
+      const cb = byId["dev-cols-pop"].children.find((l) => l.textContent.includes("Alerty")).children[0];
+      cb.checked = true; await cb.fire("change");
+      if (!head().some((h) => h.startsWith("Alerty"))) errors.push("zařízení: přidání sloupce");
+      await byId["devices-head"].children[1].fire("click");   // zpět podle jména
+    }
     {
       const r0 = byId["devices"].children[0];
       if (!r0.children[1].textContent.includes("GW1") || r0.children[2].textContent !== "rozvaděč 2. patro") errors.push("přehled: identita/poznámka " + r0.children[1].textContent + "|" + r0.children[2].textContent);

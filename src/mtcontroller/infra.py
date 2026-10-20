@@ -124,23 +124,84 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
         if dev[did].get("identity"):
             by_ident[str(dev[did]["identity"])] = did
 
-    # spoje: (a, b) → port na a, port na b
-    ports: dict[tuple[str, str], str] = {}
+    # spoje mezi spravovanými zařízeními. MNDP (broadcast) projde bridgi, takže zařízení na portu „vidí“
+    # všechna zařízení za ním, ne jen přímého souseda. Přímý spoj A–B: B je vidět z A na portu P, A z B na
+    # portu Q a množiny za P a za Q se nepřekrývají. LLDP/CDP jsou vždy jen přímí sousedé.
+    seen: dict[tuple[str, str], set[str]] = {}
+    lldp: set[tuple[str, str, str]] = set()
     externals: list[dict] = []
+    ext_seen: set[tuple] = set()
+    has_nb = set()
     for a in ids:
         for n in _rows(invs.get(a, {}), "neighbors"):
+            has_nb.add(a)
             b = owner.get(str(n.get("mac-address") or "").upper()) or by_ident.get(str(n.get("identity") or ""))
             port = _port_of(n.get("interface"))
             if b and b != a:
-                ports.setdefault((a, b), port)
+                seen.setdefault((a, port), set()).add(b)
+                if re.search(r"lldp|cdp", str(n.get("discovered-by") or "")):
+                    lldp.add((a, port, b))
             elif not b:
-                externals.append({"parent": a, "port": port, "label": n.get("identity") or n.get("mac-address"),
-                                  "platform": n.get("board") or n.get("platform"), "address": n.get("address")})
-    adj: dict[str, set[str]] = {d: set() for d in ids}
+                key = (a, port, str(n.get("mac-address") or n.get("identity")))
+                if key not in ext_seen:
+                    ext_seen.add(key)
+                    externals.append({"parent": a, "port": port, "label": n.get("identity") or n.get("mac-address"),
+                                      "platform": n.get("board") or n.get("platform"), "address": n.get("address")})
+    ports: dict[tuple[str, str], str] = {}   # (a, b) → port na a
+    for (a, p), bs in seen.items():
+        for b in bs:
+            if (a, p, b) in lldp:
+                ports[(a, b)] = p
+                continue
+            for (b2, q), back in seen.items():
+                if b2 == b and a in back and not (bs & back):
+                    ports[(a, b)] = p
+                    ports.setdefault((b, a), q)
+    # zařízení bez dat o sousedech (offline): k pozorovateli, který ho vidí jako jediného za portem
+    for b in ids:
+        if b in has_nb or any(x == b for _a, x in ports):
+            continue
+        obs = sorted(((len(bs), a, p) for (a, p), bs in seen.items() if b in bs))
+        if obs and obs[0][0] == 1:
+            ports[(obs[0][1], b)] = obs[0][2]
+    # porty, za kterými je víc zařízení a žádné přímo: nespravovaný switch („hub“) mezi nimi
+    hub_of: dict[str, str] = {}
+    hubs: dict[str, dict] = {}
+    parent_uf: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent_uf.setdefault(x, x) != x:
+            x = parent_uf[x]
+        return x
+
+    unexplained = {(a, p): bs for (a, p), bs in seen.items() if len(bs) > 1 and not any((a, b) in ports and ports[(a, b)] == p for b in bs)}
+    for (a, p), bs in unexplained.items():
+        for b in bs:
+            if b not in has_nb or any(k[0] == b and a in v for k, v in unexplained.items()):
+                parent_uf[find(a)] = find(b)
+    groups: dict[str, set[str]] = {}
+    for (a, p), bs in unexplained.items():
+        for x in {a} | {b for b in bs if find(b) == find(a)}:
+            groups.setdefault(find(a), set()).add(x)
+    hub_port: dict[str, str | None] = {}
+    for k, members in groups.items():
+        if len(members) < 2:
+            continue
+        hid = f"hub-{len(hubs) + 1}"
+        hubs[hid] = {"members": sorted(members)}
+        for m in members:
+            hub_of[m] = hid
+            hub_port[m] = next((p for (a, p) in unexplained if a == m), None)
+    adj: dict[str, set[str]] = {d: set() for d in list(ids) + list(hubs)}
     for a, b in ports:
+        if hub_of.get(a) and hub_of.get(a) == hub_of.get(b) and ports.get((a, b)) == hub_port.get(a):
+            continue   # spojení přes hub, ne přímé
         adj[a].add(b)
         adj[b].add(a)
-
+    for hid, h in hubs.items():
+        for m in h["members"]:
+            adj[hid].add(m)
+            adj[m].add(hid)
     infos: dict[str, dict] = {}
     for did in ids:
         inv = invs.get(did, {})
@@ -159,27 +220,68 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
             "parent": None, "level": 0, "uplink_port": None, "parent_port": None,
         }
 
-    # kořen: gateway → zařízení s WAN → STP root → první
+    # vlastní WAN jen u brány (role gateway) nebo na routovaném fyzickém portu; DHCP klient / výchozí
+    # routa na bridgi či VLAN u switche a AP je jen adresa správy – brána lokality je pak mimo správu
+    bridged = {did: {str(b.get("name")) for b in _rows(invs.get(did, {}), "bridges")} for did in ids}
+    upstream: list[dict] = []
+    for did in ids:
+        own = []
+        for w in infos[did]["wans"]:
+            iface = str(w.get("interface") or "")
+            if infos[did]["role"] == "gateway" or (PHYS_RE.match(iface) and iface not in bridged[did]) or \
+                    re.match(r"^(pppoe|lte|wg|l2tp|sstp|ovpn)", iface) and not iface.startswith("mtc"):
+                own.append(w)
+            elif w.get("gateway"):
+                rp = next((str(m.get("root-port")) for m in _rows(invs.get(did, {}), "stp_bridges")
+                           if m.get("root-port") and str(m.get("name")) == iface), None)
+                upstream.append(dict(w, port=rp or w.get("port"), device_id=did))
+        infos[did]["wans"] = own
+    # STP root: korunka jen tomu, koho jako root vidí i ostatní (nebo je zařízení v lokalitě samo)
+    st = stp.site_stp(devices, invs)
+    followers: dict[str, int] = {}
+    for b in st["bridges"]:
+        if b["root_device"] and b["protocol"] != "none":
+            followers[b["root_device"]] = followers.get(b["root_device"], 0) + 1
+    self_roots = [d for d in ids if infos[d]["stp_root"]]
+    for did in ids:
+        lab = infos[did]["label"]
+        infos[did]["stp_root"] = infos[did]["stp_root"] and (followers.get(lab, 0) >= 2 or len(self_roots) == 1)
+    lonely = [infos[d]["label"] for d in self_roots if not infos[d]["stp_root"]]
+    for hid, h in hubs.items():
+        infos[hid] = {"id": hid, "kind": "hub", "label": "Nespravovaný switch / síť", "model": None,
+                      "role": "hub", "state": "adopted", "version": None, "cpu": None, "mem": None, "poe_w": 0,
+                      "stp_root": False, "stp_priority": None, "ports": [], "wans": [], "members": h["members"],
+                      "parent": None, "level": 0, "uplink_port": None, "parent_port": None}
+
+    # kořen: gateway → zařízení s WAN → hub (síť nad zařízeními) → STP root → první
     def rank(did: str) -> tuple:
         i = infos[did]
-        return (i["role"] != "gateway", not i["wans"], not i["stp_root"], i["state"] != "adopted", i["label"] or "")
+        return (i["role"] != "gateway", not i["wans"], i.get("kind") != "hub", not i["stp_root"], i["state"] != "adopted",
+                i["label"] or "")
+
+    def link_ports(a: str, b: str) -> tuple:
+        if infos[a].get("kind") == "hub":
+            return None, hub_port.get(b)
+        if infos[b].get("kind") == "hub":
+            return hub_port.get(a), None
+        return ports.get((a, b)), ports.get((b, a))
 
     order: list[str] = []
-    seen: set[str] = set()
-    for root in sorted(ids, key=rank):
-        if root in seen:
+    visited: set[str] = set()
+    for root in sorted(infos, key=rank):
+        if root in visited:
             continue
-        seen.add(root)
+        visited.add(root)
         q = deque([root])
         while q:
             a = q.popleft()
             order.append(a)
             for b in sorted(adj[a], key=lambda x: (ROLE_ORDER.get(infos[x]["role"], 9), infos[x]["label"] or "")):
-                if b in seen:
+                if b in visited:
                     continue
-                seen.add(b)
-                infos[b].update(parent=a, level=infos[a]["level"] + 1,
-                                parent_port=ports.get((a, b)), uplink_port=ports.get((b, a)))
+                visited.add(b)
+                pp, up = link_ports(a, b)
+                infos[b].update(parent=a, level=infos[a]["level"] + 1, parent_port=pp, uplink_port=up)
                 q.append(b)
 
     wans = []
@@ -187,15 +289,40 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
         if infos[did]["parent"] is None:
             for w in infos[did]["wans"]:
                 wans.append(dict(w, device_id=did))
-    st = stp.site_stp(devices, invs)
+    if not wans and upstream:
+        # brána mimo správu (např. router zákazníka): karta nad kořenem stromu
+        root = order[0] if order else None
+        gws = sorted({u["gateway"] for u in upstream if u.get("gateway")})
+        u0 = next((u for u in upstream if hub_of.get(u["device_id"]) == root or u["device_id"] == root), upstream[0])
+        wans.append({"interface": None, "port": None if root and infos[root].get("kind") == "hub" else u0.get("port"),
+                     "gateway": ", ".join(gws), "address": None, "distance": None, "active": True, "dhcp": None,
+                     "comment": None, "device_id": root, "upstream": True})
     warnings = [w for w in st["warnings"] if w["severity"] == "warning"]
+    if len(lonely) > 1 or (lonely and any(i["stp_root"] for i in infos.values())):
+        warnings.append({"severity": "warning", "text": f"STP: {', '.join(lonely)} se považuje za root jen sám pro sebe – "
+                         "BPDU mezi zařízeními neprochází (jiný protokol STP, vypnuté STP na mezilehlém switchi nebo "
+                         "filtrace) – riziko smyčky"})
+    for hid, h in hubs.items():
+        names_h = [infos[m]["label"] for m in h["members"]]
+        warnings.append({"severity": "info", "text": f"{', '.join(names_h)} jsou propojené přes nespravovaný switch nebo "
+                         "síť (vidí se navzájem na stejném portu) – zapni LLDP (/ip neighbor discovery-settings "
+                         "protocol=cdp,lldp,mndp) pro přesnou mapu"})
     if st["blocked"]:
         warnings.append({"severity": "info", "text": f"STP blokuje {len(st['blocked'])} port(y) – v síti je redundantní cesta "
                                                     "(v pořádku, pokud je záměrná)"})
     for did in ids:
         if infos[did]["state"] == "offline":
             warnings.append({"severity": "warning", "text": f"{infos[did]['label']}: offline – spoj k němu je přerušený"})
-    return {"nodes": [infos[d] for d in order], "wans": wans, "externals": externals, "warnings": warnings}
+    # nespravovaní sousedé vidění přes hub jen jednou (pod hubem)
+    ext_out, ext_keys = [], set()
+    for e in externals:
+        par = hub_of.get(e["parent"]) if hub_port.get(e["parent"]) == e["port"] else None
+        k = (par or e["parent"], e["label"])
+        if k in ext_keys:
+            continue
+        ext_keys.add(k)
+        ext_out.append(dict(e, parent=par, port=None) if par else e)
+    return {"nodes": [infos[d] for d in order], "wans": wans, "externals": ext_out, "warnings": warnings}
 
 
 ROLE_ORDER = {"gateway": 0, "switch": 1, "ptp": 2, "ap": 3, "unknown": 4}
