@@ -1,0 +1,9 @@
+[Unit]
+Description=MikroTik Controller – záloha na žádost z UI
+
+[Path]
+PathExists=/var/lib/mtcontroller/backup-request
+Unit=mtc-backup.service
+
+[Install]
+WantedBy=multi-user.target

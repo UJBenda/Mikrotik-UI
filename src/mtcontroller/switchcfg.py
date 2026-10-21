@@ -31,6 +31,7 @@ import unicodedata
 from typing import Any
 
 from . import intent as intentmod
+from . import regional
 from .routeros import q, q_source
 
 BRIDGE = "bridge"
@@ -384,7 +385,7 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         "mgmt": {"vid": mg_vid, "native": native, **mgmt}, "path": path,
         "snooping": snooping, "identity": ascii_text(identity, 60) or "mtc-switch",
         "timezone": ntp.get("timezone") or "Europe/Prague",
-        "ntp": [h for h in (ntp.get("upstream") or ["tik.cesnet.cz", "tak.cesnet.cz"]) if re.fullmatch(r"[A-Za-z0-9.-]{1,100}", h)],
+        "ntp": [h for h in (ntp.get("upstream") or regional.ntp_servers()) if re.fullmatch(r"[A-Za-z0-9.-]{1,100}", h)],
         "blockers": blockers, "warnings": warnings,
     }
 

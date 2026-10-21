@@ -282,7 +282,11 @@ def main() -> None:
     from .db import get_db
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    asyncio.run(serve(get_db(), get_settings()))
+    from . import regional
+
+    s = get_settings()
+    regional.apply(s)
+    asyncio.run(serve(get_db(), s))
 
 
 if __name__ == "__main__":

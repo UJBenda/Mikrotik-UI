@@ -314,6 +314,8 @@ def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     s = get_settings()
+    from .. import regional
+    regional.apply(s)
     run(s, get_db(), get_box(), build_providers(s), stop)
 
 

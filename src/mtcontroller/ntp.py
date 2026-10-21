@@ -33,13 +33,15 @@ class PolicyError(ValueError):
 
 
 def validate_policy(data: dict) -> dict:
-    upstream = data.get("upstream") or DEFAULT_UPSTREAM
+    from . import regional
+
+    upstream = data.get("upstream") or regional.ntp_servers()
     if not isinstance(upstream, list) or not 1 <= len(upstream) <= 4:
         raise PolicyError("upstream: 1 až 4 servery")
     for h in upstream:
         if not isinstance(h, str) or not _HOST.match(h):
             raise PolicyError(f"neplatný NTP server: {h!r}")
-    tz = data.get("timezone") or DEFAULT_TZ
+    tz = data.get("timezone") or regional.timezone()
     if not isinstance(tz, str) or not _TZ.match(tz):
         raise PolicyError("neplatná časová zóna")
     primary = data.get("primary_device_id")

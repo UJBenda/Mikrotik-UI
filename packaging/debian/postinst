@@ -15,6 +15,7 @@ esac
 
 mtc_user_dirs
 install -d -o mtcontroller -g mtcontroller -m 0750 "$DATA/setup"
+install -d -o root -g mtcontroller -m 0750 /var/backups/mtcontroller
 mtc_master_key
 # PostgreSQL po čerstvé instalaci teprve startuje
 systemctl start postgresql >/dev/null 2>&1 || true
@@ -25,8 +26,14 @@ systemctl daemon-reload
 
 if [ -f "$ETC/config.toml" ]; then
   # aktualizace nastaveného controlleru
-  systemctl enable mtc-web mtc-worker mtc-syslog >/dev/null
+  # heslo záloh (starší instalace ho ještě nemají)
+  if [ ! -f "$ETC/backup.key" ]; then
+    (umask 077; python3 -c 'import sys; sys.path.insert(0, "/opt/mtcontroller/app"); from mtcontroller.sysbackup import new_passphrase; print(new_passphrase())' > "$ETC/backup.key")
+    echo "vytvořeno heslo záloh – zobrazí ho: sudo mtc-admin recovery-kit"
+  fi
+  systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path >/dev/null
   systemctl restart mtc-web mtc-worker mtc-syslog
+  systemctl start mtc-backup.timer mtc-backup.path
   systemctl reload nginx 2>/dev/null || true
   exit 0
 fi

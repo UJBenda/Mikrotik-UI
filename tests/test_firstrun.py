@@ -2,6 +2,7 @@
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from pydantic import ValidationError
 from helpers import AsgiClient, drop_db, fresh_db, make_settings
 from test_routeros import _balanced
 
-from mtcontroller import firstrun, routeros
+from mtcontroller import firstrun, routeros, sysbackup
 from mtcontroller.config import load_settings
 from mtcontroller.db import operator_scope
 
@@ -124,58 +125,152 @@ def test_nginx_local(tmp_path):
     assert "allow 192.168.88.0/24;  # mtc-admin-net" in rem
 
 
-def test_apply_request(tmp_path):
-    share = _share(tmp_path)
-    etc, data, ssl, ngx = tmp_path / "etc", tmp_path / "data", tmp_path / "ssl", tmp_path / "nginx"
-    etc.mkdir()
-    (etc / "setup-code").write_text("CODE")
-    sd = firstrun.setup_dir(data)
-    sd.mkdir(parents=True)
-    (ngx / "sites-enabled").mkdir(parents=True)
-    (ngx / "sites-enabled" / "mtcontroller-setup.conf").write_text("x")
-    calls = []
+class _R:
+    returncode, stdout, stderr = 0, "", ""
 
-    class R:
-        returncode, stdout, stderr = 0, "", ""
+
+def _env(tmp: Path, **kw) -> firstrun.Env:
+    etc, data = tmp / "etc", tmp / "data"
+    etc.mkdir(parents=True, exist_ok=True)
+    (etc / "setup-code").write_text("CODE")
+    firstrun.setup_dir(data).mkdir(parents=True, exist_ok=True)
+    ngx = tmp / "nginx"
+    (ngx / "sites-enabled").mkdir(parents=True, exist_ok=True)
+    (ngx / "sites-available").mkdir(parents=True, exist_ok=True)
+    (ngx / "sites-available" / "mtcontroller-setup.conf").write_text("x")
+    (ngx / "sites-enabled" / "mtcontroller-setup.conf").symlink_to(ngx / "sites-available" / "mtcontroller-setup.conf")
+    calls = []
 
     def run(*cmd, check=True):
         calls.append(cmd)
-        return R()
+        return _R()
 
-    (sd / "request.json").write_text(json.dumps(LOCAL))
-    assert firstrun.apply_request(etc, data, share, ssl, ngx, run=run, switch_delay=0) == 0
-    st = json.loads((sd / "status.json").read_text())
+    env = firstrun.Env(etc=etc, data=data, share=_share(tmp), ssl=tmp / "ssl", nginx=ngx, run=run,
+                       current_ip=lambda: "192.168.88.10", **kw)
+    env.calls = calls
+    return env
+
+
+def _req(env, body):
+    (firstrun.setup_dir(env.data) / "request.json").write_text(json.dumps(body))
+    return firstrun.apply_request(env)
+
+
+def _st(env):
+    return json.loads((firstrun.setup_dir(env.data) / "status.json").read_text())
+
+
+def test_install_then_finish(tmp_path):
+    backups = []
+    env = _env(tmp_path, backup=lambda: backups.append(1))
+    plan = LOCAL | {"timezone": "Europe/Bratislava", "country": "Slovakia", "ntp": ["sk.pool.ntp.org"]}
+    assert _req(env, {"action": "install", "plan": plan, "admin": "a@b.cz"}) == 0
+    st = _st(env)
+    assert st["state"] == "ready" and backups == [1]
+    # zatím běží průvodce: nginx controlleru připravený, ale nezapnutý
+    assert (env.nginx / "sites-enabled" / "mtcontroller-setup.conf").exists()
+    assert not (env.nginx / "sites-enabled" / "mtcontroller.conf").exists()
+    s = load_settings(env.etc / "config.toml", environ={})
+    assert s.tunnel.local and s.site_defaults.country == "Slovakia" and s.site_defaults.timezone == "Europe/Bratislava"
+    assert s.site_defaults.ntp == ["sk.pool.ntp.org"] and s.backup.keep == 14
+    pw = (env.etc / "backup.key").read_text().strip()
+    assert (env.etc / "backup.key").stat().st_mode & 0o077 == 0
+    kit = json.loads((firstrun.setup_dir(env.data) / "kit.json").read_text())
+    assert kit["backup_passphrase"] == pw and kit["admin"] == "a@b.cz" and kit["url"] == "https://192.168.88.10/"
+    text = firstrun.kit_text(kit)
+    assert pw in text and "bez hesel" in text and "mtc-admin restore" in text
+    assert ("timedatectl", "set-timezone", "Europe/Bratislava") in env.calls
+    assert any(c[:3] == ("systemctl", "enable", "--now") and "mtc-backup.timer" in c for c in env.calls)
+    assert firstrun.SetupPlan.model_validate_json((env.etc / "setup-plan.json").read_text()).country == "Slovakia"
+
+    assert _req(env, {"action": "finish"}) == 0
+    st = _st(env)
     assert st["state"] == "done" and st["url"] == "https://192.168.88.10/"
-    assert not (sd / "request.json").exists() and not (etc / "setup-code").exists()
-    s = load_settings(etc / "config.toml", environ={})
-    assert s.tunnel.local and s.security.device_ca_file == etc / "device-ca.crt"
-    assert (etc / "config.toml").stat().st_mode & 0o007 == 0
-    assert (ngx / "sites-enabled" / "mtcontroller.conf").is_symlink()
-    assert not (ngx / "sites-enabled" / "mtcontroller-setup.conf").exists()
-    assert ("nginx", "-t") in calls and ("systemctl", "enable", "--now", "mtc-web", "mtc-worker", "mtc-syslog") in calls
-    assert any(c[:2] == ("systemctl", "disable") for c in calls)
+    assert (env.nginx / "sites-enabled" / "mtcontroller.conf").is_symlink()
+    assert not (env.nginx / "sites-enabled" / "mtcontroller-setup.conf").exists()
+    assert not (env.etc / "setup-code").exists() and not (firstrun.setup_dir(env.data) / "kit.json").exists()
+    assert any(c[:2] == ("systemctl", "disable") for c in env.calls)
 
     # podruhé (už nastaveno) nic nepřepíše
-    before = (etc / "config.toml").read_text()
-    (sd / "request.json").write_text(json.dumps(LOCAL | {"controller_ip": "192.168.88.99", "ui_host": "x.lan",
-                                                         "checkin_host": "x.lan"}))
-    assert firstrun.apply_request(etc, data, share, ssl, ngx, run=run, switch_delay=0) == 1
-    assert json.loads((sd / "status.json").read_text())["state"] == "error"
-    assert (etc / "config.toml").read_text() == before and not (sd / "request.json").exists()
+    before = (env.etc / "config.toml").read_text()
+    assert _req(env, {"action": "install", "plan": LOCAL}) == 1
+    assert _st(env)["state"] == "error" and (env.etc / "config.toml").read_text() == before
+
+
+def test_finish_reverts_when_nginx_fails(tmp_path):
+    env = _env(tmp_path)
+    assert _req(env, {"action": "install", "plan": LOCAL}) == 0
+
+    class Bad:
+        returncode, stdout, stderr = 1, "", "emerg: chyba"
+
+    env.run = lambda *c, check=True: Bad() if c[:2] == ("nginx", "-t") else _R()
+    assert _req(env, {"action": "finish"}) == 1
+    assert "nginx -t" in _st(env)["detail"]
+    assert (env.nginx / "sites-enabled" / "mtcontroller-setup.conf").exists()  # průvodce zůstal dostupný
+    assert not (env.nginx / "sites-enabled" / "mtcontroller.conf").exists()
+
+
+def test_restore_flow(tmp_path):
+    """Obnova: root obnoví soubory ze zálohy, nginx a certifikát podle uloženého plánu."""
+    got = {}
+    plan = LOCAL | {"controller_ip": "192.168.88.20", "ui_host": "192.168.88.20", "checkin_host": "192.168.88.20"}
+
+    def restore(path, pw):
+        got["file"], got["pw"] = path.read_bytes(), pw
+        (tmp_path / "etc" / "config.toml").write_text(firstrun.render_config(firstrun.SetupPlan.model_validate(plan)))
+        (tmp_path / "etc" / "setup-plan.json").write_text(json.dumps(plan))
+        return {"manifest": {"created_at": "2026-10-01T02:30:00+00:00", "app_version": "0.0.9", "hostname": "stary"},
+                "migrated": [18, 19]}
+
+    env = _env(tmp_path, restore=restore)
+    (firstrun.setup_dir(env.data) / "upload.mtcbak").write_bytes(b"MTCBAK1\nxx")
+    pw = "abcde-fghij-kmnpq-rstuv-wxyz2-34567"
+    assert _req(env, {"action": "restore", "restore": {"passphrase": pw}, "form": {"admin_nets": ["10.0.0.0/8"]}}) == 0
+    assert got == {"file": b"MTCBAK1\nxx", "pw": pw}
+    assert not (firstrun.setup_dir(env.data) / "upload.mtcbak").exists()
+    st = _st(env)
+    assert st["state"] == "ready" and "192.168.88.20" in st["warning"]  # server má jinou IP než záloha
+    kit = json.loads((firstrun.setup_dir(env.data) / "kit.json").read_text())
+    assert kit["backup_passphrase"] == pw and kit["restored"]["migrated"] == [18, 19]
+    assert "POZOR" in firstrun.kit_text(kit) and "0.0.9" in firstrun.kit_text(kit)
+    assert (env.etc / "backup.key").read_text().strip() == pw
+    conf = (env.nginx / "sites-available" / "mtcontroller.conf").read_text()
+    assert "proxy_set_header Host 192.168.88.20;" in conf and "allow 192.168.88.0/24;" in conf
+    # chyba obnovy (např. špatné heslo) se ukáže průvodci a nahraný soubor zmizí
+    shutil.rmtree(env.etc)
+    env2 = _env(tmp_path / "b", restore=lambda p, w: (_ for _ in ()).throw(sysbackup.BackupError("špatné heslo zálohy")))
+    (firstrun.setup_dir(env2.data) / "upload.mtcbak").write_bytes(b"x")
+    assert _req(env2, {"action": "restore", "restore": {"passphrase": "x" * 12}}) == 1
+    assert "špatné heslo" in _st(env2)["detail"]
+    assert not (firstrun.setup_dir(env2.data) / "upload.mtcbak").exists()
+
+
+def test_restore_older_install_without_plan(tmp_path):
+    """Záloha z instalace skriptem (bez setup-plan.json): plán z konfigurace + sítě z průvodce."""
+    def restore(path, pw):
+        (tmp_path / "etc" / "config.toml").write_text(
+            '[web]\nui_host = "mtc-admin.firma.cz"\ncheckin_host = "mtc-checkin.firma.cz"\n'
+            '[tunnel]\ncontroller_ip = "10.10.0.10"\n')
+        return {"manifest": {}, "migrated": []}
+
+    env = _env(tmp_path, restore=restore)
+    (firstrun.setup_dir(env.data) / "upload.mtcbak").write_bytes(b"x")
+    assert _req(env, {"action": "restore", "restore": {"passphrase": "x" * 12},
+                      "form": {"admin_nets": ["10.10.0.0/24"], "acme_email": "it@firma.cz"}}) == 0
+    p = firstrun.SetupPlan.model_validate_json((env.etc / "setup-plan.json").read_text())
+    assert p.mode == "remote" and p.certs == "letsencrypt" and p.admin_nets == ["10.10.0.0/24"]
+    assert any(c[0] == "certbot" for c in env.calls)
 
 
 def test_apply_rejects_tampered_request(tmp_path):
     """Požadavek píše méně privilegovaný průvodce – root ho ověřuje znovu."""
-    data = tmp_path / "data"
-    sd = firstrun.setup_dir(data)
-    sd.mkdir(parents=True)
-    (tmp_path / "etc").mkdir()
+    env = _env(tmp_path)
     evil = LOCAL | {"ui_host": 'x"; include /etc/shadow; #', "checkin_host": 'x"; include /etc/shadow; #'}
-    (sd / "request.json").write_text(json.dumps(evil))
-    assert firstrun.apply_request(tmp_path / "etc", data, _share(tmp_path), tmp_path / "ssl", tmp_path / "ngx",
-                                  run=lambda *a, **k: None, switch_delay=0) == 1
-    assert json.loads((sd / "status.json").read_text())["state"] == "error"
-    assert not (tmp_path / "etc" / "config.toml").exists()
+    assert _req(env, {"action": "install", "plan": evil}) == 1
+    assert _st(env)["state"] == "error" and not (env.etc / "config.toml").exists()
+    assert _req(env, {"action": "rm -rf"}) == 1
+    assert _req(env, LOCAL) == 1  # starý formát bez akce
 
 
 def test_setup_web(tmp_path):
@@ -188,29 +283,45 @@ def test_setup_web(tmp_path):
         c = AsgiClient(app, "192.168.88.10")
         assert "setup.js" in c.get("/").text
         assert c.get("/setup/static/setup.js").status_code == 200
+        assert c.get("/setup/static/setup.css").status_code == 200
         assert c.get("/setup/static/app.js").status_code == 404
         assert c.get("/setup/api/info").status_code == 403
         assert c.get("/setup/api/info", headers={"x-setup-code": "SPATNY"}).status_code == 403
         h = {"x-setup-code": "abcd-efgh-jklm"}
-        assert c.get("/setup/api/info", headers=h).json()["configured"] is False
-        body = {"plan": LOCAL, "admin": {"email": "Admin@Firma.cz", "password": "kratke"}, "tenant": "Doma", "site": "Dům"}
+        info = c.get("/setup/api/info", headers=h).json()
+        assert info["configured"] is False and "Europe/Prague" in info["timezones"]
+        assert {"iso": "CZ", "label": "Česko", "ros": "Czech Republic", "ntp": ["tik.cesnet.cz", "tak.cesnet.cz"]} in info["countries"]
+        body = {"action": "install", "plan": LOCAL, "admin": {"email": "Admin@Firma.cz", "password": "kratke"},
+                "tenant": "Doma", "site": "Dům"}
         r = c.post("/setup/api/apply", json_body=body, headers=h)
         assert r.status_code == 400 and "12" in r.json()["detail"]
-        body["admin"]["password"] = "dlouhe-heslo-123"
+        body["admin"] = {"email": "Admin@Firma.cz", "password": "dlouhe-heslo-123", "password2": "jine-heslo-1234"}
+        assert "neshodují" in c.post("/setup/api/apply", json_body=body, headers=h).json()["detail"]
+        body["admin"]["password2"] = "dlouhe-heslo-123"
         body["plan"] = LOCAL | {"checkin_host": "jine.lan"}
         r = c.post("/setup/api/apply", json_body=body, headers=h)
         assert r.status_code == 400 and "jedné adrese" in r.json()["detail"]
+        body["plan"] = LOCAL | {"country": "Czech; /system reset"}
+        assert c.post("/setup/api/apply", json_body=body, headers=h).status_code == 400
         body["plan"] = LOCAL
         r = c.post("/setup/api/apply", json_body=body, headers=h)
         assert r.status_code == 200 and r.json()["admin"]["created"], r.text
         req = json.loads((firstrun.setup_dir(data) / "request.json").read_text())
-        assert req["mode"] == "local" and "password" not in json.dumps(req)
+        assert req["action"] == "install" and req["plan"]["mode"] == "local" and req["admin"] == "admin@firma.cz"
+        assert "dlouhe-heslo" not in json.dumps(req)
         assert c.get("/setup/api/status", headers=h).json()["state"] == "queued"
+        # během nastavování další požadavek neprojde
+        assert c.post("/setup/api/apply", json_body=body, headers=h).status_code == 409
         with operator_scope(db) as tx:
             assert tx.fetchone("SELECT count(*) AS n FROM role_binding WHERE role = 'superadmin'")["n"] == 1
             assert tx.fetchone("SELECT name FROM tenant")["name"] == "Doma"
             assert tx.fetchone("SELECT name FROM site")["name"] == "Dům"
             assert "user.create_superadmin" in [r["action"] for r in tx.fetchall("SELECT action FROM audit_log")]
+        # stav „ready“ vrací záchranné údaje
+        firstrun._status(firstrun.setup_dir(data), "ready", "ok", step=5)
+        (firstrun.setup_dir(data) / "kit.json").write_text(json.dumps(firstrun.kit(firstrun.SetupPlan.model_validate(LOCAL), "heslo-zaloh-123")))
+        st = c.get("/setup/api/status", headers=h).json()
+        assert st["kit"]["backup_passphrase"] == "heslo-zaloh-123" and "heslo-zaloh-123" in st["kit_text"]
         # opakované odeslání (např. po chybě aplikace) druhého admina nezaloží
         assert c.post("/setup/api/apply", json_body=body, headers=h).json()["admin"]["created"] is False
         # hádání kódu se zablokuje
@@ -219,6 +330,29 @@ def test_setup_web(tmp_path):
         assert c.get("/setup/api/info", headers=h).status_code == 403
     finally:
         drop_db(name)
+
+
+def test_setup_upload_and_restore_request(tmp_path):
+    etc, data = tmp_path / "etc", tmp_path / "data"
+    etc.mkdir()
+    (etc / "setup-code").write_text("ABCD-EFGH-JKLM")
+    app = firstrun.create_setup_app(None, make_settings(tmp_path), etc=etc, data=data)
+    c = AsgiClient(app, "x")
+    h = {"x-setup-code": "ABCD-EFGH-JKLM"}
+    body = {"action": "restore", "restore": {"passphrase": "abcde-fghij-kmnpq"}, "form": {"admin_nets": ["10.0.0.0/8"]}}
+    assert "nahraj" in c.post("/setup/api/apply", json_body=body, headers=h).json()["detail"]
+    r = c.request("PUT", "/setup/api/upload", data=b"PK\x03\x04 to je zip", headers=h)
+    assert r.status_code == 400 and "není záloha" in r.json()["detail"]
+    assert not list(firstrun.setup_dir(data).glob("upload*"))
+    r = c.request("PUT", "/setup/api/upload", data=sysbackup.MAGIC + b"data" * 100, headers=h)
+    assert r.status_code == 200 and r.json()["size"] == len(sysbackup.MAGIC) + 400
+    assert c.request("PUT", "/setup/api/upload", data=sysbackup.MAGIC, headers={"x-setup-code": "X"}).status_code == 403
+    assert c.post("/setup/api/apply", json_body=body | {"restore": {"passphrase": "kratke"}}, headers=h).status_code == 400
+    r = c.post("/setup/api/apply", json_body=body, headers=h)
+    assert r.status_code == 200
+    req = json.loads((firstrun.setup_dir(data) / "request.json").read_text())
+    assert req == {"action": "restore", "restore": {"passphrase": "abcde-fghij-kmnpq"},
+                   "form": {"admin_nets": ["10.0.0.0/8"], "acme_email": ""}}
 
 
 def test_new_code_format():

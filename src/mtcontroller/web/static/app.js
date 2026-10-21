@@ -228,7 +228,7 @@ async function startApp() {
   $("tenant-form").hidden = !me.superadmin;
   buildNav();
   showView(prefs.view || "overview");
-  if (me.superadmin) loadSystem();
+  if (me.superadmin) { loadSystem(); loadBackups(); }
   await loadTenants();
 }
 
@@ -1174,6 +1174,41 @@ async function loadSystem() {
 }
 
 $("system-refresh").addEventListener("click", () => loadSystem());
+
+// --- zálohy controlleru (superadmin) ------------------------------------------------------
+
+async function loadBackups() {
+  let b;
+  try { b = await api("GET", "/system/backups"); } catch (e) { return; }
+  $("backup-card").hidden = false;
+  const st = b.status || {};
+  const last = b.backups[0];
+  const txt = b.pending ? "Záloha čeká na spuštění…"
+    : st.state === "running" ? "Záloha právě běží…"
+    : st.state === "error" ? `Poslední záloha selhala: ${st.error || "?"}`
+    : last ? `Poslední záloha ${fmtTime(last.at)} · ponechává se ${b.keep} posledních v ${b.dir}`
+    : `Zatím žádná záloha · denně v noci, ponechává se ${b.keep} posledních v ${b.dir}`;
+  const p = $("backup-summary"); p.textContent = "";
+  p.appendChild(el("span", txt, st.state === "error" ? "sev-error" : ""));
+  const old = last && (Date.now() - new Date(last.at).getTime()) > 2 * 86400000;
+  if (old) p.append(" ", el("span", "· poslední záloha je starší než 2 dny", "sev-warning"));
+  const tb = $("backup-list"); tb.textContent = "";
+  for (const x of b.backups) {
+    const a = el("a", "Stáhnout");
+    a.href = "/api/admin/system/backups/" + encodeURIComponent(x.name);
+    a.setAttribute("download", x.name);
+    const tr = el("tr");
+    tr.append(el("td", x.name, "mono"), el("td", fmtBytes(x.size)), el("td", fmtTime(x.at)), el("td", a));
+    tb.appendChild(tr);
+  }
+  $("backup-now").disabled = !!b.pending || st.state === "running";
+  if (b.pending || st.state === "running") setTimeout(() => { if (!$("backup-card").hidden) loadBackups(); }, 5000);
+}
+
+$("backup-now").addEventListener("click", async () => {
+  try { await api("POST", "/system/backups", {}); msg("Záloha spuštěna"); } catch (e) { msg(e.message, true); }
+  loadBackups();
+});
 
 // --- uživatelé tenanta a vlastní heslo -----------------------------------------------------
 
@@ -3787,7 +3822,7 @@ const sitePath = () => `/tenants/${tenantId}/sites/${siteId()}`;
 
 function wifiPolicy() {
   const cur = intentData.intent;
-  return (cur && cur.wifi) || { capsman_device_id: null, max_width: 80, dfs: true, country: "Czech Republic", groups: [] };
+  return (cur && cur.wifi) || { capsman_device_id: null, max_width: 80, dfs: true, country: (me && me.defaults && me.defaults.country) || "Czech Republic", groups: [] };
 }
 const netName = (vid) => { const n = intentNets.find((x) => String(x.vlan_id) === String(vid)); return n ? n.name : `VLAN ${vid}`; };
 const groupName = (gid) => { const g = wifiGroups.find((x) => x.id === gid); return g ? g.name : "?"; };
@@ -3805,7 +3840,7 @@ function renderIntentWifi() {
   host.value = w.capsman_device_id || "";
   $("wifi-width").value = String(w.max_width || 80);
   $("wifi-dfs").checked = w.dfs !== false;
-  $("wifi-country").value = w.country || "Czech Republic";
+  $("wifi-country").value = w.country || (me && me.defaults && me.defaults.country) || "Czech Republic";
   $("wifi-result").textContent = "";
   renderSsidCards();
   renderApBoard();

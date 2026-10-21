@@ -258,6 +258,46 @@ class SyslogConfig(BaseModel):
         return v
 
 
+_TZ = re.compile(r"^[A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2}$")
+_COUNTRY = re.compile(r"^[A-Za-z][A-Za-z .'-]{1,39}$")
+
+
+class SiteDefaults(BaseModel):
+    """Výchozí hodnoty pro lokality a výchozí konfiguraci zařízení (nastaví průvodce)."""
+    timezone: str = "Europe/Prague"
+    # země pro regulaci Wi-Fi – jméno, jak ho zná RouterOS (/interface wifi … country=)
+    country: str = "Czech Republic"
+    ntp: list[str] = Field(default_factory=lambda: ["tik.cesnet.cz", "tak.cesnet.cz"])
+
+    @field_validator("timezone")
+    @classmethod
+    def _tz(cls, v: str) -> str:
+        if not _TZ.match(v):
+            raise ValueError("site_defaults.timezone: např. Europe/Prague")
+        return v
+
+    @field_validator("country")
+    @classmethod
+    def _country(cls, v: str) -> str:
+        if not _COUNTRY.match(v):
+            raise ValueError("site_defaults.country: jméno země pro RouterOS, např. Czech Republic")
+        return v
+
+    @field_validator("ntp")
+    @classmethod
+    def _ntp(cls, v: list[str]) -> list[str]:
+        if not 1 <= len(v) <= 4:
+            raise ValueError("site_defaults.ntp: 1–4 servery")
+        return [_hostname(h) for h in v]
+
+
+class BackupConfig(BaseModel):
+    """Zálohy controlleru (DB + konfigurace + klíče), šifrované heslem zálohy."""
+    dir: Path = Path("/var/backups/mtcontroller")
+    keep: int = Field(default=14, ge=1, le=365)
+    passphrase_file: Path = Path("/etc/mtcontroller/backup.key")
+
+
 class Settings(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     web: WebConfig = Field(default_factory=WebConfig)
@@ -266,6 +306,8 @@ class Settings(BaseModel):
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     notify: list[NotifyTarget] = Field(default_factory=list)
     syslog: SyslogConfig = Field(default_factory=SyslogConfig)
+    site_defaults: SiteDefaults = Field(default_factory=SiteDefaults)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
 
 
 def _env_overrides(environ: Mapping[str, str]) -> dict[str, dict[str, Any]]:

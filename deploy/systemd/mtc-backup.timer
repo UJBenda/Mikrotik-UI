@@ -1,0 +1,10 @@
+[Unit]
+Description=MikroTik Controller – denní záloha
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

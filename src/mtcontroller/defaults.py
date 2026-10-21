@@ -21,7 +21,7 @@ sériovém čísle – jeden soubor pro všechny kusy dané role a lokality.
 
 from __future__ import annotations
 
-from . import fwmatrix
+from . import fwmatrix, regional
 from .routeros import SCRIPT_POLICY, FetchOpts, _one_line, q, q_source, trust_ca_body
 
 ROLES = {
@@ -79,10 +79,11 @@ def _system(ntp: list[str], tz: str, firewall: bool) -> list[str]:
 
 
 def script(role: str, enroll_url: str, opts: FetchOpts, *, ntp: list[str] | None = None,
-           tz: str = "Europe/Prague") -> str:
+           tz: str | None = None) -> str:
     if role not in ROLES:
         raise ValueError(f"neznámá role {role!r}")
-    ntp = ntp or ["tik.cesnet.cz", "tak.cesnet.cz"]
+    ntp = ntp or regional.ntp_servers()
+    tz = tz or regional.timezone()
     fw = role == "firewall"
     L: list[str] = []
     L.append(f'/interface bridge add name=bridge protocol-mode=rstp vlan-filtering=no pvid=1 comment="{MARK}{role}"')

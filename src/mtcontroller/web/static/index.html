@@ -365,6 +365,13 @@
       <p id="system-summary"></p>
       <table><thead><tr><th>Krok workeru</th><th>Trvání</th><th>Výsledek</th></tr></thead><tbody id="system-steps"></tbody></table>
     </div>
+    <div class="card" id="backup-card" hidden>
+      <h2>Zálohy controlleru <button id="backup-now" type="button" class="small">Zálohovat teď</button></h2>
+      <p id="backup-summary" class="muted"></p>
+      <table><thead><tr><th>Soubor</th><th>Velikost</th><th>Vytvořeno</th><th></th></tr></thead><tbody id="backup-list"></tbody></table>
+      <p class="muted">Zálohy jsou šifrované heslem záloh (zobrazí ho <code>sudo mtc-admin recovery-kit</code>).
+        Obsahují databázi, konfiguraci a klíče. Obnova: průvodce nové instalace nebo <code>sudo mtc-admin restore SOUBOR</code>.</p>
+    </div>
       </div>
     </div>
   </section>

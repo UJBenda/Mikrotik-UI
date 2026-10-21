@@ -56,7 +56,10 @@ def client_ip(request: Request) -> str | None:
 def create_app(state: AppState) -> Starlette:
     from . import admin, checkin, devices
 
+    from .. import regional
+
     settings = state.settings
+    regional.apply(settings)
     ui_host, checkin_host = settings.web.ui_host, settings.web.checkin_host
 
     async def host_separation(request: Request, call_next):

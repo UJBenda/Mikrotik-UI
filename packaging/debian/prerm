@@ -2,7 +2,7 @@
 set -e
 case "$1" in
   remove|deconfigure)
-    systemctl disable --now mtc-web mtc-worker mtc-syslog mtc-setup.service mtc-setup-apply.path >/dev/null 2>&1 || true
+    systemctl disable --now mtc-web mtc-worker mtc-syslog mtc-setup.service mtc-setup-apply.path mtc-backup.timer mtc-backup.path >/dev/null 2>&1 || true
     ;;
 esac
 exit 0

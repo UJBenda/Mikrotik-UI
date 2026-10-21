@@ -8,6 +8,9 @@ takže i chyba v kontrole oprávnění nepustí k datům jiného tenanta (RLS).
 
 from __future__ import annotations
 
+import json
+import os
+import re
 import time
 import uuid
 from collections import defaultdict, deque
@@ -22,7 +25,7 @@ from starlette.routing import Route
 from .. import auth, health, ros_versions, services
 from ..auth import MANAGE, OPERATE, READ, AuthError, Principal
 from ..db import operator_scope, tenant_scope
-from ..services import NotFound, ServiceError
+from ..services import NotFound, ServiceError, audit
 from .app import client_ip, get_state, json_response
 
 COOKIE = "mtc_session"
@@ -155,7 +158,8 @@ async def logout(request: Request, p: Principal, _t) -> Response:
 async def me(request: Request, p: Principal, _t) -> Response:
     return json_response({"email": p.email, "mfa_ok": p.mfa_ok, "csrf": p.csrf,
                           "superadmin": p.superadmin, "tenants": p.tenant_roles,
-                          "mode": "local" if get_state(request).settings.tunnel.local else "remote"})
+                          "mode": "local" if get_state(request).settings.tunnel.local else "remote",
+                          "defaults": get_state(request).settings.site_defaults.model_dump()})
 
 
 @endpoint(None)
@@ -206,6 +210,59 @@ async def tenant_user(request: Request, p: Principal, tid: str) -> Response:
         data = await _json(request)
         await run_in_threadpool(users.set_role, st.db, tid, uid, str(data.get("role", "")), p, client_ip(request))
     return json_response({"ok": True})
+
+
+_BACKUP_NAME = re.compile(r"^mtc-[A-Za-z0-9-]{1,40}-\d{8}-\d{6}\.mtcbak$")
+
+
+@endpoint(None)
+async def system_backups(request: Request, p: Principal, _t) -> Response:
+    """Zálohy controlleru (superadmin): seznam, stav, žádost o zálohu teď."""
+    from .. import sysbackup
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    data_dir, bdir = st.settings.paths.data_dir, st.settings.backup.dir
+    if request.method == "POST":
+        req = sysbackup.request_path(data_dir)
+        if req.exists():
+            return _err(409, "záloha už čeká na spuštění")
+
+        def q():
+            with operator_scope(st.db) as tx:
+                audit(tx, "system.backup_request", user_id=p.user_id, target="system:backup", ip=client_ip(request))
+            fd = os.open(req, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+            with os.fdopen(fd, "w") as fh:
+                json.dump({"user": p.email}, fh)
+
+        await run_in_threadpool(q)
+        return json_response({"ok": True})
+    return json_response({"backups": await run_in_threadpool(sysbackup.listing, bdir),
+                          "status": sysbackup.read_status(data_dir), "pending": sysbackup.request_path(data_dir).exists(),
+                          "dir": str(bdir), "keep": st.settings.backup.keep})
+
+
+@endpoint(None)
+async def system_backup_download(request: Request, p: Principal, _t) -> Response:
+    from starlette.responses import FileResponse
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    name = request.path_params["name"]
+    path = st.settings.backup.dir / name
+    if not _BACKUP_NAME.match(name) or not path.is_file():
+        return _err(404, "záloha neexistuje")
+
+    def q():
+        with operator_scope(st.db) as tx:
+            audit(tx, "system.backup_download", user_id=p.user_id, target="system:backup", after={"file": name},
+                  ip=client_ip(request))
+
+    await run_in_threadpool(q)
+    return FileResponse(path, media_type="application/octet-stream", filename=name,
+                        headers={"Cache-Control": "no-store"})
 
 
 @endpoint(None)
@@ -449,6 +506,8 @@ def routes() -> list[Route]:
         Route("/api/admin/me", me, methods=["GET"]),
         Route("/api/admin/me/password", my_password, methods=["POST"]),
         Route("/api/admin/system", system_status, methods=["GET"]),
+        Route("/api/admin/system/backups", system_backups, methods=["GET", "POST"]),
+        Route("/api/admin/system/backups/{name}", system_backup_download, methods=["GET"]),
         Route("/api/admin/users/{user_id}/reset-mfa", user_mfa_reset, methods=["POST"]),
         Route(t + "/users", tenant_users, methods=["GET", "POST"]),
         Route(t + "/users/{user_id}", tenant_user, methods=["PATCH", "DELETE"]),

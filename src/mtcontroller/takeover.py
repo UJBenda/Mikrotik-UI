@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import dhcpguard, intent, inventory, ntp, routeros, switchcfg
+from . import dhcpguard, intent, inventory, ntp, regional, routeros, switchcfg
 from .config import Settings
 from .db import Database, Tx, tenant_scope
 from .security import SecretBox, random_password
@@ -174,7 +174,7 @@ def _model(tx: Tx, d: dict, inv: dict) -> tuple[dict | None, dict]:
     if not site_intent:
         return None, {}
     pol = tx.fetchone("SELECT data FROM site_policy WHERE site_id = %(s)s AND module = 'ntp'", {"s": str(d["site_id"])})
-    ntp_pol = (pol or {}).get("data") or {"upstream": ntp.DEFAULT_UPSTREAM, "timezone": ntp.DEFAULT_TZ}
+    ntp_pol = (pol or {}).get("data") or {"upstream": regional.ntp_servers(), "timezone": regional.timezone()}
     dev_intent = load_device_intent(tx, d["id"])
     role = dev_intent.get("role") or (d["role"] if d["role"] in ("switch", "ap") else "switch")
     model = switchcfg.build(inv, site_intent, dev_intent, model_name=d["model"] or "",

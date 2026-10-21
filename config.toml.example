@@ -85,3 +85,17 @@ api_fingerprint = "0000000000000000000000000000000000000000000000000000000000000
 # mail_from = "mtc@firma.cz"
 # mail_to = ["noc@firma.cz"]
 # min_severity = "critical"
+
+# Výchozí hodnoty pro nové lokality a výchozí konfiguraci zařízení (nastaví průvodce).
+[site_defaults]
+timezone = "Europe/Prague"
+# země pro regulaci Wi-Fi – jméno, jak ho zná RouterOS
+country = "Czech Republic"
+ntp = ["tik.cesnet.cz", "tak.cesnet.cz"]
+
+# Zálohy controlleru (DB, konfigurace, klíče) – šifrované heslem z passphrase_file (0600 root).
+# Denně mtc-backup.timer, na požádání Systém → Zálohy; obnova: průvodce nebo mtc-admin restore.
+[backup]
+dir = "/var/backups/mtcontroller"
+keep = 14
+passphrase_file = "/etc/mtcontroller/backup.key"

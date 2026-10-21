@@ -13,6 +13,8 @@ import ipaddress
 import re
 from typing import Any
 
+from . import regional
+
 PURPOSES = {
     "mgmt": "management",
     "lan": "zaměstnanci / LAN",
@@ -223,7 +225,7 @@ def validate_wifi(raw: dict) -> dict:
         host = str(host)
         if not re.fullmatch(r"[0-9a-f-]{36}", host):
             raise IntentError("Wi-Fi: neplatné zařízení pro CAPsMAN")
-    country = str(raw.get("country") or "Czech Republic").strip()
+    country = str(raw.get("country") or regional.country()).strip()
     if not COUNTRY_RE.match(country):
         raise IntentError("Wi-Fi: neplatná země (např. Czech Republic)")
     try:

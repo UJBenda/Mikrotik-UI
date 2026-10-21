@@ -16,6 +16,9 @@
   device-check TENANT DEVICE    diagnostika REST přes tunel (identita, otisk, porty, aktualizace)
   setup-code                    vypíše kód webového průvodce prvního spuštění (root)
   setup-apply                   provede nastavení z průvodce (root; spouští mtc-setup-apply.path)
+  backup                        šifrovaná záloha controlleru (root; timer mtc-backup a žádost z UI)
+  restore SOUBOR [--force]      obnova controlleru ze zálohy .mtcbak (root; zastaví služby)
+  recovery-kit                  vypíše záchranné údaje (heslo záloh, DB, cesty) (root)
 """
 
 from __future__ import annotations
@@ -259,6 +262,99 @@ def cmd_setup_apply(a) -> int:
     return firstrun.apply_request()
 
 
+def _audit_system(action: str, after: dict) -> None:
+    """Audit systémové akce; selhání auditu (DB dole) nesmí shodit zálohu."""
+    try:
+        from .db import operator_scope
+        from .services import audit
+        with operator_scope(_db()) as tx:
+            audit(tx, action, target="system:backup", after=after)
+    except Exception as e:  # noqa: BLE001
+        print(f"audit se nezapsal: {e}", file=sys.stderr)
+
+
+def cmd_backup(a) -> int:
+    from . import sysbackup
+    from .db import PsycopgDatabase
+    s = get_settings()
+    req = sysbackup.request_path(s.paths.data_dir)
+    reason, who = ("scheduled" if a.scheduled else "manual"), None
+    if req.exists():
+        try:
+            who = json.loads(req.read_text()).get("user")
+        except (OSError, ValueError):
+            pass
+        req.unlink(missing_ok=True)
+        reason = "request"
+    elif a.from_path:
+        return 0  # path jednotka bez žádosti (už vyřízená)
+    sysbackup.write_status(s.paths.data_dir, state="running", reason=reason)
+    try:
+        f = sysbackup.create(s, PsycopgDatabase(s.database.migrate_dsn), reason=reason)
+    except Exception as e:  # noqa: BLE001
+        sysbackup.write_status(s.paths.data_dir, state="error", error=str(e)[:500], reason=reason)
+        _audit_system("system.backup_failed", {"error": str(e)[:300], "reason": reason, "by": who})
+        print(f"záloha selhala: {e}", file=sys.stderr)
+        return 1
+    sysbackup.write_status(s.paths.data_dir, state="done", file=f.name, size=f.stat().st_size, reason=reason)
+    _audit_system("system.backup", {"file": f.name, "size": f.stat().st_size, "reason": reason, "by": who})
+    print(f.name)
+    return 0
+
+
+def cmd_restore(a) -> int:
+    import subprocess
+    from pathlib import Path
+
+    from . import migrate, sysbackup
+    from .config import load_settings
+    from .db import PsycopgDatabase, operator_scope
+    s = get_settings()
+    if not a.force:
+        try:
+            with operator_scope(_db()) as tx:
+                n = tx.fetchone("SELECT count(*) AS n FROM app_user")["n"]
+        except Exception:  # noqa: BLE001 – DB ještě neexistuje
+            n = 0
+        if n:
+            raise SystemExit("tento controller už má data – obnova je přepíše; potvrď --force")
+    pw = (Path(a.passphrase_file).read_text().strip() if a.passphrase_file
+          else getpass.getpass("Heslo záloh: ").strip())
+    units = ["mtc-web", "mtc-worker", "mtc-syslog"]
+    subprocess.run(["systemctl", "stop", *units], check=False)
+    res = sysbackup.restore(
+        Path(a.file), pw, s, recreate_db=lambda: sysbackup.recreate_db_as_postgres(sysbackup.dbname(s.database.migrate_dsn)),
+        migrate_db=lambda: migrate.upgrade(PsycopgDatabase(get_settings().database.migrate_dsn), s.database.app_role))
+    cfg = Path("/etc/mtcontroller")
+    bk = load_settings(cfg / "config.toml", environ={}).backup.passphrase_file
+    import os
+    fd = os.open(bk, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(pw + "\n")
+    subprocess.run(["systemctl", "start", *units], check=False)
+    m = res["manifest"]
+    print(f"Obnoveno ze zálohy {m.get('created_at')} (verze {m.get('app_version')}, schéma {m.get('schema')}); "
+          f"migrace: {res['migrated'] or 'žádné'}")
+    print("Zkontroluj nginx a certifikáty (průvodce je při obnově nastaví sám): mtc-admin doctor")
+    _audit_system("system.restore", {"from": m.get("created_at"), "version": m.get("app_version"),
+                                     "migrated": res["migrated"]})
+    return 0
+
+
+def cmd_recovery_kit(a) -> int:
+    from . import firstrun
+    s = get_settings()
+    try:
+        pw = s.backup.passphrase_file.read_text().strip()
+    except OSError:
+        raise SystemExit("heslo záloh nejde přečíst (spusť jako root)")
+    from types import SimpleNamespace
+    plan = SimpleNamespace(ui_host=s.web.ui_host, mode="local" if s.tunnel.local else "remote",
+                           controller_ip=s.tunnel.controller_ip)
+    print(firstrun.kit_text(firstrun.kit(plan, pw)), end="")
+    return 0
+
+
 def cmd_doctor(a) -> int:
     from . import doctor
     from .db import PsycopgDatabase
@@ -291,6 +387,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
     sub.add_parser("setup-code").set_defaults(fn=cmd_setup_code)
     sub.add_parser("setup-apply").set_defaults(fn=cmd_setup_apply)
+    x = sub.add_parser("backup"); x.add_argument("--scheduled", action="store_true")
+    x.add_argument("--from-path", action="store_true"); x.set_defaults(fn=cmd_backup)
+    x = sub.add_parser("restore"); x.add_argument("file"); x.add_argument("--force", action="store_true")
+    x.add_argument("--passphrase-file"); x.set_defaults(fn=cmd_restore)
+    sub.add_parser("recovery-kit").set_defaults(fn=cmd_recovery_kit)
     x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")
     x.set_defaults(fn=cmd_device_check)
     a = p.parse_args(argv)

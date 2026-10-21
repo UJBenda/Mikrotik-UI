@@ -909,3 +909,38 @@ spojení** – žádné tunely na jednotlivá zařízení, žádné otevřené p
 4. **Bezpečnost a audit**: edge může cloud kdykoli odpojit (zneplatní klíč); každá akce přes relé
    se zapíše na obou stranách (`audit_log` s `via: uplink` a uživatelem z centrálu); tajemství
    zařízení nikdy neopouštějí edge.
+
+## Zálohy a obnova controlleru
+
+`sysbackup.py`, spouští root (`mtc-admin backup`): denně `mtc-backup.timer`, na žádost z UI
+(Systém → Zálohy zapíše `/var/lib/mtcontroller/backup-request`, `mtc-backup.path` spustí službu).
+
+| Co | Jak |
+| --- | --- |
+| Obsah | `pg_dump -Fc` celé DB (jako `postgres` – RLS je FORCE i pro vlastníka schématu), `config.toml`, `master.key`, hesla koncentrátorů, CA pro zařízení (`ssl/ca.key`, aby jí zařízení věřila i po obnově), plán průvodce, `manifest.json` (formát, verze aplikace, verze schématu) |
+| Šifrování | heslo záloh → scrypt (2^15, 8, 1) → AES-256-GCM po blocích 1 MiB; číslo bloku a příznak posledního bloku v AAD (zkrácení i přehození se pozná) |
+| Heslo | vygeneruje průvodce, `/etc/mtcontroller/backup.key` (0600 root), ukáže se v záchranných údajích a `mtc-admin recovery-kit` |
+| Uložení | `/var/backups/mtcontroller` (0750 root:mtcontroller, soubory 0640 – UI je nabízí ke stažení, jsou šifrované), ponechá se `backup.keep` posledních |
+| Kontrola | `doctor`: heslo existuje, poslední záloha < 2 dny, poslední běh bez chyby; UI ukazuje stav a stáří |
+| Audit | `system.backup`, `system.backup_failed`, `system.backup_request`, `system.backup_download`, `system.restore` |
+
+Obnova (průvodce „Obnovit ze zálohy“ nebo `mtc-admin restore SOUBOR`): rozšifrovat, ověřit
+manifest a obsah tar (jen očekávané cesty), **zkontrolovat verzi**, znovu založit prázdnou DB,
+`pg_restore` jako `postgres`, vrátit soubory a pustit migrace.
+
+Verze: manifest nese číslo posledního schématu. Starší záloha → po `pg_restore` doběhnou migrace
+(otestováno: záloha bez poslední migrace se obnoví a domigruje). Záloha z novější verze, než zná
+instalovaná aplikace, se odmítne dřív, než se sáhne na DB – nejdřív nainstalovat aspoň stejnou
+verzi. Konfigurace je zpětně kompatibilní (nové volby mají výchozí hodnoty). Po obnově na jiném
+serveru průvodce upozorní, když se IP serveru liší od `controller_ip` v záloze (zařízení se hlásí
+na původní adresu).
+
+Ke zvážení dál: kopie záloh mimo server (SFTP/S3/Nextcloud WebDAV) – teď je to na správci.
+
+### Průvodce prvního spuštění – kroky
+
+Kód → nová instalace / obnova → režim → síť a certifikát → region (země pro Wi-Fi, časová zóna,
+NTP → `[site_defaults]`, `regional.py`; časová zóna i pro server) → správce, firma a lokalita →
+shrnutí → průběh → **záchranné údaje** (heslo záloh, DB bez hesel – peer přes unix socket, cesty;
+stáhnout / vytisknout, potvrdit uložení) → přepnutí na controller. Obnova vynechá režim, region a
+správce (vše je v záloze).

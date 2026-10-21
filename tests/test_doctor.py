@@ -118,3 +118,21 @@ def test_local_mode_skips_tunnel_checks(tmp_path):
     assert _by(out, "controller_ip")[0].status == doctor.OK
     assert not _by(out, "routa na pool") and _by(out, "režim")[0].status == doctor.OK
     assert doctor.check_concentrators(s, providers=[]) == []
+
+
+def test_backup_checks(tmp_path):
+    from mtcontroller import sysbackup
+
+    s = make_settings(tmp_path).model_copy(deep=True)
+    s.paths.data_dir = tmp_path
+    s.backup.dir = tmp_path / "bk"
+    s.backup.passphrase_file = tmp_path / "backup.key"
+    out = doctor.check_backup(s)
+    assert _by(out, "heslo záloh")[0].status == doctor.FAIL and _by(out, "zálohy")[0].status == doctor.WARN
+    s.backup.passphrase_file.write_text("abcde-fghij-kmnpq")
+    s.backup.dir.mkdir()
+    (s.backup.dir / "mtc-x-20261021-020000.mtcbak").write_bytes(b"x")
+    sysbackup.write_status(tmp_path, state="error", error="pg_dump selhal")
+    out = doctor.check_backup(s)
+    assert _by(out, "heslo záloh")[0].status == doctor.OK
+    assert [c.status for c in _by(out, "zálohy")] == [doctor.FAIL, doctor.OK]

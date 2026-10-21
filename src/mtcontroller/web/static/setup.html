@@ -3,73 +3,196 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MikroTik Controller – první spuštění</title>
-<link rel="stylesheet" href="/setup/static/style.css">
+<title>Nastavení controlleru</title>
+<link rel="stylesheet" href="/setup/static/setup.css">
 <script src="/setup/static/setup.js" defer></script>
 </head>
 <body>
-<header><h1><span class="logo" aria-hidden="true"></span>MikroTik Controller – první spuštění</h1></header>
-<div class="setup">
-  <section id="s-code" class="card">
-    <h2>1. Kód průvodce</h2>
-    <p class="muted">Vypsala ho instalace balíčku. Znovu ho zobrazíš na serveru: <code>sudo mtc-admin setup-code</code></p>
-    <form id="code-form" class="inline">
-      <input name="code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" required size="18">
-      <button>Pokračovat</button>
-    </form>
-  </section>
+<div class="bg" aria-hidden="true"></div>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 17h4v3H4zM10 12h4v8h-4zM16 7h4v13h-4z"/></svg></span>
+    <span>MikroTik Controller</span><span class="chip">Nastavení</span></div>
+  <div class="top-hint" id="top-hint"></div>
+</header>
 
-  <form id="setup-form" hidden>
-    <section class="card">
-      <h2>2. Režim</h2>
-      <label class="choice"><input type="radio" name="mode" value="local" checked>
-        <span><b>Lokální controller</b> – server je ve stejné síti jako MikroTiky (Raspberry Pi, mini PC, VM).
-        Správa přímo v LAN, bez tunelů. Stačí IP adresa.</span></label>
-      <label class="choice"><input type="radio" name="mode" value="remote">
-        <span><b>Centrální vzdálená správa</b> – server pro víc firem a lokalit, zařízení se připojují tunelem
-        (SSTP) přes koncentrátor. Potřebuje dvě DNS jména a koncentrátor.</span></label>
+<main class="shell">
+  <nav class="rail" aria-label="Postup">
+    <ol id="rail"></ol>
+  </nav>
+
+  <div class="pane">
+    <!-- 1 kód -->
+    <section class="step" data-step="code" data-title="Přístup">
+      <p class="eyebrow">Vítej</p>
+      <h1>Nastavíme tvůj controller</h1>
+      <p class="lead">Pár kroků a MikroTiky můžeš začít přidávat. Pro přístup zadej kód, který vypsala instalace balíčku.</p>
+      <form id="f-code" class="stack" autocomplete="off">
+        <label class="field big"><span>Kód průvodce</span>
+          <input name="code" placeholder="XXXX-XXXX-XXXX" spellcheck="false" required autofocus></label>
+        <p class="hint">Na serveru ho znovu ukáže <code>sudo mtc-admin setup-code</code>.</p>
+        <div class="actions"><span></span><button class="btn primary">Pokračovat <i class="arr"></i></button></div>
+      </form>
     </section>
 
-    <section class="card">
-      <h2>3. Síť</h2>
-      <label>IP adresa tohoto serveru (z ní jde správa zařízení) <input name="controller_ip" required></label>
-      <div data-mode="local">
-        <label>Adresa controlleru (IP nebo jméno v LAN) <input name="host"></label>
+    <!-- 2 začátek -->
+    <section class="step" data-step="start" data-title="Začátek" hidden>
+      <p class="eyebrow">Krok 1</p>
+      <h1>Nová instalace, nebo obnova?</h1>
+      <p class="lead">Obnova přenese všechno ze zálohy: zařízení, lokality, uživatele, historii i klíče.</p>
+      <div class="tiles two" role="radiogroup">
+        <label class="tile"><input type="radio" name="flow" value="install" checked>
+          <span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l9 5v8l-9 5-9-5V8z"/><path d="M12 12l9-4M12 12v9M12 12L3 8"/></svg></span>
+          <b>Nová instalace</b><span>Prázdný controller, nastavíš režim, síť a správce.</span></label>
+        <label class="tile"><input type="radio" name="flow" value="restore">
+          <span class="ico"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg></span>
+          <b>Obnovit ze zálohy</b><span>Soubor <code>.mtcbak</code> z dřívějšího controlleru a heslo záloh.</span></label>
       </div>
-      <div data-mode="remote" hidden>
-        <label>Hostname administrace <input name="ui_host" placeholder="mtc-admin.firma.cz"></label>
-        <label>Hostname check-inu (dostupný z internetu) <input name="checkin_host" placeholder="mtc-checkin.firma.cz"></label>
+    </section>
+
+    <!-- 3a režim -->
+    <section class="step" data-step="mode" data-title="Režim" hidden>
+      <p class="eyebrow">Krok 2</p>
+      <h1>Jak budeš spravovat?</h1>
+      <p class="lead">Režim určuje, jak controller mluví se zařízeními. Později ho změnit jde, ale znamená to nové provisioning.</p>
+      <div class="tiles two" role="radiogroup">
+        <label class="tile"><input type="radio" name="mode" value="local" checked>
+          <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
+          <b>Lokální controller</b><span>Server je ve stejné síti jako MikroTiky (Raspberry Pi, mini PC, VM). Bez tunelů, stačí IP adresa.</span>
+          <em>Doporučeno pro jednu síť</em></label>
+        <label class="tile"><input type="radio" name="mode" value="remote">
+          <span class="ico"><svg viewBox="0 0 24 24"><path d="M4 15a4 4 0 0 1 1-7.9 6 6 0 0 1 11.5 1.4A3.5 3.5 0 1 1 17 15z"/><path d="M8 19h8"/></svg></span>
+          <b>Centrální vzdálená správa</b><span>Pro víc firem a lokalit. Zařízení se připojují tunelem přes koncentrátor; potřebuješ dvě DNS jména.</span></label>
       </div>
-      <label>Sítě, ze kterých jde do administrace (CIDR, čárkou) <input name="admin_nets" required></label>
-      <fieldset>
-        <legend>Certifikát</legend>
-        <label class="choice"><input type="radio" name="certs" value="own_ca" checked>
-          <span>Vlastní certifikační autorita controlleru – zařízení si ji stáhnou a ověří otiskem
-          (prohlížeč jednou upozorní, CA si můžeš importovat z <code>/mtc-ca.crt</code>).</span></label>
-        <label class="choice"><input type="radio" name="certs" value="letsencrypt">
-          <span>Let's Encrypt – jen s veřejnými DNS jmény a otevřeným portem 80.</span></label>
-        <label data-le hidden>E-mail pro Let's Encrypt <input name="acme_email" type="email"></label>
-      </fieldset>
     </section>
 
-    <section class="card">
-      <h2>4. Administrátor a první lokalita</h2>
-      <label>E-mail <input name="email" type="email" autocomplete="username" required></label>
-      <label>Heslo (min. 12 znaků) <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
-      <label>Heslo znovu <input name="password2" type="password" autocomplete="new-password" minlength="12" required></label>
-      <label>Firma <input name="tenant" placeholder="např. Domácnost / Firma s.r.o."></label>
-      <label>Lokalita <input name="site" placeholder="např. Kancelář"></label>
-      <p class="muted">Ověření ve dvou krocích (MFA) se nastaví při prvním přihlášení.</p>
+    <!-- 3b záloha -->
+    <section class="step" data-step="backup" data-title="Záloha" hidden>
+      <p class="eyebrow">Krok 2</p>
+      <h1>Nahraj zálohu</h1>
+      <p class="lead">Soubor <code>mtc-…​.mtcbak</code> najdeš na starém serveru v <code>/var/backups/mtcontroller</code> nebo v Systém → Zálohy.</p>
+      <label class="drop" id="drop">
+        <input type="file" id="bk-file" accept=".mtcbak">
+        <span class="ico"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></span>
+        <b id="drop-title">Přetáhni soubor sem, nebo klikni</b>
+        <span id="drop-sub" class="hint">Šifrovaná záloha controlleru</span>
+        <span class="bar" hidden><span id="bk-bar"></span></span>
+      </label>
+      <label class="field"><span>Heslo záloh</span>
+        <input id="bk-pass" type="password" autocomplete="off" spellcheck="false" placeholder="xxxxx-xxxxx-xxxxx-…"></label>
+      <p class="hint">Je v záchranných údajích z původní instalace. Ověří se až při obnově – špatné heslo nic nepokazí.</p>
+      <p class="note">Verze: starší zálohu controller po obnově sám převede na novou verzi. Zálohu z novější verze do starší neobnovíš – nejdřív nainstaluj aspoň stejnou verzi balíčku.</p>
     </section>
 
-    <div class="row"><button id="go">Nastavit controller</button></div>
-  </form>
+    <!-- 4 síť -->
+    <section class="step" data-step="network" data-title="Síť" hidden>
+      <p class="eyebrow">Krok 3</p>
+      <h1>Síť a certifikát</h1>
+      <p class="lead" id="net-lead">Adresy, na kterých bude controller dostupný.</p>
+      <div class="grid2" id="net-fields">
+        <label class="field"><span>IP adresa serveru</span><input name="controller_ip" inputmode="decimal">
+          <small>Z ní jde správa zařízení – měla by být pevná.</small></label>
+        <label class="field" data-mode="local"><span>Adresa controlleru</span><input name="host">
+          <small>IP nebo jméno v LAN, na které se hlásí MikroTiky.</small></label>
+        <label class="field" data-mode="remote" hidden><span>Hostname administrace</span><input name="ui_host" placeholder="mtc-admin.firma.cz"></label>
+        <label class="field" data-mode="remote" hidden><span>Hostname check-inu</span><input name="checkin_host" placeholder="mtc-checkin.firma.cz">
+          <small>Dostupný z internetu, sem se hlásí zařízení.</small></label>
+      </div>
+      <label class="field"><span>Odkud smí do administrace</span><input name="admin_nets" placeholder="192.168.88.0/24, 10.8.0.0/24">
+        <small>Sítě (CIDR) oddělené čárkou. Check-in zařízení tím omezený není.</small></label>
+      <div id="cert-box">
+        <p class="label">Certifikát</p>
+        <div class="seg" role="radiogroup">
+          <label><input type="radio" name="certs" value="own_ca" checked><span>Vlastní CA controlleru</span></label>
+          <label><input type="radio" name="certs" value="letsencrypt"><span>Let's Encrypt</span></label>
+        </div>
+        <p class="hint" data-cert="own_ca">Zařízení si CA stáhnou a ponechají jen při shodě otisku – TLS zůstane ověřené i bez DNS. Prohlížeč jednou upozorní; CA si můžeš importovat z <code>/mtc-ca.crt</code>.</p>
+        <label class="field" data-cert="letsencrypt" hidden><span>E-mail pro Let's Encrypt</span><input name="acme_email" type="email">
+          <small>DNS obou jmen musí mířit sem a port 80 musí být otevřený.</small></label>
+      </div>
+    </section>
 
-  <section id="s-progress" class="card" hidden>
-    <h2>Nastavuji…</h2>
-    <p id="progress">Čekám na službu.</p>
-  </section>
-  <p id="msg" role="status"></p>
-</div>
+    <!-- 5 region -->
+    <section class="step" data-step="region" data-title="Region" hidden>
+      <p class="eyebrow">Krok 4</p>
+      <h1>Region a čas</h1>
+      <p class="lead">Výchozí hodnoty pro nové lokality a výchozí konfiguraci MikroTiků. U každé lokality je později změníš.</p>
+      <div class="grid2">
+        <label class="field"><span>Země (regulace Wi-Fi)</span><select name="country" id="country"></select>
+          <small>Povolené kanály a výkon vysílání podle zákonů dané země.</small></label>
+        <label class="field"><span>Časová zóna</span><input name="timezone" list="tz-list" spellcheck="false">
+          <datalist id="tz-list"></datalist><small>Pro zařízení i tento server.</small></label>
+      </div>
+      <label class="field"><span>NTP servery</span><input name="ntp" spellcheck="false">
+        <small>1–4 servery oddělené čárkou; předvyplněno podle země.</small></label>
+    </section>
+
+    <!-- 6 správce -->
+    <section class="step" data-step="admin" data-title="Správce" hidden>
+      <p class="eyebrow">Krok 5</p>
+      <h1>Správce a první lokalita</h1>
+      <p class="lead">Hlavní účet (superadmin). Ověření ve dvou krocích (MFA) nastavíš při prvním přihlášení.</p>
+      <label class="field"><span>E-mail</span><input name="email" type="email" autocomplete="username"></label>
+      <div class="grid2">
+        <label class="field"><span>Heslo</span><input name="password" type="password" autocomplete="new-password">
+          <span class="meter"><span id="pw-meter"></span></span><small id="pw-hint">Alespoň 12 znaků.</small></label>
+        <label class="field"><span>Heslo znovu</span><input name="password2" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Firma</span><input name="tenant" placeholder="Domácnost / Firma s.r.o."></label>
+        <label class="field"><span>Lokalita</span><input name="site" placeholder="Kancelář"></label>
+      </div>
+    </section>
+
+    <!-- 7 shrnutí -->
+    <section class="step" data-step="summary" data-title="Shrnutí" hidden>
+      <p class="eyebrow">Skoro hotovo</p>
+      <h1>Zkontroluj a nastav</h1>
+      <dl class="summary" id="summary"></dl>
+      <p class="note">Po nastavení dostaneš <b>záchranné údaje</b> s heslem záloh – ulož si je, bez nich zálohu neobnovíš.</p>
+    </section>
+
+    <!-- 8 průběh -->
+    <section class="step" data-step="progress" data-title="Nastavení" hidden>
+      <p class="eyebrow">Pracuji</p>
+      <h1 id="prog-title">Nastavuji controller…</h1>
+      <ul class="checklist" id="checklist"></ul>
+      <p class="hint" id="prog-detail"></p>
+    </section>
+
+    <!-- 9 záchranné údaje -->
+    <section class="step" data-step="kit" data-title="Záchranné údaje" hidden>
+      <p class="eyebrow">Důležité</p>
+      <h1>Ulož si záchranné údaje</h1>
+      <p class="lead">Zobrazí se jen teď. Heslo záloh ulož do správce hesel nebo vytiskni – bez něj nikdo (ani ty) zálohu neobnoví.</p>
+      <div class="warn" id="kit-warning" hidden></div>
+      <div class="secret">
+        <span class="label">Heslo záloh</span>
+        <code id="kit-pass"></code>
+        <button type="button" class="btn ghost small" id="kit-copy">Kopírovat</button>
+      </div>
+      <dl class="summary" id="kit-list"></dl>
+      <div class="row-btns">
+        <button type="button" class="btn" id="kit-download">Stáhnout jako text</button>
+        <button type="button" class="btn" id="kit-print">Vytisknout</button>
+      </div>
+      <label class="check"><input type="checkbox" id="kit-ok"><span>Záchranné údaje mám bezpečně uložené</span></label>
+    </section>
+
+    <!-- 10 hotovo -->
+    <section class="step" data-step="done" data-title="Hotovo" hidden>
+      <div class="done-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <h1>Controller běží</h1>
+      <p class="lead" id="done-text">Přesměrovávám na přihlášení…</p>
+      <p><a class="btn primary" id="done-link" href="/">Přejít na přihlášení <i class="arr"></i></a></p>
+    </section>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+    <footer class="nav" id="nav" hidden>
+      <button type="button" class="btn ghost" id="back">Zpět</button>
+      <button type="button" class="btn primary" id="next">Pokračovat <i class="arr"></i></button>
+    </footer>
+  </div>
+</main>
+<pre id="print-area" class="print-only"></pre>
 </body>
 </html>

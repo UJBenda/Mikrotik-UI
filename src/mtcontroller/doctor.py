@@ -253,11 +253,37 @@ def check_worker(s: Settings) -> list[Check]:
     return [Check(OK, "worker", f"běží (kolo {st.get('tick')}, před {st['age_seconds']} s)")]
 
 
+def check_backup(s: Settings) -> list[Check]:
+    import datetime as dt
+
+    from . import sysbackup
+
+    out = []
+    try:
+        ok = len(s.backup.passphrase_file.read_text().strip()) >= 12
+        out.append(Check(OK if ok else FAIL, "heslo záloh", str(s.backup.passphrase_file) if ok else "krátké"))
+    except PermissionError:
+        out.append(Check(WARN, "heslo záloh", "nejde přečíst – spusť doctor jako root"))
+    except OSError:
+        out.append(Check(FAIL, "heslo záloh", f"chybí {s.backup.passphrase_file} – zálohy neběží (mtc-admin recovery-kit)"))
+    st = sysbackup.read_status(s.paths.data_dir)
+    if st.get("state") == "error":
+        out.append(Check(FAIL, "zálohy", f"poslední záloha selhala: {st.get('error', '')[:200]} – journalctl -u mtc-backup"))
+    items = sysbackup.listing(s.backup.dir)
+    if not items:
+        out.append(Check(WARN, "zálohy", f"v {s.backup.dir} zatím žádná – sudo mtc-admin backup"))
+    else:
+        age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(items[0]["at"])
+        out.append(Check(OK if age < dt.timedelta(days=2) else WARN, "zálohy",
+                         f"{len(items)} v {s.backup.dir}, poslední před {int(age.total_seconds() // 3600)} h"))
+    return out
+
+
 def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     checks: list[Check] = []
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
                lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s), lambda: check_worker(s),
-               check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s)):
+               check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s), lambda: check_backup(s)):
         try:
             checks.extend(fn())
         except Exception as e:  # noqa: BLE001 – jedna rozbitá kontrola nesmí shodit ostatní

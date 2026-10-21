@@ -96,7 +96,13 @@ say "Migrace"
 mtc-admin migrate
 
 say "systemd"
-install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" "$SRC/deploy/systemd/mtc-syslog.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" "$SRC/deploy/systemd/mtc-syslog.service" \
+  "$SRC/deploy/systemd/mtc-backup.service" "$SRC/deploy/systemd/mtc-backup.timer" "$SRC/deploy/systemd/mtc-backup.path" /etc/systemd/system/
+install -d -o root -g mtcontroller -m 0750 /var/backups/mtcontroller
+if [ ! -f "$ETC/backup.key" ]; then
+  (umask 077; PYTHONPATH="$APP" python3 -c 'from mtcontroller.sysbackup import new_passphrase; print(new_passphrase())' > "$ETC/backup.key")
+  echo "vytvořeno heslo záloh $ETC/backup.key – ULOŽ SI HO (mtc-admin recovery-kit)"
+fi
 say "sysctl (ignorovat ICMP redirecty)"
 mtc_sysctl
 
@@ -108,7 +114,8 @@ else
   rm -f /etc/systemd/system/mtc-worker.service.d/routes.conf
 fi
 systemctl daemon-reload
-systemctl enable mtc-web mtc-worker mtc-syslog >/dev/null
+systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path >/dev/null
+systemctl start mtc-backup.timer mtc-backup.path
 systemctl restart mtc-web mtc-worker mtc-syslog
 sleep 2
 systemctl --no-pager --lines=5 status mtc-web mtc-worker mtc-syslog || true

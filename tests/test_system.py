@@ -58,3 +58,45 @@ def test_doctor_worker_check(tmp_path):
     assert doctor.check_worker(s)[0].status == doctor.WARN
     (tmp_path / heartbeat.FILE).write_text(json.dumps({"at_epoch": time.time() - 600, "tick": 7}))
     assert doctor.check_worker(s)[0].status == doctor.FAIL
+
+
+def test_backup_endpoints_and_regional_defaults():
+    """Zálohy controlleru v UI (jen superadmin) a výchozí region z config.toml v /me."""
+    from mtcontroller import regional, sysbackup
+    from mtcontroller.db import operator_scope
+
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        tmp = Path(tempfile.mkdtemp())
+        settings.paths.data_dir = tmp
+        settings.backup.dir = tmp / "bk"
+        settings.backup.dir.mkdir()
+        settings.site_defaults.country = "Slovakia"
+        settings.site_defaults.timezone = "Europe/Bratislava"
+        good = "mtc-vm-20261021-023000.mtcbak"
+        (settings.backup.dir / good).write_bytes(sysbackup.MAGIC + b"x")
+        (settings.backup.dir / "jiny.txt").write_text("ne")
+        app2 = create_app(AppState(settings, db, box, []))
+        assert regional.country() == "Slovakia" and regional.timezone() == "Europe/Bratislava"
+        c = _login(app2)
+        assert c.get("/api/admin/me").json()["defaults"]["country"] == "Slovakia"
+        b = c.get("/api/admin/system/backups").json()
+        assert [x["name"] for x in b["backups"]] == [good] and b["keep"] == 14 and not b["pending"]
+        r = c.get("/api/admin/system/backups/" + good)
+        assert r.status_code == 200 and r.content == sysbackup.MAGIC + b"x"
+        assert c.get("/api/admin/system/backups/jiny.txt").status_code == 404
+        assert c.get("/api/admin/system/backups/..%2Fjiny.txt").status_code == 404
+        assert c.post("/api/admin/system/backups", json_body={}).status_code == 200
+        assert json.loads(sysbackup.request_path(tmp).read_text())["user"] == "admin@example.cz"
+        assert c.post("/api/admin/system/backups", json_body={}).status_code == 409
+        assert c.get("/api/admin/system/backups").json()["pending"] is True
+        with operator_scope(db) as tx:
+            acts = [r["action"] for r in tx.fetchall("SELECT action FROM audit_log")]
+        assert "system.backup_request" in acts and "system.backup_download" in acts
+        # výchozí země pro Wi-Fi politiku lokality
+        from mtcontroller import intent
+        assert intent.validate_wifi({})["country"] == "Slovakia"
+    finally:
+        from mtcontroller.config import SiteDefaults
+        regional._current = SiteDefaults()
+        drop_db(name)

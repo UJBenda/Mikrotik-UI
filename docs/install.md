@@ -17,8 +17,14 @@ V prohlížeči se zvolí režim:
 - **Centrální vzdálená správa** – dvě DNS jména (admin, check-in), Let's Encrypt nebo vlastní CA;
   koncentrátory se doplní do `/etc/mtcontroller/config.toml` jako dřív.
 
-Průvodce založí superadmina (MFA při prvním přihlášení), první firmu a lokalitu, zapíše konfiguraci,
-nginx a zapne služby `mtc-web`, `mtc-worker`, `mtc-syslog`; sám se vypne. Webová část průvodce běží
+Průvodce se zeptá i na zemi (regulace Wi-Fi), časovou zónu a NTP, založí superadmina (MFA při prvním
+přihlášení), první firmu a lokalitu, zapíše konfiguraci, nginx, zapne služby `mtc-web`, `mtc-worker`,
+`mtc-syslog` a denní zálohy a udělá první zálohu. Na konci ukáže **záchranné údaje** – hlavně heslo
+záloh; ulož si je (stáhnout / vytisknout). Databáze žádná hesla nemá (jen lokální peer přihlášení).
+Místo nové instalace jde zvolit **Obnovit ze zálohy** (soubor `.mtcbak` + heslo záloh).
+
+Zálohy: `/var/backups/mtcontroller`, denně, 14 posledních; ručně `sudo mtc-admin backup` nebo v UI
+Systém → Zálohy. Zkopíruj je i mimo server. Heslo záloh znovu: `sudo mtc-admin recovery-kit`. Webová část průvodce běží
 neprivilegovaně, nastavení systému provádí root služba `mtc-setup-apply` a požadavek ověřuje znovu.
 
 Aktualizace: `sudo apt install ./mtcontroller_<novější>_all.deb` (migrace a restart služeb).

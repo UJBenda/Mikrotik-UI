@@ -20,7 +20,7 @@ import json
 import re
 from typing import Any
 
-from . import channels
+from . import channels, regional
 from .routeros import q
 
 TOKEN_RE = re.compile(r"MTCPSK([0-9a-f]{32})")
@@ -139,7 +139,7 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
         blockers.append("žádná zapnutá Wi-Fi síť (SSID)")
     plan = channels.plan(site_radio_list, max_width=int(policy.get("max_width") or 80), dfs=bool(policy.get("dfs", True)))
     by_radio = {(i["device_id"], i["interface"]): i for i in plan["items"]}
-    country = policy.get("country") or "Czech Republic"
+    country = policy.get("country") or regional.country()
     lines = [
         "# Wi-Fi lokality - objekty controlleru se nahradi cele",
         '/interface wifi provisioning remove [find comment="mtc"]',
