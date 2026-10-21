@@ -161,7 +161,7 @@ def create_adoption_token(db: Database, settings: Settings, tenant_id: Any, site
         audit(tx, "adoption_token.create", tenant_id=tenant_id, user_id=user_id,
               target=f"adoption_token:{row['id']}", after={"site_id": _s(site_id), "ttl_min": ttl}, ip=ip)
     base = f"https://{settings.web.checkin_host}"
-    opts = routeros.FetchOpts(settings.security.device_check_certificate)
+    opts = routeros.fetch_opts(settings)
     return AdoptionTokenOut(token, row["expires_at"], routeros.adopt_one_liner(base, token, opts))
 
 
@@ -644,7 +644,7 @@ def _upgrade_params(tx: Tx, device_id: Any, current: str, requested: str) -> dic
 
 
 def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: dict) -> str:
-    opts = routeros.FetchOpts(settings.security.device_check_certificate)
+    opts = routeros.fetch_opts(settings)
     key = get_secret(tx, box, dev["id"], "checkin_key") or ""
     ack_url = f"https://{settings.web.checkin_host}/api/checkin/ack?id={cmd['id']}"
     kind = cmd["kind"]
@@ -1016,7 +1016,7 @@ def kick(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, devic
                     return
                 key = get_secret(tx, box, device_id, "checkin_key") or ""
                 api = device_api(tx, box, d, timeout=5.0)
-            opts = routeros.FetchOpts(settings.security.device_check_certificate)
+            opts = routeros.fetch_opts(settings)
             src = routeros.checkin_source(f"https://{settings.web.checkin_host}/api/checkin", key, opts, cmd_file=KICK_FILE)
             api.request("POST", "/execute", {"script": src})
             log.info("kick %s: check-in vyvolán", device_id)

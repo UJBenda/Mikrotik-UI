@@ -52,6 +52,7 @@ def _balanced(script: str) -> bool:
 
 
 OPTS = FetchOpts("yes-without-crl")
+OPTS_CA = FetchOpts("yes-without-crl", "http://c.example/mtc-ca.crt", "ab" * 32)
 P = ProvisionParams("10.200.0.1", "vpn1.example.cz", "mtc-HG409", "pw-sstp_123", "pw-api-456")
 PL = ProvisionParams("192.168.88.10", "", "mtc-HG409", "", "pw-api-456", local=True)
 
@@ -66,6 +67,8 @@ def test_all_scripts_are_balanced():
         routeros.wrap_command("https://c.example/api/checkin/ack?id=7", "KEY", "", OPTS, tail=routeros.DEPROVISION_TAIL),
         routeros.error_script("token neplatny"),
         routeros.checkin_source("https://c.example/api/checkin", "KEY", OPTS),
+        "{\n" + routeros.trust_ca_body(OPTS_CA) + "}\n",
+        routeros.adopt_one_liner("https://c.example", "T", OPTS_CA),
     ]
     for s in scripts:
         assert _balanced(s), s

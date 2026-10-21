@@ -1,0 +1,9 @@
+[Unit]
+Description=MikroTik Controller – čeká na požadavek průvodce prvního spuštění
+
+[Path]
+PathExists=/var/lib/mtcontroller/setup/request.json
+Unit=mtc-setup-apply.service
+
+[Install]
+WantedBy=multi-user.target

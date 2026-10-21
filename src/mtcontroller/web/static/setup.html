@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MikroTik Controller – první spuštění</title>
+<link rel="stylesheet" href="/setup/static/style.css">
+<script src="/setup/static/setup.js" defer></script>
+</head>
+<body>
+<header><h1><span class="logo" aria-hidden="true"></span>MikroTik Controller – první spuštění</h1></header>
+<div class="setup">
+  <section id="s-code" class="card">
+    <h2>1. Kód průvodce</h2>
+    <p class="muted">Vypsala ho instalace balíčku. Znovu ho zobrazíš na serveru: <code>sudo mtc-admin setup-code</code></p>
+    <form id="code-form" class="inline">
+      <input name="code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" required size="18">
+      <button>Pokračovat</button>
+    </form>
+  </section>
+
+  <form id="setup-form" hidden>
+    <section class="card">
+      <h2>2. Režim</h2>
+      <label class="choice"><input type="radio" name="mode" value="local" checked>
+        <span><b>Lokální controller</b> – server je ve stejné síti jako MikroTiky (Raspberry Pi, mini PC, VM).
+        Správa přímo v LAN, bez tunelů. Stačí IP adresa.</span></label>
+      <label class="choice"><input type="radio" name="mode" value="remote">
+        <span><b>Centrální vzdálená správa</b> – server pro víc firem a lokalit, zařízení se připojují tunelem
+        (SSTP) přes koncentrátor. Potřebuje dvě DNS jména a koncentrátor.</span></label>
+    </section>
+
+    <section class="card">
+      <h2>3. Síť</h2>
+      <label>IP adresa tohoto serveru (z ní jde správa zařízení) <input name="controller_ip" required></label>
+      <div data-mode="local">
+        <label>Adresa controlleru (IP nebo jméno v LAN) <input name="host"></label>
+      </div>
+      <div data-mode="remote" hidden>
+        <label>Hostname administrace <input name="ui_host" placeholder="mtc-admin.firma.cz"></label>
+        <label>Hostname check-inu (dostupný z internetu) <input name="checkin_host" placeholder="mtc-checkin.firma.cz"></label>
+      </div>
+      <label>Sítě, ze kterých jde do administrace (CIDR, čárkou) <input name="admin_nets" required></label>
+      <fieldset>
+        <legend>Certifikát</legend>
+        <label class="choice"><input type="radio" name="certs" value="own_ca" checked>
+          <span>Vlastní certifikační autorita controlleru – zařízení si ji stáhnou a ověří otiskem
+          (prohlížeč jednou upozorní, CA si můžeš importovat z <code>/mtc-ca.crt</code>).</span></label>
+        <label class="choice"><input type="radio" name="certs" value="letsencrypt">
+          <span>Let's Encrypt – jen s veřejnými DNS jmény a otevřeným portem 80.</span></label>
+        <label data-le hidden>E-mail pro Let's Encrypt <input name="acme_email" type="email"></label>
+      </fieldset>
+    </section>
+
+    <section class="card">
+      <h2>4. Administrátor a první lokalita</h2>
+      <label>E-mail <input name="email" type="email" autocomplete="username" required></label>
+      <label>Heslo (min. 12 znaků) <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+      <label>Heslo znovu <input name="password2" type="password" autocomplete="new-password" minlength="12" required></label>
+      <label>Firma <input name="tenant" placeholder="např. Domácnost / Firma s.r.o."></label>
+      <label>Lokalita <input name="site" placeholder="např. Kancelář"></label>
+      <p class="muted">Ověření ve dvou krocích (MFA) se nastaví při prvním přihlášení.</p>
+    </section>
+
+    <div class="row"><button id="go">Nastavit controller</button></div>
+  </form>
+
+  <section id="s-progress" class="card" hidden>
+    <h2>Nastavuji…</h2>
+    <p id="progress">Čekám na službu.</p>
+  </section>
+  <p id="msg" role="status"></p>
+</div>
+</body>
+</html>

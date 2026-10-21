@@ -14,6 +14,8 @@
   notify-test NAME              pošle zkušební notifikaci na cíl z [[notify]]
   doctor                        zkontroluje instalaci (konfigurace, DB, síť, koncentrátory)
   device-check TENANT DEVICE    diagnostika REST přes tunel (identita, otisk, porty, aktualizace)
+  setup-code                    vypíše kód webového průvodce prvního spuštění (root)
+  setup-apply                   provede nastavení z průvodce (root; spouští mtc-setup-apply.path)
 """
 
 from __future__ import annotations
@@ -240,6 +242,23 @@ def cmd_notify_test(a) -> int:
     return 0
 
 
+def cmd_setup_code(a) -> int:
+    from . import firstrun
+    try:
+        print(firstrun.CODE_FILE.read_text().strip())
+    except OSError:
+        raise SystemExit("průvodce neběží (controller je nastavený, nebo spusť jako root)")
+    return 0
+
+
+def cmd_setup_apply(a) -> int:
+    import logging
+
+    from . import firstrun
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    return firstrun.apply_request()
+
+
 def cmd_doctor(a) -> int:
     from . import doctor
     from .db import PsycopgDatabase
@@ -270,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("concentrator-check").set_defaults(fn=cmd_concentrator_check)
     x = sub.add_parser("notify-test"); x.add_argument("name"); x.set_defaults(fn=cmd_notify_test)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
+    sub.add_parser("setup-code").set_defaults(fn=cmd_setup_code)
+    sub.add_parser("setup-apply").set_defaults(fn=cmd_setup_apply)
     x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")
     x.set_defaults(fn=cmd_device_check)
     a = p.parse_args(argv)

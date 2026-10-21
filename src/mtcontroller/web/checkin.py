@@ -24,7 +24,7 @@ MAX_BODY = 16384
 
 
 def _opts(state) -> routeros.FetchOpts:
-    return routeros.FetchOpts(state.settings.security.device_check_certificate)
+    return routeros.fetch_opts(state.settings)
 
 
 def _base(state) -> str:

@@ -1,0 +1,12 @@
+Package: mtcontroller
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: all
+Maintainer: MikroTik Controller <root@localhost>
+Depends: python3 (>= 3.11), python3-starlette, python3-uvicorn, python3-psycopg, python3-pydantic, python3-cryptography, postgresql, nginx, openssl, ca-certificates, adduser, iproute2
+Recommends: ieee-data, certbot
+Description: správa MikroTik RouterOS v7 (lokálně nebo vzdáleně přes tunely)
+ Controller pro MikroTik RouterOS v7 ve stylu UniFi: adopce, přehled zařízení a klientů,
+ VLAN, Wi-Fi (CAPsMAN), firewall, zálohy a aktualizace. Po instalaci se nastaví ve webovém
+ průvodci: lokální controller v LAN, nebo centrální vzdálená správa přes SSTP koncentrátory.

@@ -1,6 +1,31 @@
 # Instalace na Debian 13
 
-Instalace i aktualizace se dělá skriptem `deploy/install.sh`. Používá jen
+## Balíček .deb a webový průvodce (doporučeno)
+
+```sh
+packaging/build-deb.sh            # → dist/mtcontroller_<verze>_all.deb (na libovolném stroji s dpkg-deb)
+sudo apt install ./mtcontroller_<verze>_all.deb
+```
+
+Instalace doinstaluje závislosti z Debianu, založí databázi, master klíč a pustí migrace.
+Na konci vypíše adresu `https://<IP serveru>/` a **kód průvodce** (znovu: `sudo mtc-admin setup-code`).
+V prohlížeči se zvolí režim:
+
+- **Lokální controller** – Raspberry Pi / mini PC / VM ve stejné síti jako MikroTiky. Stačí IP adresa,
+  bez DNS a bez koncentrátoru. Certifikát vydá vlastní CA controlleru; zařízení si ji při adopci
+  stáhnou z `http://<adresa>/mtc-ca.crt` a ponechají jen při shodě otisku vloženého do příkazu.
+- **Centrální vzdálená správa** – dvě DNS jména (admin, check-in), Let's Encrypt nebo vlastní CA;
+  koncentrátory se doplní do `/etc/mtcontroller/config.toml` jako dřív.
+
+Průvodce založí superadmina (MFA při prvním přihlášení), první firmu a lokalitu, zapíše konfiguraci,
+nginx a zapne služby `mtc-web`, `mtc-worker`, `mtc-syslog`; sám se vypne. Webová část průvodce běží
+neprivilegovaně, nastavení systému provádí root služba `mtc-setup-apply` a požadavek ověřuje znovu.
+
+Aktualizace: `sudo apt install ./mtcontroller_<novější>_all.deb` (migrace a restart služeb).
+
+## Skript deploy/install.sh
+
+Instalace i aktualizace z gitu se dělá skriptem `deploy/install.sh`. Používá jen
 balíčky z Debianu (žádné PyPI) a dá se spouštět opakovaně.
 
 ```sh

@@ -1330,7 +1330,7 @@ async def device_activity(request: Request, p: Principal, tid: str) -> Response:
 def _defaults_view(st, key: str) -> dict:
     from .. import defaults, routeros
 
-    opts = routeros.FetchOpts(st.settings.security.device_check_certificate)
+    opts = routeros.fetch_opts(st.settings)
     base = f"https://{st.settings.web.checkin_host}"
     return {
         "roles": [{"role": r, "label": label, "device_role": defaults.DEVICE_ROLE[r],
@@ -1362,7 +1362,7 @@ async def site_default_file(request: Request, p: Principal, tid: str) -> Respons
     if role not in defaults.ROLES:
         raise NotFound("neznámá role")
     key = await run_in_threadpool(site_enroll_key, st.db, st.box, tid, sid, False, p.user_id, client_ip(request))
-    opts = routeros.FetchOpts(st.settings.security.device_check_certificate)
+    opts = routeros.fetch_opts(st.settings)
     body = defaults.script(role, f"https://{st.settings.web.checkin_host}/enroll/{key}?role={role}", opts)
     return Response(body, media_type="text/plain; charset=us-ascii",
                     headers={"Content-Disposition": f'attachment; filename="mtc-default-{role}.rsc"'})

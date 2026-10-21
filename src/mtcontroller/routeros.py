@@ -78,10 +78,72 @@ def q_source(source: str) -> str:
 @dataclass(frozen=True)
 class FetchOpts:
     check_certificate: str = "yes-without-crl"
+    # vlastní CA controlleru (lokální režim bez veřejného certifikátu): zařízení si ji stáhne
+    # přes HTTP a ponechá jen tehdy, když sedí otisk SHA-256 vložený do skriptu
+    ca_url: str = ""
+    ca_fp: str = ""
 
     @property
     def verify_sstp(self) -> str:
         return "no" if self.check_certificate == "no" else "yes"
+
+
+_CA_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def ca_fingerprint(path) -> str:
+    """SHA-256 otisk (DER) certifikátu v PEM – stejný formát jako `fingerprint` v RouterOS."""
+    import base64
+    import hashlib
+    import os
+
+    key = str(path)
+    mtime = os.stat(key).st_mtime
+    hit = _CA_CACHE.get(key)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    pem = open(key, encoding="ascii").read()
+    m = re.search(r"-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----", pem, re.S)
+    if not m:
+        raise ValueError(f"{key}: chybí certifikát v PEM")
+    fp = hashlib.sha256(base64.b64decode("".join(m.group(1).split()))).hexdigest()
+    _CA_CACHE[key] = (mtime, fp)
+    return fp
+
+
+def fetch_opts(settings) -> FetchOpts:
+    """Volby pro /tool fetch na zařízení podle konfigurace (ověřování, vlastní CA)."""
+    cc = settings.security.device_check_certificate
+    ca = settings.security.device_ca_file
+    if not ca or cc == "no":
+        return FetchOpts(cc)
+    return FetchOpts(cc, f"http://{settings.web.checkin_host}/mtc-ca.crt", ca_fingerprint(ca))
+
+
+def trust_ca_body(opts: FetchOpts) -> str:
+    """Doinstaluje CA controlleru, pokud na zařízení chybí. Stahuje se přes HTTP, proto se
+    ověří otisk; cokoli jiného, co import přidal, se hned smaže."""
+    if not opts.ca_url:
+        return ""
+    if not re.fullmatch(r"[0-9a-f]{64}", opts.ca_fp):
+        raise ValueError("ca_fp musí být SHA-256 hex")
+    return f""":if ([:len [/certificate find fingerprint={q(opts.ca_fp)}]] = 0) do={{
+  :local before [/certificate find]
+  :do {{
+    /tool fetch url={q(opts.ca_url)} dst-path="mtc-ca.crt"
+    :delay 1s
+    /certificate import file-name="mtc-ca.crt" passphrase=""
+  }} on-error={{ :log warning "mtc: CA controlleru nejde stahnout" }}
+  /file remove [find name="mtc-ca.crt"]
+  :foreach c in=[/certificate find] do={{
+    :if ([:len [:find $before $c]] = 0 && [/certificate get $c fingerprint] != {q(opts.ca_fp)}) do={{
+      /certificate remove $c
+      :log error "mtc: stazena CA nesouhlasi s otiskem - odstranena"
+    }}
+  }}
+  :do {{ /certificate set [find fingerprint={q(opts.ca_fp)}] trusted=yes }} on-error={{}}
+}}
+"""
 
 
 # --- adopce ------------------------------------------------------------------
@@ -90,9 +152,25 @@ class FetchOpts:
 def adopt_one_liner(base_url: str, token: str, opts: FetchOpts) -> str:
     """Řádek, který technik vloží do terminálu MikroTiku."""
     url = f"{base_url}/adopt/{token}"
-    return (f"/tool fetch url={q(url)} dst-path=\"mtc-adopt.rsc\" "
+    line = (f"/tool fetch url={q(url)} dst-path=\"mtc-adopt.rsc\" "
             f"check-certificate={opts.check_certificate}; :delay 2s; "
             f"/import file-name=\"mtc-adopt.rsc\"")
+    if not opts.ca_url:
+        return line
+    return "{ " + _one_line(trust_ca_body(opts)) + " " + line + " }"
+
+
+def _one_line(script: str) -> str:
+    """Víceřádkový skript na jeden řádek pro vložení do terminálu (konce řádků → `;`)."""
+    out = []
+    for ln in script.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        if out and not out[-1].endswith("{") and not ln.startswith("}"):
+            out[-1] += ";"
+        out.append(ln)
+    return " ".join(out)
 
 
 def adopt_stage1(register_url: str, opts: FetchOpts, role: str | None = None) -> str:

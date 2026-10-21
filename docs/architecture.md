@@ -871,15 +871,22 @@ Lokální režim (implementováno):
 - Převzetí resetem potvrzuje ozvání bootstrapu (`tk`) bez podmínky běžícího tunelu.
 - UI: `/api/admin/me` vrací `mode`; v lokálním režimu „IP správy“ místo „Tunel“.
 
-### Instalace jedním balíčkem a průvodce (plán)
+### Instalace jedním balíčkem a průvodce (implementováno, `firstrun.py`, `packaging/`)
 
 Balíček `mtcontroller_<verze>_all.deb` (závislosti jen z Debianu 13: python3-starlette, -uvicorn,
 -psycopg, -pydantic, -cryptography, postgresql, nginx). `postinst` založí uživatele, databázi a role,
-pustí migrace, vygeneruje hlavní klíč a self-signed certifikát a spustí jen webovou službu
-v **režimu průvodce** (`/setup`, přístup jednorázovým kódem vypsaným do konzole/journalu).
-Průvodce: volba režimu (lokální / centrální), adresa controlleru, hostnamy, první administrátor + MFA,
-první firma a lokalita; zapíše `config.toml` a zapne `mtc-worker` a `mtc-syslog`. Pro lokální režim
-stačí IP adresa (bez DNS), certifikát controlleru se zařízením nahraje do důvěryhodných při adopci.
+pustí migrace, vygeneruje hlavní klíč a dočasný certifikát a spustí jen **průvodce** (`mtc-setup`,
+uživatel `mtcontroller`, přístup jednorázovým kódem z `/etc/mtcontroller/setup-code`, omezení pokusů).
+Průvodce: volba režimu (lokální / centrální), adresa controlleru, hostnamy, sítě správy, certifikát,
+první superadmin (MFA při přihlášení), firma a lokalita. Privilegované kroky dělá root
+`mtc-setup-apply` (spouští ho `.path` jednotka nad `setup/request.json`): požadavek znovu ověří
+(`SetupPlan`), zapíše `config.toml`, certifikáty, nginx a přepne služby; průvodce se vypne.
+
+Vlastní CA (`security.device_ca_file`): RSA 2048, klíč jen root v `/etc/ssl/mtc`, veřejná kopie pro
+nginx v `/etc/ssl/mtc-public`. Skripty pro zařízení (`routeros.trust_ca_body`) – adopční one-liner,
+ohlášení výchozí konfigurace, bootstrap převzetí – CA stáhnou přes HTTP, a pokud otisk SHA-256
+nesedí s hodnotou ve skriptu, vše nově importované smažou. Ověřování TLS na zařízení tak zůstává
+zapnuté (`yes-without-crl`) i bez veřejné CA.
 
 ### Napojení lokálního controlleru na centrální (uplink, návrh)
 

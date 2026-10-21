@@ -1,0 +1,69 @@
+#!/bin/sh
+# Instalace / aktualizace balíčku. První instalace spustí webového průvodce (mtc-setup);
+# aktualizace jen pustí migrace a restartuje služby.
+set -e
+
+ETC=/etc/mtcontroller
+DATA=/var/lib/mtcontroller
+MTC_ADMIN=/usr/sbin/mtc-admin
+. /usr/share/mtcontroller/common.sh
+
+case "$1" in
+  configure) ;;
+  *) exit 0 ;;
+esac
+
+mtc_user_dirs
+install -d -o mtcontroller -g mtcontroller -m 0750 "$DATA/setup"
+mtc_master_key
+# PostgreSQL po čerstvé instalaci teprve startuje
+systemctl start postgresql >/dev/null 2>&1 || true
+mtc_postgres
+"$MTC_ADMIN" migrate
+mtc_sysctl
+systemctl daemon-reload
+
+if [ -f "$ETC/config.toml" ]; then
+  # aktualizace nastaveného controlleru
+  systemctl enable mtc-web mtc-worker mtc-syslog >/dev/null
+  systemctl restart mtc-web mtc-worker mtc-syslog
+  systemctl reload nginx 2>/dev/null || true
+  exit 0
+fi
+
+# --- první spuštění: průvodce -----------------------------------------------------------
+if [ ! -f "$ETC/setup-code" ]; then
+  (umask 027; python3 -c 'import sys; sys.path.insert(0, "/opt/mtcontroller/app"); from mtcontroller.firstrun import new_code; print(new_code())' > "$ETC/setup-code")
+fi
+chown root:mtcontroller "$ETC/setup-code"
+chmod 0640 "$ETC/setup-code"
+
+install -d -m 0750 /etc/ssl/mtc
+if [ ! -f /etc/ssl/mtc/setup.crt ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=mtcontroller-setup" \
+    -keyout /etc/ssl/mtc/setup.key -out /etc/ssl/mtc/setup.crt 2>/dev/null
+  chmod 0600 /etc/ssl/mtc/setup.key
+fi
+install -m 0644 /usr/share/mtcontroller/nginx/mtcontroller-setup.conf /etc/nginx/sites-available/mtcontroller-setup.conf
+ln -sfn /etc/nginx/sites-available/mtcontroller-setup.conf /etc/nginx/sites-enabled/mtcontroller-setup.conf
+rm -f /etc/nginx/sites-enabled/default
+install -d -m 0755 /var/www/html
+nginx -t >/dev/null 2>&1 && (systemctl reload nginx 2>/dev/null || systemctl restart nginx) || \
+  echo "!! nginx -t selhal – zkontroluj /etc/nginx/sites-enabled" >&2
+
+systemctl enable --now mtc-setup.service mtc-setup-apply.path >/dev/null
+
+IP=$(ip -4 route get 192.0.2.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+cat <<MSG
+
+==================================================================
+ MikroTik Controller je nainstalovaný. Dokonči nastavení v prohlížeči:
+
+     https://${IP:-<IP serveru>}/
+
+ Kód průvodce:  $(cat "$ETC/setup-code")
+ (znovu ho vypíše: sudo mtc-admin setup-code)
+==================================================================
+
+MSG
+exit 0

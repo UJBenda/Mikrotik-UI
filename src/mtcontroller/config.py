@@ -54,6 +54,9 @@ class SecurityConfig(BaseModel):
     adoption_token_ttl_minutes: int = Field(default=60, ge=5, le=24 * 60)
     # RouterOS fetch: "yes-without-crl" (doporučeno), "yes", nebo "no" jen pro laboratoř
     device_check_certificate: str = "yes-without-crl"
+    # vlastní CA controlleru (lokální režim / bez Let's Encrypt): PEM, který si zařízení stáhne
+    # z http://<checkin_host>/mtc-ca.crt a ponechá jen při shodě otisku; prázdné = veřejná CA
+    device_ca_file: Path | None = None
     # moduly, jejichž plány musí schválit jiný uživatel než autor
     four_eyes_modules: list[str] = Field(default_factory=lambda: ["vlan", "firewall"])
 

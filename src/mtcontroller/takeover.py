@@ -297,10 +297,11 @@ def _bootstrap(settings: Settings, model: dict, sstp_pw: str, api_pw: str, key: 
                command_id: int, *, serial: str = "SERIAL", preview: bool = False) -> str:
     from .services import mgmt_params
 
-    opts = routeros.FetchOpts(settings.security.device_check_certificate)
+    opts = routeros.fetch_opts(settings)
     adopt = routeros.provision_body(mgmt_params(settings, serial, None, sstp_pw, api_pw), opts)
     u = _urls(settings, command_id)
-    install = routeros.checkin_install(u["checkin"], key, opts)
+    # po resetu zařízení nemá CA controlleru (lokální režim) – doinstalovat před check-inem
+    install = routeros.trust_ca_body(opts) + routeros.checkin_install(u["checkin"], key, opts)
     if preview:
         # v náhledu (DB, UI) bez tajemství a bez dlouhých vložených skriptů
         adopt = "# sprava controllerem: SSTP tunel, ucet mtc-ctl, certifikat REST, firewall mtc (jako pri adopci)"
@@ -312,7 +313,7 @@ def _bootstrap(settings: Settings, model: dict, sstp_pw: str, api_pw: str, key: 
 
 def render_takeover(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: dict, ack_url: str, key: str) -> str:
     """Příkaz před resetem: záloha + stažení bootstrapu; reset až po ack (tail)."""
-    opts = routeros.FetchOpts(settings.security.device_check_certificate)
+    opts = routeros.fetch_opts(settings)
     u = _urls(settings, cmd["id"])
     body = switchcfg.takeover_body(u["bootstrap"], "Authorization: Bearer " + key, opts.check_certificate,
                                    get_secret(tx, box, dev["id"], "takeover_backup") or "")

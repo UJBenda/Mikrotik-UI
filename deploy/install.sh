@@ -42,9 +42,9 @@ apt-get install -y -q python3 python3-starlette python3-uvicorn python3-psycopg 
 python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python >= 3.11"'
 
 say "Uživatel a adresáře"
-id mtcontroller >/dev/null 2>&1 || adduser --system --group --home "$DATA" --no-create-home mtcontroller
-install -d -o root -g mtcontroller -m 0750 "$ETC"
-install -d -o mtcontroller -g mtcontroller -m 0700 "$DATA"
+MTC_ADMIN=/usr/local/sbin/mtc-admin
+. "$SRC/deploy/common.sh"
+mtc_user_dirs
 install -d -o root -g root -m 0755 /opt/mtcontroller
 
 say "Aplikace → $APP"
@@ -79,58 +79,26 @@ if [ ! -f "$ETC/config.toml" ]; then
 else
   echo "$ETC/config.toml existuje, beze změn"
 fi
-if [ ! -f "$ETC/master.key" ]; then
-  umask 027
-  mtc-admin gen-master-key > "$ETC/master.key"
-  echo "vytvořen master klíč $ETC/master.key – ZÁLOHUJ HO OFFLINE"
-fi
+mtc_master_key
 for f in vpn1 vpn2; do
   if [ ! -f "$ETC/$f.password" ]; then
     umask 027
     python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > "$ETC/$f.password"
   fi
 done
-chown root:mtcontroller "$ETC"/config.toml "$ETC"/master.key "$ETC"/*.password
-chmod 0640 "$ETC"/config.toml "$ETC"/master.key "$ETC"/*.password
+chown root:mtcontroller "$ETC"/config.toml "$ETC"/*.password
+chmod 0640 "$ETC"/config.toml "$ETC"/*.password
 
 say "PostgreSQL"
-PGVER=$(ls /etc/postgresql | sort -V | tail -1)
-PGETC=/etc/postgresql/$PGVER/main
-runuser -u postgres -- psql -qX -v ON_ERROR_STOP=1 <<'EOF'
-SELECT 'CREATE ROLE mtc_owner LOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mtc_owner') \gexec
-SELECT 'CREATE ROLE mtc_app LOGIN NOBYPASSRLS' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mtc_app') \gexec
-SELECT 'CREATE DATABASE mtcontroller OWNER mtc_owner' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mtcontroller') \gexec
-EOF
-runuser -u postgres -- psql -qX -d mtcontroller -c 'REVOKE ALL ON SCHEMA public FROM PUBLIC' -c 'ALTER SCHEMA public OWNER TO mtc_owner'
-# MikroTik controller: služba -> mtc_app; root -> mtc_owner (migrace) i mtc_app
-# (ostatní příkazy mtc-admin běží rolí aplikace, tedy s RLS)
-grep -q 'MikroTik controller' "$PGETC/pg_ident.conf" || \
-  echo '# MikroTik controller: sluzba -> mtc_app, root -> mtc_owner (migrace) a mtc_app (mtc-admin)' >> "$PGETC/pg_ident.conf"
-for m in "mtcontroller mtc_app" "root mtc_owner" "root mtc_app"; do
-  set -- $m
-  grep -Eq "^mtc[[:space:]]+$1[[:space:]]+$2[[:space:]]*\$" "$PGETC/pg_ident.conf" || \
-    printf 'mtc   %-14s %s\n' "$1" "$2" >> "$PGETC/pg_ident.conf"
-done
-if ! grep -q 'map=mtc' "$PGETC/pg_hba.conf"; then
-  sed -i '0,/^local/s//local   mtcontroller   mtc_app,mtc_owner   peer map=mtc\n&/' "$PGETC/pg_hba.conf"
-fi
-systemctl reload postgresql
+mtc_postgres
 
 say "Migrace"
 mtc-admin migrate
 
 say "systemd"
 install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" "$SRC/deploy/systemd/mtc-syslog.service" /etc/systemd/system/
-# ICMP redirecty: koncentrátor je pošle, když tunel zařízení zrovna neběží – kernel by si pak
-# cachoval routu na pool přes výchozí bránu a správa do tunelu by přestala chodit
 say "sysctl (ignorovat ICMP redirecty)"
-cat > /etc/sysctl.d/99-mtcontroller.conf <<'EOF2'
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.default.accept_redirects = 0
-net.ipv4.conf.all.secure_redirects = 0
-EOF2
-sysctl -q --system >/dev/null 2>&1 || true
-ip route flush cache 2>/dev/null || true
+mtc_sysctl
 
 # routy na zařízení přes aktivní koncentrátor (tunnel.manage_routes) potřebují CAP_NET_ADMIN
 if grep -Eq '^[[:space:]]*manage_routes[[:space:]]*=[[:space:]]*true' "$ETC/config.toml"; then

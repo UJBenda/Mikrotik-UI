@@ -1,0 +1,17 @@
+#!/bin/sh
+# purge: konfigurace a nginx pryč; databáze a data zůstávají (smazat ručně, viz docs/install.md)
+set -e
+case "$1" in
+  remove)
+    rm -f /etc/nginx/sites-enabled/mtcontroller.conf /etc/nginx/sites-enabled/mtcontroller-setup.conf
+    systemctl reload nginx >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    ;;
+  purge)
+    rm -f /etc/nginx/sites-enabled/mtcontroller.conf /etc/nginx/sites-enabled/mtcontroller-setup.conf \
+          /etc/nginx/sites-available/mtcontroller.conf /etc/nginx/sites-available/mtcontroller-setup.conf
+    rm -f /etc/mtcontroller/setup-code /etc/sysctl.d/99-mtcontroller.conf
+    echo "Konfigurace /etc/mtcontroller (master.key!), data /var/lib/mtcontroller a databáze mtcontroller zůstaly." >&2
+    ;;
+esac
+exit 0

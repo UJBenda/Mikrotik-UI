@@ -741,3 +741,9 @@ table.deploy pre{margin:0;max-width:640px;white-space:pre-wrap;word-break:break-
 .pbar i { display: block; height: 100%; } .pbar.ok i { background: var(--ok); } .pbar.warn i { background: var(--warn); } .pbar.bad i { background: var(--bad); }
 #infra-svg .hub .card { fill: var(--bg); stroke: var(--muted); stroke-dasharray: 6 4; }
 #infra-svg .hub .c { text-anchor: middle; } #infra-svg .hub .title { fill: var(--muted); }
+/* průvodce prvního spuštění */
+.setup { max-width: 720px; margin: 24px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
+.setup label { display: block; margin: 8px 0; }
+.setup label input:not([type=radio]) { display: block; width: 100%; margin-top: 3px; }
+.setup .choice { display: flex; gap: 8px; align-items: flex-start; }
+.setup fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0 0; }

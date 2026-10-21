@@ -1,0 +1,11 @@
+[Unit]
+Description=MikroTik Controller – aplikace nastavení z průvodce (root)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+# root: zapisuje /etc/mtcontroller, certifikáty, nginx a přepíná služby; požadavek znovu ověřuje
+Environment=PYTHONPATH=/opt/mtcontroller/app
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m mtcontroller.cli setup-apply
+TimeoutStartSec=10min

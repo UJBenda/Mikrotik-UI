@@ -22,7 +22,7 @@ sériovém čísle – jeden soubor pro všechny kusy dané role a lokality.
 from __future__ import annotations
 
 from . import fwmatrix
-from .routeros import SCRIPT_POLICY, FetchOpts, q, q_source
+from .routeros import SCRIPT_POLICY, FetchOpts, _one_line, q, q_source, trust_ca_body
 
 ROLES = {
     "switch": "switch",
@@ -37,6 +37,10 @@ MARK = "mtc-default:"
 LAN_ADDR, LAN_NET, LAN_POOL = "192.168.88.1/24", "192.168.88.0/24", "192.168.88.10-192.168.88.254"
 
 
+def _indent(block: str) -> str:
+    return "".join("  " + ln + "\n" for ln in block.splitlines())
+
+
 def enroll_source(enroll_url: str, opts: FetchOpts) -> str:
     """Zdroj skriptu mtc-enroll: dokud zařízení nemá check-in, zkouší se ohlásit."""
     return f""":if ([:len [/system script find name="mtc-checkin"]] > 0) do={{
@@ -44,7 +48,7 @@ def enroll_source(enroll_url: str, opts: FetchOpts) -> str:
   /system script remove [find name="mtc-enroll"]
 }} else={{
   /file remove [find name="mtc-enroll.rsc"]
-  :do {{
+{_indent(trust_ca_body(opts))}  :do {{
     /tool fetch url={q(enroll_url)} dst-path="mtc-enroll.rsc" check-certificate={opts.check_certificate}
     :delay 1s
     /import file-name="mtc-enroll.rsc"
@@ -126,7 +130,8 @@ def script(role: str, enroll_url: str, opts: FetchOpts, *, ntp: list[str] | None
 def one_liner(default_url: str, opts: FetchOpts) -> str:
     """Pro běžící zařízení: stáhnout výchozí konfiguraci a resetovat na ni (smaže stávající konfiguraci)."""
     # starší zařízení mají trvalé soubory jen ve flash/ (jinde jsou v RAM a reset by je smazal)
-    return ('{ :local p ""; :if ([:len [/file find name="flash" type="directory"]] > 0) do={ :set p "flash/" }; '
+    trust = _one_line(trust_ca_body(opts)) + " " if opts.ca_url else ""
+    return ('{ ' + trust + ':local p ""; :if ([:len [/file find name="flash" type="directory"]] > 0) do={ :set p "flash/" }; '
             f'/tool fetch url={q(default_url)} dst-path=($p . "mtc-default.rsc") check-certificate={opts.check_certificate}; '
             ':delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no '
             'run-after-reset=($p . "mtc-default.rsc") }')
