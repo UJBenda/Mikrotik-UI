@@ -73,7 +73,13 @@ def drop_db(name: str) -> None:
     su.close()
 
 
-def make_settings(tmp: Path, concentrators: int = 1) -> Settings:
+def make_settings(tmp: Path, concentrators: int = 1, local: bool = False) -> Settings:
+    if local:
+        # lokální režim: controller v LAN, bez koncentrátorů
+        return Settings.model_validate({
+            "web": {"ui_host": "admin.test", "checkin_host": "checkin.test"},
+            "tunnel": {"provider": "none", "controller_ip": "192.168.88.10"},
+        })
     concs = []
     for i in range(1, concentrators + 1):
         pw = tmp / f"vpn{i}.password"

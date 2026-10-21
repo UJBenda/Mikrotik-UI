@@ -192,3 +192,14 @@ def test_bwtest_failure_still_cleans_up():
     finally:
         bwtest.device_api = orig
         drop_db(name)
+
+
+def test_render_local_mode_targets_controller(tmp_path):
+    """Lokální režim: syslog rovnou na adresu controlleru (bez koncentrátoru)."""
+    from helpers import make_settings
+
+    cmd = {"params": {"level": "errors"}}
+    loc = devlog.render(make_settings(tmp_path, local=True), cmd, {"tunnel_ip": "192.168.88.2"})
+    assert "remote=192.168.88.10 " in loc and "src-address=192.168.88.2" in loc
+    tun = devlog.render(make_settings(tmp_path), cmd, {"tunnel_ip": "10.200.1.2"})
+    assert "remote=10.200.0.1 " in tun

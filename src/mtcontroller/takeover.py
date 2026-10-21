@@ -295,14 +295,10 @@ def _urls(settings: Settings, command_id: int) -> dict:
 
 def _bootstrap(settings: Settings, model: dict, sstp_pw: str, api_pw: str, key: str, backup_pw: str,
                command_id: int, *, serial: str = "SERIAL", preview: bool = False) -> str:
-    from . import ipam
-    from .services import _concentrator, sstp_username
+    from .services import mgmt_params
 
     opts = routeros.FetchOpts(settings.security.device_check_certificate)
-    conc = _concentrator(settings, None)
-    adopt = routeros.provision_body(routeros.ProvisionParams(
-        mgmt_source=str(ipam.concentrator_address(settings.tunnel.pool)), connect_host=conc.connect_host,
-        sstp_user=sstp_username(serial), sstp_password=sstp_pw, api_password=api_pw), opts)
+    adopt = routeros.provision_body(mgmt_params(settings, serial, None, sstp_pw, api_pw), opts)
     u = _urls(settings, command_id)
     install = routeros.checkin_install(u["checkin"], key, opts)
     if preview:

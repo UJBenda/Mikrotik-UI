@@ -17,12 +17,12 @@ from mtcontroller.worker import __main__ as worker
 PASSWORD = "velmi-tajne-heslo-123"
 
 
-def _setup(concentrators=1, provider_fail=False):
+def _setup(concentrators=1, provider_fail=False, local=False):
     db, name = fresh_db()
     tmp = Path(tempfile.mkdtemp())
-    settings = make_settings(tmp, concentrators)
+    settings = make_settings(tmp, concentrators, local=local)
     box = new_box()
-    providers = [FakeProvider(f"vpn{i}", provider_fail) for i in range(1, concentrators + 1)]
+    providers = [] if local else [FakeProvider(f"vpn{i}", provider_fail) for i in range(1, concentrators + 1)]
     app = create_app(AppState(settings, db, box, providers))
     from mtcontroller.web import admin as _admin
     _admin._attempts.clear()
@@ -298,5 +298,64 @@ def test_approve_survives_concentrator_outage():
         providers[0].fail = False
         worker.reconcile_tunnels(db, box, providers)
         assert "mtc-OUT1234" in providers[0].accounts
+    finally:
+        drop_db(name)
+
+
+def test_local_mode_manages_devices_directly():
+    """Lokální režim: žádné koncentrátory ani tunely, správa jde na adresu, ze které se zařízení hlásí."""
+    db, name, settings, box, providers, app = _setup(local=True)
+    try:
+        c = _login(app)
+        assert c.get("/api/admin/me").json()["mode"] == "local"
+        tid = c.post("/api/admin/tenants", json_body={"name": "Doma"}).json()["id"]
+        sid = c.post(f"/api/admin/tenants/{tid}/sites", json_body={"name": "Dům"}).json()["id"]
+        tok = c.post(f"/api/admin/tenants/{tid}/adoption-tokens", json_body={"site_id": sid}).json()["token"]
+        lan = AsgiClient(app, "checkin.test", client_ip="192.168.88.2")
+        r = lan.post(f"/adopt/{tok}/register", json_body={"serial": "LOC1234", "model": "hAP ax2", "version": "7.20", "mac": ""})
+        assert r.status_code == 200, r.text
+        key = re.search(r"Bearer ([A-Za-z0-9_-]+)", r.text).group(1)
+        did = c.get(f"/api/admin/tenants/{tid}/devices").json()[0]["id"]
+        # adresa správy ještě není známá (zatím žádný check-in)
+        r = c.post(f"/api/admin/tenants/{tid}/devices/{did}/approve", json_body={"site_id": sid})
+        assert r.status_code == 400 and "check-in" in r.text
+
+        def ci(body, ip="192.168.88.2"):
+            return lan.__class__(app, "checkin.test", client_ip=ip).post(
+                "/api/checkin", json_body=body, headers={"authorization": f"Bearer {key}"})
+
+        ci({"version": "7.20", "sstp": "none"})
+        r = c.post(f"/api/admin/tenants/{tid}/devices/{did}/approve", json_body={"site_id": sid})
+        assert r.status_code == 200 and r.json()["concentrator_errors"] == [], r.text
+        dev = c.get(f"/api/admin/tenants/{tid}/devices").json()[0]
+        assert dev["tunnel_ip"] == "192.168.88.2" and dev["concentrator"] is None
+
+        r = ci({"version": "7.20", "sstp": "none"})
+        assert "provisioning zacina" in r.text
+        assert "sstp-client add" not in r.text and 'sstp-client remove [find name="mtc-sstp"]' in r.text
+        assert 'address="192.168.88.10/32"' in r.text
+        assert 'chain=input src-address="192.168.88.10" protocol=tcp' in r.text
+        assert "action=drop" not in r.text
+        with operator_scope(db) as tx:
+            assert not tx.fetchall("SELECT 1 FROM device_secret WHERE kind = 'sstp_password'")
+
+        # DHCP změnila adresu → správa jde na novou; tunel „none“ nespouští failover ani alarm
+        for _ in range(services.SSTP_FAILOVER_AFTER + 1):
+            ci({"sstp": "none"}, ip="192.168.88.7")
+        dev = c.get(f"/api/admin/tenants/{tid}/devices").json()[0]
+        assert dev["tunnel_ip"] == "192.168.88.7", dev
+        assert (dev["last_status"] or {}).get("sstp_down") == 0
+        with operator_scope(db) as tx:
+            kinds = [r["kind"] for r in tx.fetchall("SELECT kind FROM device_command")]
+            acts = [r["action"] for r in tx.fetchall("SELECT action FROM audit_log")]
+        assert "switch_concentrator" not in kinds
+        assert "device.address" in acts
+        # cizí adresu (už ji má jiné zařízení) nepřebírá
+        with operator_scope(db) as tx:
+            tx.execute("""INSERT INTO device (tenant_id, serial, model, ros_version, state, tunnel_ip)
+                          VALUES (%(t)s, 'OTHER1', 'x', '7.20', 'pending', '192.168.88.9')""", {"t": tid})
+        ci({"sstp": "none"}, ip="192.168.88.9")
+        mine = [d for d in c.get(f"/api/admin/tenants/{tid}/devices").json() if d["serial"] == "LOC1234"][0]
+        assert mine["tunnel_ip"] == "192.168.88.7"
     finally:
         drop_db(name)

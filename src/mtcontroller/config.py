@@ -112,6 +112,8 @@ class ConcentratorConfig(BaseModel):
 
 
 class TunnelConfig(BaseModel):
+    # "mikrotik" = vzdálená správa přes SSTP koncentrátory; "none" = lokální režim
+    # (controller ve stejné síti, správa zařízení přímo na jejich LAN adresu, bez tunelů)
     provider: str = "mikrotik"
     pool: str = "10.200.0.0/16"
     tenant_block_prefix: int = 24
@@ -125,9 +127,14 @@ class TunnelConfig(BaseModel):
     @field_validator("provider")
     @classmethod
     def _provider(cls, v: str) -> str:
-        if v not in {"mikrotik", "radius"}:
-            raise ValueError("tunnel.provider musí být 'mikrotik' nebo 'radius'")
+        if v not in {"mikrotik", "radius", "none"}:
+            raise ValueError("tunnel.provider musí být 'mikrotik', 'radius' nebo 'none' (lokální režim)")
         return v
+
+    @property
+    def local(self) -> bool:
+        """Lokální režim: žádné tunely, správa přímo na adresu, ze které se zařízení hlásí."""
+        return self.provider == "none"
 
     @field_validator("pool")
     @classmethod
@@ -144,6 +151,12 @@ class TunnelConfig(BaseModel):
 
     @model_validator(mode="after")
     def _controller_outside_pool(self) -> "TunnelConfig":
+        if self.local:
+            if self.concentrators:
+                raise ValueError("lokální režim (tunnel.provider = 'none') nepoužívá koncentrátory")
+            if self.manage_routes:
+                raise ValueError("lokální režim nemá tunely – tunnel.manage_routes musí být false")
+            return self
         if ipaddress.ip_address(self.controller_ip) in ipaddress.ip_network(self.pool):
             raise ValueError("controller_ip nesmí ležet v tunelovém poolu")
         names = [c.name for c in self.concentrators]

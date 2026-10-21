@@ -27,6 +27,9 @@ device_check_certificate = "yes-without-crl"
 data_dir = "/var/lib/mtcontroller"
 
 [tunnel]
+# "mikrotik" = vzdálená správa přes SSTP koncentrátory (níže)
+# "none"     = lokální režim: controller je ve stejné síti jako zařízení, žádné tunely ani
+#              koncentrátory; controller_ip = LAN adresa tohoto serveru, ze které jde správa
 provider = "mikrotik"
 pool = "10.200.0.0/16"
 tenant_block_prefix = 24

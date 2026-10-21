@@ -110,3 +110,11 @@ def test_oui_check(tmp_path):
     assert doctor.check_oui()[0].status == doctor.WARN
     oui.configure(Path(__file__).parent / "data")
     assert doctor.check_oui()[0].status == doctor.OK
+
+
+def test_local_mode_skips_tunnel_checks(tmp_path):
+    s = make_settings(tmp_path, local=True)
+    out = doctor.check_network(s, route_get=lambda ip: None, is_local=lambda ip: True)
+    assert _by(out, "controller_ip")[0].status == doctor.OK
+    assert not _by(out, "routa na pool") and _by(out, "režim")[0].status == doctor.OK
+    assert doctor.check_concentrators(s, providers=[]) == []

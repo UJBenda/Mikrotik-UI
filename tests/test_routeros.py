@@ -53,6 +53,7 @@ def _balanced(script: str) -> bool:
 
 OPTS = FetchOpts("yes-without-crl")
 P = ProvisionParams("10.200.0.1", "vpn1.example.cz", "mtc-HG409", "pw-sstp_123", "pw-api-456")
+PL = ProvisionParams("192.168.88.10", "", "mtc-HG409", "", "pw-api-456", local=True)
 
 
 def test_all_scripts_are_balanced():
@@ -60,6 +61,7 @@ def test_all_scripts_are_balanced():
         routeros.adopt_stage1("https://c.example/adopt/T/register", OPTS),
         routeros.adopt_stage2("https://c.example/api/checkin", "KEY_abc-123", OPTS),
         routeros.wrap_command("https://c.example/api/checkin/ack?id=5", "KEY", routeros.provision_body(P, OPTS), OPTS),
+        routeros.wrap_command("https://c.example/api/checkin/ack?id=8", "KEY", routeros.provision_body(PL, OPTS), OPTS),
         routeros.wrap_command("https://c.example/api/checkin/ack?id=6", "KEY", "", OPTS, tail=routeros.REBOOT_TAIL),
         routeros.wrap_command("https://c.example/api/checkin/ack?id=7", "KEY", "", OPTS, tail=routeros.DEPROVISION_TAIL),
         routeros.error_script("token neplatny"),
@@ -94,6 +96,20 @@ def test_provision_restricts_to_controller():
     assert body.index("wasOff [/ip service get www-ssl disabled]") < body.index("www-ssl certificate=")
     # žádné interaktivní přístupy pro servisní účet
     assert "ssh" not in routeros.MTC_GROUP_POLICY and "winbox" not in routeros.MTC_GROUP_POLICY
+
+
+def test_local_provision_without_tunnel():
+    """Lokální režim: žádný SSTP, správa jen z adresy controlleru, nic se nezahazuje."""
+    body = routeros.provision_body(PL, OPTS)
+    assert "sstp-client add" not in body and 'sstp-client remove [find name="mtc-sstp"]' in body
+    assert "in-interface" not in body and "action=drop" not in body
+    assert 'chain=input src-address="192.168.88.10" protocol=tcp dst-port=$port action=accept comment="mtc: sprava REST"' in body
+    assert 'address="192.168.88.10/32"' in body  # servisní účet i www-ssl jen z controlleru
+    # bezpečný přesun na začátek (žádné „move before itself“)
+    assert "($me->0) != ($all->0)" in body
+    assert _balanced(body) and body.isascii()
+    # tunelová varianta se nezměnila
+    assert 'in-interface="mtc-sstp" action=drop' in routeros.provision_body(P, OPTS)
 
 
 def test_https_certs_signed_by_local_ca(tmp_path):

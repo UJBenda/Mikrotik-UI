@@ -38,6 +38,8 @@ class TunnelProvider(ABC):
 def build_providers(settings) -> list[TunnelProvider]:
     from .mikrotik import MikrotikProvider
 
+    if settings.tunnel.local:
+        return []  # lokální režim: žádné koncentrátory
     if settings.tunnel.provider != "mikrotik":
         raise NotImplementedError("provider 'radius' zatím není implementovaný")
     return [MikrotikProvider.from_config(c) for c in settings.tunnel.concentrators]

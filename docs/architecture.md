@@ -848,3 +848,57 @@ K ověření v labu: `netinstall-cli -s` (vlastní výchozí konfigurace přeži
   nejvzdálenější první, gateway poslední; bez topologie podle role. Ručně: výběr a pořadí z UI
   (`order` v POST), server ověří, že jde jen o kandidáty s dostupnou aktualizací.
   `/system package update install` aktualizuje i extra balíčky (wifi-qcom…) na stejnou verzi.
+
+## Režimy nasazení: vzdálená správa a lokální controller
+
+| | Vzdálená správa (`tunnel.provider = "mikrotik"`) | Lokální (`tunnel.provider = "none"`) |
+| --- | --- | --- |
+| Kde běží | centrální server, zařízení u zákazníků | v síti, kterou spravuje (Debian, Raspberry Pi, VM) |
+| Cesta ke správě | SSTP tunel na koncentrátor, controller src-natovaný na `10.200.0.1` | přímo LAN adresa zařízení |
+| `device.tunnel_ip` | adresa z tunelového poolu (IPAM) | adresa, ze které se zařízení hlásí (check-in); mění se s DHCP |
+| Firewall na zařízení | z `mtc-sstp` jen správa z koncentrátoru, zbytek z tunelu drop | `chain=input src-address=<controller_ip>` accept (REST, ping), nic se nezahazuje |
+| `www-ssl`, účet `mtc-ctl` | jen z `10.200.0.1/32` | jen z `controller_ip/32` |
+| Syslog | cíl `10.200.0.1`, koncentrátor dst-natuje | cíl `controller_ip` |
+| Failover, routy, alarm `tunnel_down` | ano | ne (koncentrátory nejsou) |
+
+Lokální režim (implementováno):
+- `config.TunnelConfig.local`; v lokálním režimu nesmí být koncentrátory ani `manage_routes`,
+  `build_providers` vrací `[]`, worker kroky tunelů a rout přeskočí sám (žádní poskytovatelé).
+- Adresa správy = zdroj check-inu (`services.set_local_address`, audit `device.address`). Adresu,
+  kterou už drží jiné zařízení (NAT, souběh DHCP), nepřebírá. Schválení čeká na první check-in.
+- Provisioning (`routeros.provision_body` s `local=True`) odebere případný starý `mtc-sstp`
+  (přechod ze vzdálené správy), zbytek (certifikát REST, účet, check-in) je stejný jako u tunelu.
+- Převzetí resetem potvrzuje ozvání bootstrapu (`tk`) bez podmínky běžícího tunelu.
+- UI: `/api/admin/me` vrací `mode`; v lokálním režimu „IP správy“ místo „Tunel“.
+
+### Instalace jedním balíčkem a průvodce (plán)
+
+Balíček `mtcontroller_<verze>_all.deb` (závislosti jen z Debianu 13: python3-starlette, -uvicorn,
+-psycopg, -pydantic, -cryptography, postgresql, nginx). `postinst` založí uživatele, databázi a role,
+pustí migrace, vygeneruje hlavní klíč a self-signed certifikát a spustí jen webovou službu
+v **režimu průvodce** (`/setup`, přístup jednorázovým kódem vypsaným do konzole/journalu).
+Průvodce: volba režimu (lokální / centrální), adresa controlleru, hostnamy, první administrátor + MFA,
+první firma a lokalita; zapíše `config.toml` a zapne `mtc-worker` a `mtc-syslog`. Pro lokální režim
+stačí IP adresa (bez DNS), certifikát controlleru se zařízením nahraje do důvěryhodných při adopci.
+
+### Napojení lokálního controlleru na centrální (uplink, návrh)
+
+Cíl: lokální controller (edge) spravuje své zařízení sám a do centrálu vede **jedno odchozí HTTPS
+spojení** – žádné tunely na jednotlivá zařízení, žádné otevřené porty u zákazníka.
+
+1. **Spárování**: v centrálu se pro firmu/lokalitu vystaví jednorázový párovací kód. Edge si
+   vygeneruje klíč Ed25519 (`cryptography`), pošle veřejný klíč s kódem; centrál uloží
+   `edge_controller` (tenant tabulka s RLS) a vrátí svůj veřejný klíč. Dál jsou všechny zprávy
+   podepsané (časové razítko + nonce proti přehrání), TLS s ověřením certifikátu centrálu.
+2. **Přenos**: worker na edge drží long-poll `POST /api/uplink/sync` (≈25 s): nahoru posílá
+   změny (přehled zařízení, alarmy, zdraví, klienti – shrnutí, ne surová data), dolů dostává
+   frontu požadavků. Funguje přes NAT/proxy, ze zákazníkovy sítě jen 443 ven.
+3. **Vzdálená správa = relé API**: když technik v centrálu otevře lokalitu edge, UI volá stejné
+   `/api/admin/...` endpointy; centrál je nezpracuje sám, ale zařadí jako požadavek pro edge.
+   Edge je provede proti vlastnímu API jako servisní principal omezený na spárovanou firmu a
+   whitelist cest (bez správy uživatelů, systému a uplinku) a vrátí odpověď. Celé UI tak funguje
+   vzdáleně bez replikace všech tabulek; přehled a alarmy z bodu 2 jsou v centrálu vidět i při
+   výpadku edge.
+4. **Bezpečnost a audit**: edge může cloud kdykoli odpojit (zneplatní klíč); každá akce přes relé
+   se zapíše na obou stranách (`audit_log` s `via: uplink` a uživatelem z centrálu); tajemství
+   zařízení nikdy neopouštějí edge.

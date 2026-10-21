@@ -210,6 +210,8 @@ class ProvisionParams:
     sstp_user: str
     sstp_password: str
     api_password: str
+    # lokální režim: bez tunelu, správa přímo z adresy controlleru v LAN
+    local: bool = False
 
 
 def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
@@ -218,12 +220,23 @@ def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
 
     Na zařízení se nepřidává žádná routa: správa přichází z tunelové adresy
     koncentrátoru (přímo připojená přes PPP), takže check-in i ostatní provoz
-    jdou dál normální cestou."""
+    jdou dál normální cestou.
+
+    Lokální režim (`p.local`): bez tunelu; případný starý `mtc-sstp` se odebere
+    a firewall jen povolí správu z adresy controlleru v LAN."""
     ctrl = p.mgmt_source
+    if p.local:
+        tunnel = ""
+        fw = _LOCAL_FW.format(ctrl=q(ctrl))
+    else:
+        tunnel = (f'/interface sstp-client add name="{SSTP_IFACE}" connect-to={q(p.connect_host)} port=443 '
+                  f'user={q(p.sstp_user)} password={q(p.sstp_password)} verify-server-certificate={opts.verify_sstp} '
+                  'add-sni=yes add-default-route=no dial-on-demand=no profile=default-encryption '
+                  'authentication=mschap2 comment="mtc" disabled=no\n')
+        fw = _TUNNEL_FW.format(ctrl=q(ctrl), iface=SSTP_IFACE)
     return f""":log info "mtc: provisioning zacina"
 /interface sstp-client remove [find name="{SSTP_IFACE}"]
-/interface sstp-client add name="{SSTP_IFACE}" connect-to={q(p.connect_host)} port=443 user={q(p.sstp_user)} password={q(p.sstp_password)} verify-server-certificate={opts.verify_sstp} add-sni=yes add-default-route=no dial-on-demand=no profile=default-encryption authentication=mschap2 comment="mtc" disabled=no
-/ip route remove [find comment="mtc"]
+{tunnel}/ip route remove [find comment="mtc"]
 {signed_cert(REST_CERT, p.sstp_user)}:local wasOff [/ip service get www-ssl disabled]
 /ip service set www-ssl certificate="{REST_CERT}" disabled=no
 # www-ssl dosud vypnute = nikdo ho nepouzival: povolit jen ze spravy (neotevrit WebFig do sveta)
@@ -246,12 +259,17 @@ def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
   :if ([/user get [find name="{API_USER}"] comment] != "mtc") do={{ :error "mtc: uzivatel {API_USER} existuje a nepatri controlleru" }}
   /user set [find name="{API_USER}"] group="mtc" password={q(p.api_password)} address={q(ctrl + "/32")}
 }}
-:local port [/ip service get www-ssl port]
+{fw}:log info "mtc: provisioning hotov"
+"""
+
+
+# firewall pro správu přes tunel: z tunelu jen správa z koncentrátoru, zbytek zahodit
+_TUNNEL_FW = """:local port [/ip service get www-ssl port]
 /ip firewall filter remove [find comment~"^mtc:"]
-/ip firewall filter add chain=input in-interface="{SSTP_IFACE}" src-address={q(ctrl)} protocol=tcp dst-port=$port action=accept comment="mtc: sprava REST"
-/ip firewall filter add chain=input in-interface="{SSTP_IFACE}" src-address={q(ctrl)} protocol=icmp action=accept comment="mtc: sprava ping"
-/ip firewall filter add chain=input in-interface="{SSTP_IFACE}" action=drop comment="mtc: drop tunnel"
-/ip firewall filter add chain=forward in-interface="{SSTP_IFACE}" action=drop comment="mtc: drop tunnel forward"
+/ip firewall filter add chain=input in-interface="{iface}" src-address={ctrl} protocol=tcp dst-port=$port action=accept comment="mtc: sprava REST"
+/ip firewall filter add chain=input in-interface="{iface}" src-address={ctrl} protocol=icmp action=accept comment="mtc: sprava ping"
+/ip firewall filter add chain=input in-interface="{iface}" action=drop comment="mtc: drop tunnel"
+/ip firewall filter add chain=forward in-interface="{iface}" action=drop comment="mtc: drop tunnel forward"
 # pravidla na zacatek; dynamicka (napr. fasttrack dummy) preskocit - pred ne nejde presouvat
 :if ([:len [/ip firewall filter find dynamic=no]] > 4) do={{
   /ip firewall filter move [find comment="mtc: drop tunnel forward"] destination=([/ip firewall filter find dynamic=no]->0)
@@ -259,7 +277,21 @@ def provision_body(p: ProvisionParams, opts: FetchOpts) -> str:
   /ip firewall filter move [find comment="mtc: sprava ping"] destination=([/ip firewall filter find dynamic=no]->0)
   /ip firewall filter move [find comment="mtc: sprava REST"] destination=([/ip firewall filter find dynamic=no]->0)
 }}
-:log info "mtc: provisioning hotov"
+"""
+
+# lokální režim: povolit správu z adresy controlleru (z kteréhokoli rozhraní), nic nezahazovat –
+# zbytek firewallu zařízení zůstává, jak ho má správce
+_LOCAL_FW = """:local port [/ip service get www-ssl port]
+/ip firewall filter remove [find comment~"^mtc:"]
+/ip firewall filter add chain=input src-address={ctrl} protocol=tcp dst-port=$port action=accept comment="mtc: sprava REST"
+/ip firewall filter add chain=input src-address={ctrl} protocol=icmp action=accept comment="mtc: sprava ping"
+:foreach c in={{"mtc: sprava ping"; "mtc: sprava REST"}} do={{
+  :local me [/ip firewall filter find comment=$c]
+  :local all [/ip firewall filter find dynamic=no]
+  :if ([:len $me] > 0 && [:len $all] > 0 && ($me->0) != ($all->0)) do={{
+    /ip firewall filter move ($me->0) destination=($all->0)
+  }}
+}}
 """
 
 

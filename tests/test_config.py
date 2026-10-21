@@ -39,7 +39,16 @@ def test_invalid_values_rejected(tmp_path):
         {"MTC_WEB__UI_HOST": "bad host"},
         {"MTC_TUNNEL__CONTROLLER_IP": "10.200.0.5"},  # uvnitř poolu
         {"MTC_SECURITY__DEVICE_CHECK_CERTIFICATE": "maybe"},
+        {"MTC_TUNNEL__PROVIDER": "none", "MTC_TUNNEL__MANAGE_ROUTES": "true"},  # lokální režim nemá tunely
     ]
     for env in bad:
         with pytest.raises(ValidationError):
             load_settings(tmp_path / "x.toml", environ=env)
+
+
+def test_local_mode(tmp_path):
+    s = load_settings(tmp_path / "x.toml", environ={"MTC_TUNNEL__PROVIDER": "none",
+                                                     "MTC_TUNNEL__CONTROLLER_IP": "192.168.88.10"})
+    assert s.tunnel.local and not s.tunnel.concentrators
+    from mtcontroller.tunnel import build_providers
+    assert build_providers(s) == []

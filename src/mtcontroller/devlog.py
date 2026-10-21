@@ -109,7 +109,9 @@ def render(settings: Settings, cmd: dict, dev: dict) -> str:
     na controller a zdroj (tunelová IP zařízení) zůstane – podle něj se log přiřadí."""
     from .ipam import concentrator_address
 
-    return config_body(str(cmd["params"].get("level") or "off"), str(concentrator_address(settings.tunnel.pool)),
+    # lokální režim: bez tunelu rovnou na adresu controlleru v LAN
+    dst = settings.tunnel.controller_ip if settings.tunnel.local else str(concentrator_address(settings.tunnel.pool))
+    return config_body(str(cmd["params"].get("level") or "off"), dst,
                        settings.syslog.port, dev.get("tunnel_ip"), bool(cmd["params"].get("wifi")))
 
 

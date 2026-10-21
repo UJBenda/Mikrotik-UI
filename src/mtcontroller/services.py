@@ -332,7 +332,8 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
     """Přidělí tunelovou IP, vygeneruje hesla, naplánuje provisioning a založí
     účty na koncentrátorech. Vrací seznam chyb koncentrátorů (worker je později
     dorovná), schválení samotné tím neselže."""
-    if not settings.tunnel.concentrators:
+    local = settings.tunnel.local
+    if not local and not settings.tunnel.concentrators:
         raise ServiceError("v konfiguraci není žádný koncentrátor (tunnel.concentrators)")
     if role not in DEVICE_ROLES:
         raise ServiceError("neplatná role zařízení")
@@ -348,15 +349,23 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
             raise ServiceError(f"zařízení není ve stavu pending (je {dev['state']})")
         if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": str(site_id)}):
             raise NotFound("lokalita neexistuje")
-        block = tx.fetchone("SELECT tunnel_block::text AS b FROM tenant WHERE id = %(t)s",
-                            {"t": str(tenant_id)})["b"]
-        used = [r["ip"] for r in tx.fetchall(
-            "SELECT host(tunnel_ip) AS ip FROM device WHERE tunnel_ip IS NOT NULL")]
-        tunnel_ip = dev["tunnel_ip"] or str(ipam.next_device_address([block], used))
-        sstp_pw, api_pw = random_password(), random_password()
-        put_secret(tx, box, tenant_id, device_id, "sstp_password", sstp_pw)
+        if local:
+            # lokální režim: správa na adresu, ze které se zařízení hlásí (check-in ji aktualizuje)
+            tunnel_ip = dev["tunnel_ip"]
+            if not tunnel_ip:
+                raise ServiceError("adresa zařízení zatím není známá – počkej na jeho další check-in")
+            sstp_pw, concentrator = "", None
+        else:
+            block = tx.fetchone("SELECT tunnel_block::text AS b FROM tenant WHERE id = %(t)s",
+                                {"t": str(tenant_id)})["b"]
+            used = [r["ip"] for r in tx.fetchall(
+                "SELECT host(tunnel_ip) AS ip FROM device WHERE tunnel_ip IS NOT NULL")]
+            tunnel_ip = dev["tunnel_ip"] or str(ipam.next_device_address([block], used))
+            sstp_pw = random_password()
+            put_secret(tx, box, tenant_id, device_id, "sstp_password", sstp_pw)
+            concentrator = settings.tunnel.concentrators[0].name
+        api_pw = random_password()
         put_secret(tx, box, tenant_id, device_id, "api_password", api_pw)
-        concentrator = settings.tunnel.concentrators[0].name
         tx.execute(
             """UPDATE device SET state = 'provisioning', site_id = %(s)s, role = %(r)s,
                    tunnel_ip = %(ip)s, approved_by = %(u)s, approved_at = now(), concentrator = %(c)s
@@ -373,8 +382,10 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
               after={"site_id": str(site_id), "role": role, "tunnel_ip": tunnel_ip, "identity": identity}, ip=ip)
         serial = dev["serial"]
         comment = f"{tenant_id}/{site_id}"
+    errors: list[str] = []
+    if local:
+        return errors
     account = TunnelAccount(sstp_username(serial), sstp_pw, tunnel_ip, comment)
-    errors = []
     for p in providers:
         try:
             p.ensure_account(account)
@@ -638,16 +649,14 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
     ack_url = f"https://{settings.web.checkin_host}/api/checkin/ack?id={cmd['id']}"
     kind = cmd["kind"]
     if kind == "provision":
-        conc = _concentrator(settings, dev.get("concentrator"))
-        body = routeros.provision_body(routeros.ProvisionParams(
-            mgmt_source=str(ipam.concentrator_address(settings.tunnel.pool)),
-            connect_host=conc.connect_host,
-            sstp_user=sstp_username(dev["serial"]),
-            sstp_password=get_secret(tx, box, dev["id"], "sstp_password") or "",
-            api_password=get_secret(tx, box, dev["id"], "api_password") or "",
-        ), opts)
+        body = routeros.provision_body(mgmt_params(
+            settings, dev["serial"], dev.get("concentrator"),
+            get_secret(tx, box, dev["id"], "sstp_password") or "",
+            get_secret(tx, box, dev["id"], "api_password") or ""), opts)
         return routeros.wrap_command(ack_url, key, body, opts)
     if kind == "switch_concentrator":
+        if settings.tunnel.local:
+            raise ServiceError("lokální režim nemá koncentrátory")
         conc = _concentrator(settings, cmd["params"].get("concentrator"))
         return routeros.wrap_command(ack_url, key, routeros.switch_concentrator_body(conc.connect_host), opts)
     if kind == "reboot":
@@ -716,6 +725,42 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
     raise ServiceError(f"neznámý příkaz {kind}")
 
 
+def set_local_address(tx: Tx, tenant_id: Any, dev: dict, ip: str | None) -> None:
+    """Lokální režim: zapamatuje adresu, ze které se zařízení hlásí – na ni pak jde
+    správa (REST). Sloupec tunnel_ip tu znamená „adresa správy“. Adresu, kterou už
+    drží jiné zařízení (NAT, souběh DHCP), nepřebírá – to by přesměrovalo správu."""
+    if not ip or ip == dev.get("tunnel_ip"):
+        return
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return
+    if a.is_loopback or a.is_unspecified or a.is_multicast:
+        return
+    if tx.fetchone("SELECT 1 FROM device WHERE tunnel_ip = %(ip)s::inet AND id <> %(d)s",
+                   {"ip": ip, "d": str(dev["id"])}):
+        log.warning("zařízení %s se hlásí z %s, kterou už má jiné zařízení – adresa správy beze změny", dev["id"], ip)
+        return
+    tx.execute("UPDATE device SET tunnel_ip = %(ip)s::inet WHERE id = %(d)s", {"ip": ip, "d": str(dev["id"])})
+    audit(tx, "device.address", tenant_id=tenant_id, target=f"device:{dev['id']}",
+          before={"ip": dev.get("tunnel_ip")}, after={"ip": ip}, ip=ip)
+    dev["tunnel_ip"] = ip
+
+
+def mgmt_params(settings: Settings, serial: str, concentrator: str | None, sstp_pw: str,
+                api_pw: str) -> routeros.ProvisionParams:
+    """Parametry správy zařízení: přes tunel (koncentrátor src-natuje controller
+    na svou tunelovou adresu), nebo v lokálním režimu přímo z adresy controlleru."""
+    if settings.tunnel.local:
+        return routeros.ProvisionParams(mgmt_source=settings.tunnel.controller_ip, connect_host="",
+                                        sstp_user=sstp_username(serial), sstp_password="",
+                                        api_password=api_pw, local=True)
+    conc = _concentrator(settings, concentrator)
+    return routeros.ProvisionParams(mgmt_source=str(ipam.concentrator_address(settings.tunnel.pool)),
+                                    connect_host=conc.connect_host, sstp_user=sstp_username(serial),
+                                    sstp_password=sstp_pw, api_password=api_pw)
+
+
 def _concentrator(settings: Settings, name: str | None):
     for c in settings.tunnel.concentrators:
         if c.name == name:
@@ -771,6 +816,9 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
             return routeros.NOTHING
         prev = dev["last_status"] or {}
         down = prev.get("sstp_down", 0) + 1 if st["sstp"] != "up" and dev["state"] in ("adopted", "offline", "provisioning") else 0
+        if settings.tunnel.local:
+            down = 0  # bez tunelu; správa jde na adresu z check-inu
+            set_local_address(tx, device_ref["tenant_id"], dev, ip)
         st["sstp_down"] = down
         st["ip"] = ip
         new_state = "adopted" if dev["state"] == "offline" else dev["state"]
@@ -800,7 +848,7 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
             audit(tx, "device.online", tenant_id=device_ref["tenant_id"], target=f"device:{dev['id']}", ip=ip)
 
         # automatické přepnutí koncentrátoru, když tunel dlouho neběží
-        if down >= SSTP_FAILOVER_AFTER and len(settings.tunnel.concentrators) > 1 and dev["state"] != "provisioning":
+        if not settings.tunnel.local and down >= SSTP_FAILOVER_AFTER and len(settings.tunnel.concentrators) > 1 and dev["state"] != "provisioning":
             names = [c.name for c in settings.tunnel.concentrators]
             cur = dev["concentrator"] if dev["concentrator"] in names else names[0]
             nxt = names[(names.index(cur) + 1) % len(names)]
@@ -820,7 +868,8 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
         pc = pending_confirm(tx, dev["id"])
         # převzetí: potvrdit až když běží bootstrap (tk) i tunel – jinak by se potvrdilo
         # ozvání ze staré konfigurace nebo zařízení bez správy přes tunel
-        if pc and pc["module"] == "takeover" and not (st["tk"] and st["sstp"] == "up"):
+        mgmt_up = st["sstp"] == "up" or settings.tunnel.local
+        if pc and pc["module"] == "takeover" and not (st["tk"] and mgmt_up):
             if pc["overdue"] and not st["tk"]:
                 # po termínu se zařízení ozvalo bez běžícího bootstrapu = vrátilo se ze zálohy
                 takeover.finished(tx, device_ref["tenant_id"], pc["id"], False)

@@ -124,7 +124,13 @@ def check_network(s: Settings, route_get: Callable[[str], dict | None] = _route_
         out.append(Check(OK, "controller_ip", f"{ctrl} je adresa tohoto serveru"))
     else:
         out.append(Check(FAIL, "controller_ip",
-                         f"{ctrl} není na žádném rozhraní – koncentrátor pouští REST/src-nat jen z této adresy"))
+                         f"{ctrl} není na žádném rozhraní – koncentrátor pouští REST/src-nat jen z této adresy"
+                         if not s.tunnel.local else
+                         f"{ctrl} není na žádném rozhraní – zařízení pouští správu jen z této adresy"))
+    if s.tunnel.local:
+        out.append(Check(OK, "režim", "lokální – zařízení se spravují přímo v LAN, bez tunelů"))
+        out.extend(_check_dns(s))
+        return out
     pool = ipaddress.ip_network(s.tunnel.pool)
     probe = str(pool.network_address + 256 + 2)  # první adresa v bloku prvního tenanta
     r = route_get(probe)
@@ -144,12 +150,16 @@ def check_network(s: Settings, route_get: Callable[[str], dict | None] = _route_
         hint = f"ip route add {pool} via {first[0]}" if first else "ip route add …"
         out.append(Check(FAIL, "routa na pool",
                          f"{probe} jde přes {via}, ne přes koncentrátor – {hint} (a trvale v /etc/network/interfaces)"))
+    out.extend(_check_dns(s))
+    return out
+
+
+def _check_dns(s: Settings) -> list[Check]:
     try:
         addrs = sorted({a[4][0] for a in socket.getaddrinfo(s.web.checkin_host, 443, proto=socket.IPPROTO_TCP)})
-        out.append(Check(OK, "DNS check-in", f"{s.web.checkin_host} → {', '.join(addrs)} (musí být dostupné i ze zařízení)"))
+        return [Check(OK, "DNS check-in", f"{s.web.checkin_host} → {', '.join(addrs)} (musí být dostupné i ze zařízení)")]
     except OSError as e:
-        out.append(Check(WARN, "DNS check-in", f"{s.web.checkin_host} se nepřeložil ({e}) – zařízení ho přeložit musí"))
-    return out
+        return [Check(WARN, "DNS check-in", f"{s.web.checkin_host} se nepřeložil ({e}) – zařízení ho přeložit musí")]
 
 
 def _worker_caps() -> str:
@@ -175,6 +185,8 @@ def check_routes(s: Settings, caps: Callable[[], str] = _worker_caps) -> list[Ch
 
 def check_concentrators(s: Settings, providers=None) -> list[Check]:
     out = []
+    if s.tunnel.local:
+        return []
     if not s.tunnel.concentrators:
         return [Check(FAIL, "koncentrátory", "v config.toml chybí [[tunnel.concentrators]]")]
     for c in s.tunnel.concentrators:

@@ -301,6 +301,8 @@ function renderOverview() {
 }
 
 const devName = (d) => d.identity || d.serial;
+// lokální režim = controller v LAN, bez tunelů (tunnel_ip je pak adresa správy zařízení)
+const isLocal = () => !!(me && me.mode === "local");
 function devOf(id) { return devicesCache.find((d) => d.id === id) || { id }; }
 
 // tlačítko akce v řádku problému
@@ -393,7 +395,7 @@ async function renderDrill() {
     for (const d of devs) {
       let line;
       if (key === "pending") line = drillLine(null, `${d.model || ""} · ${d.ros_version || ""}`, "Schval a rovnou zadej jméno, lokalitu a roli:", [approveControls(d), forgetButton(d)]);
-      else if (key === "offline") line = drillLine("warning", `Naposledy ${fmtTime(d.last_checkin_at)} · tunel ${d.tunnel_ip || "–"}`,
+      else if (key === "offline") line = drillLine("warning", `Naposledy ${fmtTime(d.last_checkin_at)} · ${isLocal() ? "IP" : "tunel"} ${d.tunnel_ip || "–"}`,
         "Zkontroluj napájení a internet. Pokud zařízení už neexistuje, zapomeň ho.", [forgetButton(d)]);
       else if (key === "provisioning") line = drillLine(null, "Čeká na první check-in po schválení", "Zařízení si nastavení vyzvedne do minuty.", []);
       else line = drillLine(null, `${d.model || ""} · RouterOS ${d.ros_version || "?"} · check-in ${fmtTime(d.last_checkin_at)}`, d.note || "", []);
@@ -519,7 +521,7 @@ function deviceMenu(d) {
     { label: d.note ? "Upravit poznámku…" : "Přidat poznámku…", disabled: !canOperate(), act: () => editNote(d) },
     { sep: true },
     { label: "Kopírovat sériové číslo", act: () => copyText(d.serial, "Sériové číslo") },
-    d.tunnel_ip ? { label: "Kopírovat IP v tunelu", act: () => copyText(d.tunnel_ip, "IP") } : null,
+    d.tunnel_ip ? { label: isLocal() ? "Kopírovat IP správy" : "Kopírovat IP v tunelu", act: () => copyText(d.tunnel_ip, "IP") } : null,
     { sep: true },
     { label: "Znovu provisioning", disabled: !live, act: () => sendCommand(d, "provision", "Znovu provisioning") },
     { label: "Restart", disabled: !live, act: () => sendCommand(d, "reboot", "Restart") },
@@ -2918,7 +2920,7 @@ async function openDetail(id) {
     ["RouterBOOT", sm.firmware ? `${sm.firmware}${sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware ? " → " + sm.firmware_upgrade : ""}` : null],
     ["Uptime", sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} %${sm.cpu ? ` (${sm.cpu})` : ""}` : null],
     ["Paměť", sm.memory_used_pct != null ? `${sm.memory_used_pct} %` : null], ["Úložiště", sm.hdd_used_pct != null ? `${sm.hdd_used_pct} %` : null],
-    ["Lokalita", dev.site], ["Poznámka", dev.note], ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
+    ["Lokalita", dev.site], ["Poznámka", dev.note], isLocal() ? ["Adresa správy", dev.tunnel_ip || "–"] : ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
     ["Check-in", fmtTime(dev.last_checkin_at)], ["Inventura", fmtTime(dev.inventory_at)], ["Záloha", fmtTime(dev.backup_at)],
   ]);
   // moduly
@@ -3451,7 +3453,7 @@ const DEV_COLS = [
   ["security", "Bezpečnost", false, (d) => Number(d.security_issues) || 0,
     (d) => el("td", d.security_issues ? String(d.security_issues) : "✓", d.security_issues ? "num warn" : "num ok")],
   ["arch", "Architektura", false, (d) => d.arch || "", (d) => el("td", d.arch || "–", "muted")],
-  ["tunnel", "Tunel IP", false, (d) => ipSortKey(d.tunnel_ip), (d) => el("td", d.tunnel_ip || "–", "mono")],
+  ["tunnel", "IP správy", false, (d) => ipSortKey(d.tunnel_ip), (d) => el("td", d.tunnel_ip || "–", "mono")],
   ["sstp", "SSTP", false, (d) => (d.last_status && d.last_status.sstp) || "", (d) => el("td", (d.last_status && d.last_status.sstp) || "–")],
   ["checkin", "Check-in", true, (d) => (d.last_checkin_at ? new Date(d.last_checkin_at).getTime() : 0), (d) => el("td", fmtTime(d.last_checkin_at))],
   ["adopted", "Adoptováno", false, (d) => (d.adopted_at ? new Date(d.adopted_at).getTime() : 0), (d) => el("td", d.adopted_at ? new Date(d.adopted_at).toLocaleDateString("cs-CZ") : "–")],

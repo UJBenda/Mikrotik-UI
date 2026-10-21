@@ -154,7 +154,8 @@ async def logout(request: Request, p: Principal, _t) -> Response:
 @endpoint(None, mfa=False)
 async def me(request: Request, p: Principal, _t) -> Response:
     return json_response({"email": p.email, "mfa_ok": p.mfa_ok, "csrf": p.csrf,
-                          "superadmin": p.superadmin, "tenants": p.tenant_roles})
+                          "superadmin": p.superadmin, "tenants": p.tenant_roles,
+                          "mode": "local" if get_state(request).settings.tunnel.local else "remote"})
 
 
 @endpoint(None)
