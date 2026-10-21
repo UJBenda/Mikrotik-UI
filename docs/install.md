@@ -2,6 +2,19 @@
 
 ## Balíček .deb a webový průvodce (doporučeno)
 
+Balíček je `Architecture: all` (čistý Python) – jeden soubor pro amd64, arm64 i armhf.
+
+| Systém | Stav |
+| --- | --- |
+| Debian 13 (trixie), amd64 / arm64 | podporováno – cílová platforma |
+| Raspberry Pi OS na Debianu 13, arm64 | podporováno (Raspberry Pi 4/5) |
+| Ubuntu 24.04 LTS | **nejde** – má jen pydantic 1.10 (aplikace potřebuje 2.x); apt instalaci odmítne |
+| Debian 12 (bookworm) | **nejde** – pydantic 1.10, Python 3.11 |
+| novější Ubuntu (26.04 LTS…) | mělo by jít, pokud má `python3-pydantic` ≥ 2 – zatím neověřeno |
+
+Závislosti v balíčku hlídají minimální verze (`python3 >= 3.12`, `python3-pydantic >= 2`,
+`python3-psycopg >= 3`), takže na nepodporovaném systému apt rovnou řekne, co chybí.
+
 ```sh
 packaging/build-deb.sh            # → dist/mtcontroller_<verze>_all.deb (na libovolném stroji s dpkg-deb)
 sudo apt install ./mtcontroller_<verze>_all.deb

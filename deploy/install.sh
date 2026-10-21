@@ -39,7 +39,8 @@ apt-get update -q
 apt-get install -y -q python3 python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
   python3-cryptography postgresql nginx openssl ca-certificates ieee-data
 [ -n "$CERTBOT" ] && apt-get install -y -q certbot python3-certbot-nginx
-python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python >= 3.11"'
+python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python >= 3.12"'
+python3 -c 'import pydantic; assert int(pydantic.VERSION.split(".")[0]) >= 2, "pydantic >= 2 (Debian 13; Ubuntu 24.04 má jen 1.10)"' 
 
 say "Uživatel a adresáře"
 MTC_ADMIN=/usr/local/sbin/mtc-admin

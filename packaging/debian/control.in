@@ -4,7 +4,7 @@ Section: net
 Priority: optional
 Architecture: all
 Maintainer: MikroTik Controller <root@localhost>
-Depends: python3 (>= 3.11), python3-starlette, python3-uvicorn, python3-psycopg, python3-pydantic, python3-cryptography, postgresql, nginx, openssl, ca-certificates, adduser, iproute2
+Depends: python3 (>= 3.12), python3-starlette, python3-uvicorn, python3-psycopg (>= 3), python3-pydantic (>= 2), python3-cryptography, postgresql, nginx, openssl, ca-certificates, adduser, iproute2
 Recommends: ieee-data, certbot
 Description: správa MikroTik RouterOS v7 (lokálně nebo vzdáleně přes tunely)
  Controller pro MikroTik RouterOS v7 ve stylu UniFi: adopce, přehled zařízení a klientů,
