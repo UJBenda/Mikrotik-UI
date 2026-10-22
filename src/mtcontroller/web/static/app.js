@@ -1082,9 +1082,70 @@ async function setCapsmanHost(deviceId, siteOverride) {
   } catch (e) { msg(e.message, true); }
 }
 
+// cizí a podvržená AP ze skenu rádií (Air Marshal)
+async function loadRogue(radios) {
+  const box = $("rogue-card"); box.textContent = "";
+  const aps = new Map();
+  for (const r of radios || []) if (r.device_id && !r.master) aps.set(r.device_id, r.device || r.device_id);
+  const head = el("div", null, "rogue-head");
+  head.appendChild(el("h3", "Cizí a podvržená AP"));
+  if (aps.size && canOperate()) {
+    const sel = el("select"); sel.setAttribute("aria-label", "AP ke skenu");
+    for (const [id, name] of aps) { const o = el("option", name); o.value = id; sel.appendChild(o); }
+    const b = el("button", "Skenovat okolí", "small secondary"); b.type = "button";
+    b.title = "Rádia AP na ~8 s přepnou do skenu – klienti na nich se na chvíli odpojí";
+    b.onclick = async () => {
+      if (!(await ask(`Skenovat okolí z ${aps.get(sel.value)}? Klienti na jeho rádiích se na pár sekund odpojí.`))) return;
+      b.disabled = true;
+      try {
+        const r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/wifi/rogue`, { device_id: sel.value });
+        msg(`Sken: ${r.found} sítí – podvržených ${r.rogue}, sousedních ${r.neighbor}, našich ${r.own}`, r.rogue > 0);
+        for (const e of r.errors || []) msg(e, true);
+        loadRogue(radios);
+      } catch (e) { msg(e.message, true); } finally { b.disabled = false; }
+    };
+    head.append(sel, b);
+  }
+  box.appendChild(head);
+  let v;
+  try { v = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/rogue`); } catch (e) { return; }
+  const list = v.bss || [];
+  const rogue = list.filter((b) => b.kind === "rogue");
+  const neigh = list.filter((b) => b.kind === "neighbor");
+  if (!list.length) {
+    box.appendChild(el("p", "Zatím bez skenu. Spusť sken ručně, nebo zapni noční sken v Sítě a DHCP → Záměr → Wi-Fi.", "muted small"));
+    return;
+  }
+  box.appendChild(el("p", `${rogue.filter((b) => !b.acknowledged).length} podvržených (cizí AP s naším SSID) · ${neigh.length} sousedních sítí` +
+                     ` · poslední sken ${fmtTime(list.reduce((a, b) => (a > b.last_seen ? a : b.last_seen), ""))}`,
+                     rogue.some((b) => !b.acknowledged) ? "sev-error" : "muted"));
+  const t = el("table", null, "mini");
+  const th = el("tr"); for (const h of ["", "SSID", "BSSID", "Kanál", "Signál", "Zabezpečení", "Viděl", ""]) th.appendChild(el("th", h));
+  t.appendChild(th);
+  for (const b of [...rogue, ...neigh.slice(0, 30)]) {
+    const tr = el("tr", null, b.kind === "rogue" && !b.acknowledged ? "rogue-row" : "");
+    tr.append(el("td", b.kind === "rogue" ? (b.acknowledged ? "známé" : "⚠ podvržené") : "soused"), el("td", b.ssid || "(skryté)"),
+              el("td", b.bssid, "mono"), el("td", b.frequency ? `${chanNum(b.frequency)} · ${b.frequency}` : "–"),
+              el("td", b.signal != null ? `${b.signal} dBm` : "–"), el("td", b.security || "–", "muted"), el("td", b.seen_by_name || ""));
+    const td = el("td");
+    if (b.kind === "rogue" && canManage()) {
+      const a = el("button", b.acknowledged ? "Zrušit označení" : "Označit jako známé", "small secondary"); a.type = "button";
+      a.onclick = async () => {
+        try { await api("POST", `/tenants/${tenantId}/sites/${siteId()}/wifi/rogue`, { bssid: b.bssid, ack: !b.acknowledged }); loadRogue(radios); }
+        catch (e) { msg(e.message, true); }
+      };
+      td.appendChild(a);
+    }
+    tr.appendChild(td);
+    t.appendChild(tr);
+  }
+  box.appendChild(t);
+}
+
 function renderWifi(w) {
   $("wifi-wrap").hidden = false;
   renderCapsmanCard();
+  loadRogue(w.radios);
   const sm = w.summary;
   $("wifi-summary").textContent = `${sm.aps} zařízení, ${sm.radios} rádií, ${sm.clients} klientů` +
     (sm.ssids.length ? ` · SSID: ${sm.ssids.join(", ")}` : "");
@@ -1331,7 +1392,7 @@ function setBadge(key, n, cls) {
   b.textContent = n ? String(n) : ""; b.hidden = !n; b.className = "nbadge" + (cls ? " nb-" + cls : "");
 }
 
-const SITE_TABS = [["infra", "infra-wrap"], ["topo", "topo-wrap"], ["clients", "clients-wrap"], ["wifi", "wifi-wrap"],
+const SITE_TABS = [["infra", "infra-wrap"], ["topo", "topo-wrap"], ["sports", "sports-wrap"], ["clients", "clients-wrap"], ["wifi", "wifi-wrap"],
   ["net", "net-wrap"], ["stp", "stp-wrap"], ["ntp", "ntp-wrap"], ["upg", "upg-wrap"], ["deploy", "deploy-wrap"]];
 
 function activateSiteTab(key) {
@@ -1342,7 +1403,7 @@ function activateSiteTab(key) {
 // loadery záložek jsou definované níž; mapa se vyhodnotí až při volání
 function openSiteTab(key) {
   activateSiteTab(key);
-  const loaders = { infra: loadInfra, topo: loadTopology, clients: loadClients, wifi: loadWifi, net: loadNetworks,
+  const loaders = { infra: loadInfra, topo: loadTopology, sports: loadSitePorts, clients: loadClients, wifi: loadWifi, net: loadNetworks,
     stp: loadStp, upg: loadUpgrade, deploy: loadDeploy };
   if (loaders[key]) loaders[key]();
 }
@@ -1397,6 +1458,7 @@ function portOpt(key) { return prefs[key] !== false; }
 function renderPorts(devId, d) {
   const phys = (d.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
   const bySfp = (sfp) => phys.filter((i) => /^(sfp|qsfp)/.test(i.name) === sfp).sort((a, b) => portNum(a.name) - portNum(b.name));
+  if (!portCtx || portCtx.devId !== devId) { portPick.clear(); portMulti = false; profCache = null; $("port-sel").hidden = true; }
   portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), vnames: d.vlan_names || {} };
   drawPorts();
 }
@@ -1410,6 +1472,11 @@ function drawPortOpts() {
     b.addEventListener("click", () => { prefs[key] = !portOpt(key); savePrefs(); drawPorts(); });
     box.appendChild(b);
   }
+  const m = el("button", "Vybrat více portů", "toggle" + (portMulti ? " on" : ""));
+  m.type = "button"; m.setAttribute("aria-pressed", portMulti ? "true" : "false");
+  m.title = "Hromadná úprava, profil na víc portů, LACP (taky Ctrl/Shift + klik)";
+  m.addEventListener("click", () => { portMulti = !portMulti; if (!portMulti) portPick.clear(); drawPorts(); drawPortPick(); });
+  box.appendChild(m);
 }
 
 function drawPorts() {
@@ -1492,9 +1559,13 @@ function tileWrap(i, tileFn) {
   t.type = "button";
   if (/^(sfp|qsfp)/.test(i.name)) { t.className += " sfp"; t.appendChild(el("span", /plus/.test(i.name) ? "SFP+" : "SFP", "tag")); }
   t.appendChild(el("span", String(portNum(i.name)), "num"));
-  t.title = portTooltip(i);
-  t.addEventListener("click", () => selectPortTraffic(i.name));
+  t.title = portTooltip(i) + "\nCtrl/Shift + klik = výběr více portů";
+  t.addEventListener("click", (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey || portMulti) { togglePortPick(i.name); return; }
+    selectPortTraffic(i.name);
+  });
   if (trafficState.iface === i.name) t.className += " selected";
+  if (portPick.has(i.name)) t.className += " picked";
   return t;
 }
 
@@ -1744,6 +1815,108 @@ function selectPortTraffic(name) {
   loadPortEditor(name);
 }
 
+// --- výběr více portů: hromadná úprava, profil, LACP ------------------------------------------
+
+const portPick = new Set();
+let portMulti = false;
+let profCache = null;
+
+function togglePortPick(name) {
+  if (portPick.has(name)) portPick.delete(name); else portPick.add(name);
+  drawPorts();
+  drawPortPick();
+}
+
+const nPorts = (n) => `${n} port${n === 1 ? "" : n >= 2 && n <= 4 ? "y" : "ů"}`;
+
+function clearPortPick() { portPick.clear(); portMulti = false; if (portCtx) drawPorts(); drawPortPick(); }
+
+async function drawPortPick() {
+  const box = $("port-sel");
+  box.textContent = "";
+  box.hidden = !portPick.size && !portMulti;
+  if (box.hidden) return;
+  const names = [...portPick].sort((a, b) => portNum(a) - portNum(b));
+  const head = el("div", null, "ps-head");
+  head.append(el("b", names.length ? `Vybráno ${names.length}: ${names.join(", ")}` : "Klikni na porty, které chceš vybrat"));
+  const x = el("button", "Zrušit výběr", "small secondary"); x.type = "button"; x.onclick = clearPortPick;
+  head.appendChild(x);
+  box.appendChild(head);
+  if (!names.length) return;
+  if (!profCache) { try { profCache = await api("GET", `/tenants/${tenantId}/port-profiles`); } catch (e) { profCache = []; } }
+  const bar = el("div", null, "ps-bar");
+  const sel = el("select"); sel.setAttribute("aria-label", "Profil");
+  const o0 = el("option", "— profil —"); o0.value = ""; sel.appendChild(o0);
+  for (const pf of profCache) { const o = el("option", pf.name); o.value = String(pf.id); sel.appendChild(o); }
+  const useP = el("button", "Použít profil", "small"); useP.type = "button";
+  useP.onclick = () => { if (!sel.value) return msg("Vyber profil", true); bulkPorts(names, { profile_id: Number(sel.value) }); };
+  bar.append(sel, useP);
+  const act = (label, desired, cls = "small secondary") => {
+    const b = el("button", label, cls); b.type = "button";
+    b.onclick = () => bulkPorts(names, { desired });
+    bar.appendChild(b);
+  };
+  act("PoE zapnout", { poe: "auto-on" }); act("PoE vypnout", { poe: "off" });
+  act("Porty vypnout", { disabled: true }); act("Porty zapnout", { disabled: false });
+  if (names.length >= 2) {
+    const lacp = el("button", "LACP z vybraných", "small"); lacp.type = "button";
+    lacp.onclick = async () => {
+      if (!(await ask(`Spojit ${names.join(", ")} do LACP bondu (802.3ad)? VLAN a PVID se přenesou z ${names[0]}. ` +
+                      "Protistrana musí mít LACP taky; když se zařízení do 5 minut neozve, změna se vrátí."))) return;
+      try {
+        const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, { kind: "lacp", ports: names, apply: true });
+        msg(`Odesláno: ${r.summary}`); for (const w of r.warnings || []) msg(w, true);
+        clearPortPick(); loadPlans();
+      } catch (e) { msg(e.message, true); }
+    };
+    bar.appendChild(lacp);
+  }
+  box.appendChild(bar);
+}
+
+async function bulkPorts(names, body) {
+  const what = body.profile_id ? `profil „${(profCache.find((p) => p.id === body.profile_id) || {}).name}“` : "změnu";
+  if (!(await ask(`Použít ${what} na ${nPorts(names.length)}? ` +
+                  "Jeden plán s automatickým návratem."))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/ports/bulk`, { targets: [{ device_id: detailId, ports: names }], ...body, apply: true });
+    for (const x of r.results) {
+      if (x.error) msg(x.error, true);
+      else { msg(`Odesláno: ${x.summary}`); for (const w of x.warnings || []) msg(w, true); }
+    }
+    clearPortPick(); loadPlans();
+  } catch (e) { msg(e.message, true); }
+}
+
+async function runTool(tool, params, out) {
+  out.hidden = false; out.textContent = "Běží…";
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/tools/${tool}`, params);
+    out.textContent = toolText(r);
+  } catch (e) { out.textContent = e.message; }
+}
+
+function toolText(r) {
+  if (r.tool === "ping") {
+    const lines = r.replies.map((x) => `${x.seq ?? ""}  ${x.host || ""}  ${x.time_ms != null ? x.time_ms + " ms" : x.status || "timeout"}`);
+    lines.push(`odesláno ${r.sent}, přijato ${r.received}, ztráta ${r.loss_pct ?? "?"} %` +
+               (r.avg_ms != null ? ` · min/prům/max ${r.min_ms}/${r.avg_ms}/${r.max_ms} ms` : ""));
+    return lines.join("\n");
+  }
+  if (r.tool === "traceroute") return r.hops.map((h) => `${String(h.hop).padStart(2)}  ${h.address || "*"}  ${h.avg_ms != null ? h.avg_ms + " ms" : ""}  ${h.loss || ""}`).join("\n") || "bez odpovědi";
+  if (r.tool === "cable_test") {
+    if (!r.pairs.length) return `stav: ${r.status || "?"}` + (r.status === "link-ok" ? " (linka běží – páry jde měřit jen bez linky)" : "");
+    return `stav: ${r.status || "?"}\n` + r.pairs.map((p, k) => `pár ${k + 1}: ${p.status}${p.length_m != null ? ` (${p.length_m} m)` : ""}`).join("\n");
+  }
+  return "Hotovo";
+}
+
+$("d-tools-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const tool = $("d-tool").value, arg = $("d-tool-arg").value.trim();
+  runTool(tool, tool === "wol" ? { mac: arg } : { address: arg, count: 4 }, $("d-tool-out"));
+});
+
 // --- editor portu (změny s automatickým návratem) ---------------------------------------------
 
 async function loadPortEditor(port) {
@@ -1792,7 +1965,21 @@ async function loadPortEditor(port) {
     field("Loop protect", loop);
     if (st.loop_status === "disable") f.appendChild(el("p", "Loop protect port právě vypnul – za portem je smyčka.", "sev-error"));
   }
-  let pvid = null, edge = null, tagBox = null, addVlan = null;
+  let wdOn = null, wdAddr = null, wdTime = null;
+  if (st.poe_watchdog) {
+    const w = st.poe_watchdog;
+    const wb = el("div", null, "pe-wd");
+    wdOn = el("input"); wdOn.type = "checkbox"; wdOn.checked = !!w.enabled;
+    wdAddr = el("input"); wdAddr.size = 17; wdAddr.placeholder = "IP nebo MAC zařízení";
+    wdAddr.value = w.address || st.watchdog_suggest || "";
+    wdTime = el("input"); wdTime.type = "number"; wdTime.min = 10; wdTime.max = 3600; wdTime.value = w.enabled ? w.timeout : 60;
+    const l = el("label", null, "check"); l.append(wdOn, document.createTextNode(" restartovat napájení, když "));
+    wb.append(l, wdAddr, document.createTextNode(" neodpoví "), wdTime, document.createTextNode(" s"));
+    if (!w.address && st.watchdog_suggest) wb.appendChild(el("span", ` (navrženo podle zařízení na portu)`, "muted"));
+    field("PoE hlídač", wb);
+  }
+  if (st.bond) f.appendChild(el("p", `Port je v bondu ${st.bond} – VLAN a PVID se nastavují na bondu.`, "muted"));
+  let pvid = null, edge = null, tagBox = null, addVlan = null, lockIn = null;
   const tagChecks = [];
   if (st.bridge) {
     pvid = el("input"); pvid.type = "number"; pvid.min = 1; pvid.max = 4094; pvid.value = st.pvid || 1;
@@ -1815,6 +2002,8 @@ async function loadPortEditor(port) {
     if ((st.tagged_locked || []).length)
       f.appendChild(el("p", `Řádky VLAN ${st.tagged_locked.join("; ")} obsahují víc ID – ty upravuj v RouterOS.`, "muted"));
     if (!st.vlan_filtering) f.appendChild(el("p", "Bridge nemá zapnuté vlan-filtering – PVID a tagování se zatím neuplatní.", "sev-warning"));
+    lockIn = el("input"); lockIn.size = 17; lockIn.placeholder = "MAC – prázdné = odemčeno"; lockIn.value = st.lock || "";
+    field("Zámek portu na MAC", lockIn);
   }
   box.appendChild(f);
   // profily portů: výběr vyplní formulář, použití jde stejnou cestou (plán s návratem)
@@ -1838,15 +2027,32 @@ async function loadPortEditor(port) {
         for (const c of tagChecks) c.checked = pf.tagged.includes(c.value);
         addVlan.value = pf.tagged.filter((v) => !tagChecks.some((c) => c.value === v)).join(",");
       }
+      if (wdOn && pf.poe_watchdog != null) { wdOn.checked = pf.poe_watchdog; if (pf.poe_watchdog_timeout) wdTime.value = pf.poe_watchdog_timeout; }
     });
+    const upd = el("button", "Uložit do profilu", "small secondary"); upd.type = "button";
+    upd.title = "Přepsat vybraný profil nastavením z formuláře";
+    upd.onclick = async () => {
+      const pf = (st.profiles || []).find((x) => String(x.id) === sel.value);
+      if (!pf || !(await ask(`Přepsat profil „${pf.name}“ tímto nastavením? Porty se tím samy nezmění.`))) return;
+      try { await api("PUT", `/tenants/${tenantId}/port-profiles/${pf.id}`, profileBody(pf.name)); msg("Profil uložen"); loadPortEditor(port); }
+      catch (e) { msg(e.message, true); }
+    };
+    sel.addEventListener("change", () => { upd.hidden = !sel.value; });
+    upd.hidden = !sel.value;
     del.onclick = async () => {
       const pf = (st.profiles || []).find((x) => String(x.id) === sel.value);
       if (!pf || !(await ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`))) return;
       try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadPortEditor(port); }
       catch (e) { msg(e.message, true); }
     };
-    pr.append(sel, del);
+    pr.append(sel, upd, del);
     box.insertBefore(pr, f);
+  }
+  function profileBody(name) {
+    const d = desired();
+    const b = { name, pvid: d.pvid, tagged: d.tagged, poe: d.poe, edge: d.edge };
+    if (d.poe_watchdog) { b.poe_watchdog = d.poe_watchdog.enabled; if (d.poe_watchdog.enabled) b.poe_watchdog_timeout = d.poe_watchdog.timeout; }
+    return b;
   }
   const desired = () => {
     const d = { disabled: !enabled.checked, comment: comment.value };
@@ -1859,6 +2065,8 @@ async function loadPortEditor(port) {
       for (const v of String(addVlan.value || "").split(/[ ,;]+/)) if (v) t.push(v);
       d.tagged = t;
     }
+    if (wdOn) d.poe_watchdog = wdOn.checked ? { enabled: true, address: wdAddr.value.trim(), timeout: Number(wdTime.value) } : { enabled: false };
+    if (lockIn) d.lock = lockIn.value.trim();
     return d;
   };
   const send = async (apply) => {
@@ -1880,9 +2088,8 @@ async function loadPortEditor(port) {
     mk.onclick = async () => {
       const name = prompt("Jméno profilu (např. Kamery, AP trunk):");
       if (!name) return;
-      const d = desired();
       try {
-        await api("POST", `/tenants/${tenantId}/port-profiles`, { name, pvid: d.pvid, tagged: d.tagged, poe: d.poe, edge: d.edge });
+        await api("POST", `/tenants/${tenantId}/port-profiles`, profileBody(name));
         msg(`Profil „${name}“ uložen`); loadPortEditor(port);
       } catch (e) { msg(e.message, true); }
     };
@@ -1897,7 +2104,25 @@ async function loadPortEditor(port) {
     };
     acts.appendChild(pc);
   }
+  const toolOut = el("pre", "", "tool-out"); toolOut.hidden = true;
+  const bounce = el("button", "Restart portu", "small secondary"); bounce.type = "button";
+  bounce.title = "Vypnout a za 5 s zapnout linku (zařízení na portu se znovu připojí)";
+  bounce.onclick = async () => {
+    if (!(await ask(`Restartovat linku ${port}? Port se na 5 s vypne.` + (st.uplink ? " Je to uplink – zařízení bude chvíli nedostupné." : "")))) return;
+    try { await api("POST", `/tenants/${tenantId}/devices/${detailId}/commands`, { kind: "port_bounce", port }); msg("Restart portu odeslán"); }
+    catch (e) { msg(e.message, true); }
+  };
+  const cable = el("button", "Test kabelu", "small secondary"); cable.type = "button";
+  cable.onclick = async () => {
+    if (!(await ask(`Test kabelu na ${port}? Na některých switchích se linka během testu na chvíli přeruší.`))) return;
+    runTool("cable_test", { port }, toolOut);
+  };
+  const blink = el("button", "Blikat LED", "small secondary"); blink.type = "button";
+  blink.title = "Port 15 s bliká – najdeš ho v racku";
+  blink.onclick = () => runTool("blink", { port, seconds: 15 }, toolOut);
+  acts.append(bounce, cable, blink);
   box.appendChild(acts);
+  box.appendChild(toolOut);
   if ((st.history || []).length) {
     box.appendChild(el("h4", "Historie portu (30 dní)"));
     const ul = el("ul", null, "ph-list");
@@ -2163,6 +2388,248 @@ $("upg-start").addEventListener("click", async () => {
 // --- infrastruktura lokality (strom WAN → gateway → switche → AP) ----------------------------
 
 let infraData = null;
+
+// --- porty lokality: hromadná úprava napříč switchi, profily, MLAG -----------------------------
+
+let spData = null;
+const spPick = new Set();  // "deviceId|port"
+
+async function loadSitePorts() {
+  try { spData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/ports`); } catch (e) { return msg(e.message, true); }
+  profCache = spData.profiles;
+  spPick.clear();
+  drawSitePorts();
+  drawProfiles();
+  drawMlag();
+}
+
+function spRows() {
+  const q = $("sp-filter").value.trim().toLowerCase();
+  const out = [];
+  for (const d of (spData && spData.devices) || []) {
+    for (const p of d.ports) {
+      if ($("sp-poe").checked && !p.poe) continue;
+      if ($("sp-up").checked && !p.running) continue;
+      const hay = [d.device, p.port, p.comment, p.neighbor, p.profile, p.pvid, (p.tagged || []).join(","), p.bond].join(" ").toLowerCase();
+      if (q && !hay.includes(q)) continue;
+      out.push([d, p]);
+    }
+  }
+  return out;
+}
+
+function drawSitePorts() {
+  const tb = $("sp-body"); tb.textContent = "";
+  const rows = spRows();
+  for (const [d, p] of rows) {
+    const key = `${d.device_id}|${p.port}`;
+    const tr = el("tr", null, spPick.has(key) ? "selected" : "");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = spPick.has(key);
+    cb.disabled = !!p.bond;
+    cb.title = p.bond ? `port je v bondu ${p.bond}` : "";
+    cb.addEventListener("change", () => { if (cb.checked) spPick.add(key); else spPick.delete(key); tr.className = cb.checked ? "selected" : ""; drawSpSel(); });
+    const c0 = el("td"); c0.appendChild(cb); tr.appendChild(c0);
+    const dev = el("td", d.device + (d.online ? "" : " (offline)"), d.online ? "" : "muted");
+    tr.append(dev, el("td", p.port, "mono"), el("td", p.comment || "", "muted"), el("td", p.neighbor || ""));
+    tr.appendChild(el("td", p.poe ? (p.poe === "off" ? "vyp." : "zap.") + (p.watchdog ? " · hlídač" : "") : "–", p.poe ? "" : "muted"));
+    tr.append(el("td", p.pvid ?? "–"), el("td", (p.tagged || []).join(", ") || "–"));
+    tr.appendChild(el("td", p.bond ? `bond ${p.bond}` : p.profile || "–", p.profile || p.bond ? "" : "muted"));
+    const stt = p.disabled ? "vypnutý" : p.running ? "linka" : "bez linky";
+    tr.appendChild(el("td", stt + (p.lock ? " · 🔒" : ""), p.running ? "" : "muted"));
+    tr.addEventListener("dblclick", () => openDetail(d.device_id));
+    tb.appendChild(tr);
+  }
+  if (!rows.length) { const tr = el("tr"); const td = el("td", "Žádné porty (spravované switche s inventurou)", "muted"); td.colSpan = 10; tr.appendChild(td); tb.appendChild(tr); }
+  $("sp-all").checked = rows.length > 0 && rows.filter(([, p]) => !p.bond).every(([d, p]) => spPick.has(`${d.device_id}|${p.port}`));
+  drawSpSel();
+}
+
+$("sp-filter").addEventListener("input", () => { if (spData) drawSitePorts(); });
+$("sp-poe").addEventListener("change", () => { if (spData) drawSitePorts(); });
+$("sp-up").addEventListener("change", () => { if (spData) drawSitePorts(); });
+$("sp-all").addEventListener("change", () => {
+  for (const [d, p] of spRows()) { if (p.bond) continue; const k = `${d.device_id}|${p.port}`; if ($("sp-all").checked) spPick.add(k); else spPick.delete(k); }
+  drawSitePorts();
+});
+
+function spTargets() {
+  const by = {};
+  for (const k of spPick) { const [did, port] = k.split("|"); (by[did] = by[did] || []).push(port); }
+  return Object.entries(by).map(([device_id, ports]) => ({ device_id, ports }));
+}
+
+function drawSpSel() {
+  const box = $("sp-sel"); box.textContent = "";
+  box.hidden = !spPick.size;
+  if (!spPick.size) return;
+  const t = spTargets();
+  const head = el("div", null, "ps-head");
+  head.appendChild(el("b", `Vybráno ${nPorts(spPick.size)} na ${t.length} switch${t.length === 1 ? "i" : "ích"}`));
+  const x = el("button", "Zrušit výběr", "small secondary"); x.type = "button"; x.onclick = () => { spPick.clear(); drawSitePorts(); };
+  head.appendChild(x);
+  box.appendChild(head);
+  const bar = el("div", null, "ps-bar");
+  const sel = el("select"); sel.setAttribute("aria-label", "Profil");
+  const o0 = el("option", "— profil —"); o0.value = ""; sel.appendChild(o0);
+  for (const pf of profCache || []) { const o = el("option", pf.name); o.value = String(pf.id); sel.appendChild(o); }
+  const go = el("button", "Použít profil", "small"); go.type = "button";
+  go.onclick = () => { if (!sel.value) return msg("Vyber profil", true); spBulk({ profile_id: Number(sel.value) }); };
+  bar.append(sel, go);
+  const b = (label, desired) => { const x2 = el("button", label, "small secondary"); x2.type = "button"; x2.onclick = () => spBulk({ desired }); bar.appendChild(x2); };
+  b("PoE zapnout", { poe: "auto-on" }); b("PoE vypnout", { poe: "off" }); b("Porty vypnout", { disabled: true }); b("Porty zapnout", { disabled: false });
+  const pv = el("input"); pv.type = "number"; pv.min = 1; pv.max = 4094; pv.placeholder = "PVID"; pv.style.width = "80px";
+  const pvb = el("button", "Nastavit native VLAN", "small secondary"); pvb.type = "button";
+  pvb.onclick = () => { if (!pv.value) return; spBulk({ desired: { pvid: Number(pv.value) } }); };
+  bar.append(pv, pvb);
+  const plan = el("label", null, "check"); const pc = el("input"); pc.type = "checkbox"; pc.id = "sp-onlyplan";
+  plan.append(pc, document.createTextNode(" jen uložit jako plán"));
+  bar.appendChild(plan);
+  box.appendChild(bar);
+}
+
+async function spBulk(body) {
+  const apply = !($("sp-onlyplan") && $("sp-onlyplan").checked);
+  const t = spTargets();
+  if (!(await ask(`${apply ? "Použít" : "Připravit plán"} na ${nPorts(spPick.size)} (${t.length} switch${t.length === 1 ? "" : "e"})? ` +
+                  "Na každém switchi jeden plán s automatickým návratem."))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/ports/bulk`, { targets: t, ...body, apply });
+    let ok = 0;
+    for (const x of r.results) {
+      const dn = ((spData.devices || []).find((d) => d.device_id === x.device_id) || {}).device || "switch";
+      if (x.error) msg(`${dn}: ${x.error}`, true); else { ok++; for (const w of x.warnings || []) msg(`${dn}: ${w}`, true); }
+    }
+    if (ok) msg(apply ? `Odesláno na ${ok} switch${ok === 1 ? "" : "e"} – změny se do 5 min samy vrátí, když se switch neozve` : `Uloženo ${ok} plánů ke schválení`);
+    loadPlans(); setTimeout(loadSitePorts, 1500);
+  } catch (e) { msg(e.message, true); }
+}
+
+function drawProfiles() {
+  const box = $("sp-profiles"); box.textContent = "";
+  box.appendChild(el("h3", "Profily portů"));
+  box.appendChild(el("p", "Jako v UniFi: PoE, native VLAN, tagované VLAN, STP edge a PoE hlídač. Použij na vybrané porty výš, nebo v editoru portu.", "muted small"));
+  const tbl = el("table", null, "mini");
+  const th = el("tr"); for (const h of ["Jméno", "Native", "Tagované", "PoE", "Hlídač", ""]) th.appendChild(el("th", h));
+  tbl.appendChild(th);
+  for (const pf of profCache || []) {
+    const tr = el("tr");
+    tr.append(el("td", pf.name), el("td", pf.pvid ?? "–"), el("td", pf.tagged ? pf.tagged.join(", ") || "žádné" : "–"),
+              el("td", pf.poe || "–"), el("td", pf.poe_watchdog ? `ano (${pf.poe_watchdog_timeout} s)` : pf.poe_watchdog === false ? "ne" : "–"));
+    const td = el("td");
+    const e = el("button", "Upravit", "small secondary"); e.type = "button"; e.onclick = () => profileForm(pf);
+    const d = el("button", "Smazat", "small secondary"); d.type = "button";
+    d.onclick = async () => {
+      if (!(await ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`))) return;
+      try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadSitePorts(); } catch (er) { msg(er.message, true); }
+    };
+    td.append(e, d); tr.appendChild(td); tbl.appendChild(tr);
+  }
+  box.appendChild(tbl);
+  const n = el("button", "Nový profil", "small"); n.type = "button"; n.onclick = () => profileForm(null);
+  box.appendChild(n);
+}
+
+function profileForm(pf) {
+  const box = $("sp-profiles");
+  const old = box.querySelector(".pf-form"); if (old) old.remove();
+  const f = el("form", null, "pf-form pe-grid");
+  const field = (label, input) => { const l = el("label", null, "pe-field"); l.append(el("span", label), input); f.appendChild(l); return input; };
+  const name = field("Jméno", el("input")); name.required = true; name.maxLength = 64; name.value = pf ? pf.name : "";
+  const pvid = field("Native VLAN (PVID)", el("input")); pvid.type = "number"; pvid.min = 1; pvid.max = 4094; pvid.value = pf && pf.pvid != null ? pf.pvid : "";
+  const tagged = field("Tagované VLAN", el("input")); tagged.placeholder = "např. 30,40,50"; tagged.value = pf && pf.tagged ? pf.tagged.join(",") : "";
+  const poe = field("PoE", el("select"));
+  for (const [v, l] of [["", "neměnit"], ["auto-on", "zapnuto (auto)"], ["forced-on", "vždy zapnuto"], ["off", "vypnuto"]]) { const o = el("option", l); o.value = v; poe.appendChild(o); }
+  poe.value = pf && pf.poe ? pf.poe : "";
+  const edge = field("STP edge", el("select"));
+  for (const [v, l] of [["", "neměnit"], ["auto", "auto"], ["yes", "ano (koncové zařízení)"], ["no", "ne"]]) { const o = el("option", l); o.value = v; edge.appendChild(o); }
+  edge.value = pf && pf.edge ? pf.edge : "";
+  const wd = field("PoE hlídač", el("select"));
+  for (const [v, l] of [["", "neměnit"], ["1", "zapnout (restart napájení bez odezvy)"], ["0", "vypnout"]]) { const o = el("option", l); o.value = v; wd.appendChild(o); }
+  wd.value = pf && pf.poe_watchdog != null ? (pf.poe_watchdog ? "1" : "0") : "";
+  const wdt = field("Hlídač: bez odezvy (s)", el("input")); wdt.type = "number"; wdt.min = 10; wdt.max = 3600; wdt.value = (pf && pf.poe_watchdog_timeout) || 60;
+  const save = el("button", pf ? "Uložit profil" : "Vytvořit profil", "small");
+  const cancel = el("button", "Zrušit", "small secondary"); cancel.type = "button"; cancel.onclick = () => f.remove();
+  const acts = el("div", null, "pe-acts"); acts.append(save, cancel); f.appendChild(acts);
+  f.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const body = { name: name.value.trim(), pvid: pvid.value ? Number(pvid.value) : null,
+      tagged: tagged.value.trim() ? tagged.value.split(/[ ,;]+/).filter(Boolean) : null, poe: poe.value || null, edge: edge.value || null,
+      poe_watchdog: wd.value === "" ? null : wd.value === "1", poe_watchdog_timeout: Number(wdt.value) };
+    try {
+      if (pf) await api("PUT", `/tenants/${tenantId}/port-profiles/${pf.id}`, body);
+      else await api("POST", `/tenants/${tenantId}/port-profiles`, body);
+      msg("Profil uložen"); loadSitePorts();
+    } catch (er) { msg(er.message, true); }
+  });
+  box.appendChild(f);
+  name.focus();
+}
+
+function drawMlag() {
+  const box = $("sp-mlag"); box.textContent = "";
+  box.appendChild(el("h3", "LACP a MLAG"));
+  const bonds = [];
+  for (const d of (spData && spData.devices) || []) for (const b of d.bonds || []) bonds.push([d, b]);
+  if (bonds.length) {
+    const ul = el("ul", null, "plain");
+    for (const [d, b] of bonds) {
+      const li = el("li", `${d.device}: ${b.name} (${b.slaves.join(", ")})${b.mlag_id ? ` · MLAG ${b.mlag_id}` : ""}${b.running ? "" : " · neběží"}`);
+      if (b.mtc) {
+        const rm = el("button", "Zrušit", "small secondary"); rm.type = "button";
+        rm.onclick = async () => {
+          if (!(await ask(`Zrušit bond ${b.name} na ${d.device}? Porty se vrátí do bridge s nastavením bondu. Vypni LACP i na protistraně.`))) return;
+          try { const r = await api("POST", `/tenants/${tenantId}/devices/${d.device_id}/bonds`, { kind: "bond_remove", name: b.name, apply: true });
+            msg(`Odesláno: ${r.summary}`); loadPlans(); } catch (e) { msg(e.message, true); }
+        };
+        li.append(" ", rm);
+      }
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+  } else box.appendChild(el("p", "Žádné bondy. LACP vytvoříš výběrem portů v detailu switche (Vybrat více portů → LACP).", "muted small"));
+  const sw = ((spData && spData.devices) || []).filter((d) => d.ports.length);
+  if (sw.length < 2) return;
+  box.appendChild(el("h4", "MLAG mezi dvěma switchi"));
+  box.appendChild(el("p", "Klient (server, switch) připojený do obou switchů jedním LACP bondem. Peer port = přímé propojení switchů. Vytvoří dva plány (A primární); aplikuj je v Plánech změn. Ověř v labu.", "muted small"));
+  const f = el("form", null, "pe-grid");
+  const side = (label) => {
+    const wrap = el("div", null, "mlag-side");
+    wrap.appendChild(el("b", label));
+    const dsel = el("select"); for (const d of sw) { const o = el("option", d.device); o.value = d.device_id; dsel.appendChild(o); }
+    const peer = el("select"), mem = el("input");
+    mem.placeholder = "porty ke klientovi, např. ether10";
+    const fill = () => { peer.textContent = ""; const d = sw.find((x) => x.device_id === dsel.value); for (const p of d.ports) { const o = el("option", p.port); o.value = p.port; peer.appendChild(o); } };
+    dsel.addEventListener("change", fill); fill();
+    const l1 = el("label", null, "pe-field"); l1.append(el("span", "Switch"), dsel);
+    const l2 = el("label", null, "pe-field"); l2.append(el("span", "Peer port"), peer);
+    const l3 = el("label", null, "pe-field"); l3.append(el("span", "Porty ke klientovi"), mem);
+    wrap.append(l1, l2, l3);
+    f.appendChild(wrap);
+    return { dsel, peer, mem };
+  };
+  const A = side("Switch A (primární)"), B = side("Switch B");
+  if (sw[1]) { B.dsel.value = sw[1].device_id; B.dsel.dispatchEvent(new Event("change")); }
+  const idl = el("label", null, "pe-field"); const mid = el("input"); mid.type = "number"; mid.min = 1; mid.value = 10;
+  idl.append(el("span", "mlag-id"), mid); f.appendChild(idl);
+  const go = el("button", "Připravit plány MLAG", "small"); f.appendChild(go);
+  f.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const ports = (x) => x.mem.value.split(/[ ,;]+/).filter(Boolean);
+    const body = {
+      a: { device_id: A.dsel.value, peer_port: A.peer.value, members: [{ ports: ports(A), mlag_id: Number(mid.value) }] },
+      b: { device_id: B.dsel.value, peer_port: B.peer.value, members: [{ ports: ports(B), mlag_id: Number(mid.value) }] },
+    };
+    try {
+      const r = await api("POST", `/tenants/${tenantId}/mlag`, body);
+      msg(`Plány MLAG připravené (${r.plans.length}) – schval je v Plánech změn, nejdřív A, pak B`);
+      for (const p of r.plans) for (const w of p.warnings || []) msg(w, true);
+      loadPlans();
+    } catch (e) { msg(e.message, true); }
+  });
+  box.appendChild(f);
+}
+
+$("sports-btn").addEventListener("click", loadSitePorts);
 
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
@@ -3841,6 +4308,9 @@ function renderIntentWifi() {
   $("wifi-width").value = String(w.max_width || 80);
   $("wifi-dfs").checked = w.dfs !== false;
   $("wifi-country").value = w.country || (me && me.defaults && me.defaults.country) || "Czech Republic";
+  $("wifi-tx").value = w.tx_power || "balanced";
+  $("wifi-steer").checked = w.steering !== false;
+  $("wifi-rogue").checked = w.rogue_scan === "night";
   $("wifi-result").textContent = "";
   renderSsidCards();
   renderApBoard();
@@ -4190,7 +4660,9 @@ $("wifi-deploy").addEventListener("click", async () => {
   const ul = $("wifi-result"); ul.textContent = "";
   for (const b of w.blockers || []) ul.appendChild(el("li", b, "sev-error"));
   for (const r of w.radios || []) {
-    const li = el("li", `${r.device} ${r.interface}: ${r.band} GHz, kanál ${r.channel ?? "?"} / ${r.width} MHz – ${r.ssids.join(", ")}`);
+    const li = el("li", `${r.device} ${r.interface}: ${r.band} GHz, kanál ${r.channel ?? "?"} / ${r.width} MHz` +
+                        `, výkon ${r.tx_power != null ? r.tx_power + " dBm" : "max."} – ${r.ssids.join(", ")}`);
+    if (r.tx_reason) li.title = r.tx_reason;
     if (r.group) li.appendChild(el("span", groupName(r.group), "wpill"));
     if (r.chip) li.appendChild(el("span", CHIP_LABEL[r.chip] || r.chip, "ap-std " + r.chip));
     ul.appendChild(li);
@@ -4268,7 +4740,8 @@ async function saveIntent() {
     networks: intentNets.map((n) => ({ ...n, dns: typeof n.dns === "string" ? n.dns : (n.dns || []).join(",") })),
     access_vlan: $("intent-access").value, mgmt_native: $("intent-native").checked, auto_trunk: $("intent-auto").checked,
     wifi: { capsman_device_id: $("wifi-host").value || null, max_width: Number($("wifi-width").value),
-            dfs: $("wifi-dfs").checked, country: $("wifi-country").value.trim(), groups: wifiGroups },
+            dfs: $("wifi-dfs").checked, country: $("wifi-country").value.trim(), groups: wifiGroups,
+            tx_power: $("wifi-tx").value, steering: $("wifi-steer").checked, rogue_scan: $("wifi-rogue").checked ? "night" : "off" },
   };
   try { await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/intent`, body); msg("Záměr lokality uložen"); loadIntent(); }
   catch (e) { msg(e.message, true); }

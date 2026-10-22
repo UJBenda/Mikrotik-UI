@@ -101,6 +101,7 @@
             <div id="site-tabs" class="seg">
               <button id="infra-btn" type="button">Infrastruktura</button>
               <button id="topo-btn" type="button">Topologie</button>
+              <button id="sports-btn" type="button">Porty</button>
               <button id="clients-btn" type="button">Klienti</button>
               <button id="wifi-btn" type="button">Wi-Fi</button>
               <button id="net-btn" type="button">Sítě a DHCP</button>
@@ -125,6 +126,21 @@
           <svg id="topo" viewBox="0 0 800 400" role="img" aria-label="Topologie lokality"></svg>
           <p class="muted">Plné uzly = spravovaná zařízení, prázdné = sousedé mimo správu.</p>
         </div>
+      <div id="sports-wrap" hidden class="pane">
+        <div class="sp-bar">
+          <input id="sp-filter" placeholder="Filtr: port, popis, profil, soused, VLAN…" size="34">
+          <label class="check"><input type="checkbox" id="sp-poe"> jen PoE</label>
+          <label class="check"><input type="checkbox" id="sp-up"> jen s linkou</label>
+        </div>
+        <div id="sp-sel" class="port-sel" hidden></div>
+        <table class="sp-t"><thead><tr><th><input type="checkbox" id="sp-all" aria-label="Vybrat vše"></th><th>Switch</th><th>Port</th>
+          <th>Popis</th><th>Soused</th><th>PoE</th><th>Native</th><th>Tagované</th><th>Profil</th><th>Stav</th></tr></thead>
+          <tbody id="sp-body"></tbody></table>
+        <div class="sp-grid">
+          <div class="card-lite" id="sp-profiles"></div>
+          <div class="card-lite" id="sp-mlag"></div>
+        </div>
+      </div>
       <div id="clients-wrap" hidden class="pane">
         <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
         <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
@@ -134,6 +150,7 @@
       </div>
       <div id="wifi-wrap" hidden class="pane">
         <div id="capsman-card" class="capsman-card"></div>
+        <div id="rogue-card" class="card-lite rogue-card"></div>
         <div class="roam-card">
           <div class="roam-head"><h3>Roaming a problémy klientů</h3><span id="roam-range" class="seg"></span>
             <span id="roam-log" class="muted small"></span></div>
@@ -190,6 +207,10 @@
             <label>Max. šířka 5 GHz <select id="wifi-width"><option value="80">80 MHz</option><option value="40">40 MHz</option><option value="20">20 MHz</option></select></label>
             <label><input type="checkbox" id="wifi-dfs"> i DFS kanály (52–140)</label>
             <label>Země <input id="wifi-country" size="14"></label>
+            <label title="Vyvážený: výkon podle počtu AP a signálu klientů, 2,4 GHz o 6 dB níž (klienti se drží 5 GHz)">Výkon AP
+              <select id="wifi-tx"><option value="balanced">automaticky vyvážený</option><option value="auto">maximum (výchozí RouterOS)</option></select></label>
+            <label title="802.11k (seznam sousedních AP) a 802.11v (doporučení přejít na lepší AP)"><input type="checkbox" id="wifi-steer"> 802.11k/v</label>
+            <label title="AP v noci (2–5 h) krátce proskenují okolí – podvržená AP s naším SSID a sousední sítě"><input type="checkbox" id="wifi-rogue"> noční sken cizích AP</label>
             <button id="wifi-save" type="button" class="small secondary">Uložit nastavení Wi-Fi</button>
           </div>
           <div id="ssid-cards" class="ssid-grid"></div>
@@ -420,10 +441,23 @@
       </div>
       <div id="d-ports" class="ports"></div>
       <div id="d-ports-legend" class="ports-legend"></div>
+      <div id="port-sel" class="port-sel" hidden></div>
       <div id="port-edit" class="port-edit" hidden></div>
       <div id="d-ptable-wrap" class="ptable-wrap" hidden>
         <table id="d-ptable" class="ptable"><thead><tr id="d-ptable-h"></tr></thead><tbody id="d-ptable-b"></tbody></table>
       </div>
+
+      <details id="d-tools" class="d-tools">
+        <summary>Nástroje zařízení – ping, traceroute, Wake-on-LAN</summary>
+        <form id="d-tools-form" class="inline">
+          <select id="d-tool" aria-label="Nástroj">
+            <option value="ping">Ping</option><option value="traceroute">Traceroute</option><option value="wol">Wake-on-LAN</option>
+          </select>
+          <input id="d-tool-arg" placeholder="IP nebo jméno (WoL: MAC)" size="26" required>
+          <button class="small">Spustit</button>
+        </form>
+        <div id="d-tool-out" class="tool-out" hidden></div>
+      </details>
 
       <div id="d-traffic" class="traffic" hidden>
         <div class="traffic-head">

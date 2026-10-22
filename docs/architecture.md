@@ -944,3 +944,29 @@ NTP → `[site_defaults]`, `regional.py`; časová zóna i pro server) → sprá
 shrnutí → průběh → **záchranné údaje** (heslo záloh, DB bez hesel – peer přes unix socket, cesty;
 stáhnout / vytisknout, potvrdit uložení) → přepnutí na controller. Obnova vynechá režim, region a
 správce (vše je v záloze).
+
+## Nástroje portů, hromadné úpravy, LACP/MLAG, Wi-Fi výkon a podvržená AP
+
+Podle srovnání s UniFi, Meraki, Aruba a Omada (dokument „Správa switchů a AP – co převzít“):
+
+- **Živé nástroje** (`porttools.run_tool`, REST v tunelu, audit `device.tool.*`): ping a traceroute ze
+  zařízení, Wake-on-LAN (rozhraní = bridge, kde je MAC vidět), test kabelu (`cable-test` s `duration`,
+  na starších `once`), blikání LED portu. Restart portu (`port_bounce`) a PoE (`poe_cycle`) jdou frontou
+  příkazů – skript doběhne na zařízení celý i na uplinku.
+- **PoE hlídač**: RouterOS umí nativně (`/interface ethernet poe power-cycle-ping-enabled/address/timeout`,
+  adresa IP nebo MAC – MAC-ping jen z daného portu). Controller navrhne cíl: IP souseda MNDP/LLDP, IP klienta
+  na portu, MAC MikroTiku. Výchozí 60 s (RouterOS 5 s je na restart AP krátké).
+- **Profily portů** jako UniFi (PoE, native, tagované, edge, hlídač), úprava profilu, **hromadné použití**
+  (`porttools.bulk`): jeden plán s návratem na switch; `portcfg.plan_many` skládá členství ve VLAN přes porty.
+- **LACP/MLAG** (`bondcfg`): bond 802.3ad z portů (VLAN a PVID z portů na bond, návrat vrátí porty s jejich
+  nastavením); MLAG dvojice – peer port tagovaný ve všech VLAN, `mlag-id` na bondech, RouterOS 7.22+
+  `mlag-peer-port`/`mlag-priority` na bridgi, starší `/interface bridge mlag`; kontroly (vlan-filtering,
+  L3 HW offload, přímé spojení peer portů, stejná priorita bridge).
+- **Zámek portu**: `learn=no`, statický bridge host a ACL čipu (Marvell Prestera – CRS3xx/5xx; povolit MAC,
+  zbytek zahodit), jinde bridge filtr (jen provoz přes CPU – varování). Komentář `mtc-lock <port>`.
+- **Wi-Fi**: `txpower.py` (vyvážený výkon), přepínač 802.11k/v, sken okolí (`rogue.py`, tabulka `wifi_bss`
+  s RLS, migrace 0020): own / rogue (cizí BSSID s naším SSID → alert `rogue_ap`) / neighbor; noční sken
+  2–5 h podle politiky `rogue_scan: night`.
+
+K ověření v labu: `cable-test` a `blink` přes REST, ACL pravidla zámku na CRS3xx, MLAG na dvou CRS
+(7.22+ i 7.16), výstup `/interface/wifi/scan` přes REST (pole `address`, `channel`, `signal`).

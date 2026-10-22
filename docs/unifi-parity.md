@@ -102,9 +102,12 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 | Time Machine portů (10.2, 10.6) | 24h historie stavů portů | `port_event` z porovnání inventur (linka, výpadky z `link-downs`, rychlost, duplex, PoE, PVID, tagované VLAN, STP role, soused, popis), 90 dní; časová osa v detailu zařízení a v editoru portu | ✅ (přetáčení panelu portů v čase zbývá) |
 | Port Anomaly (9.5) | flapping, smyčky, včasné alerty, 24h skóre | alerty flapping, chyby, half-duplex ✅; skóre anomálie 0–100 za 24 h na port (výpadky z historie portů, přírůstek chyb, half-duplex, 100 Mb/s na gigabitu, smyčka) ✅; `loop-protect` v editoru portu, kritický alert a ↻ na portu při `loop-protect-status=disable`, záznam v historii portu ✅ | ✅ |
 | STP Edge / Auto STP Edge (10.2) | edge porty k zařízením, rychlejší konvergence | bridge port `edge=yes/auto`; varování „konvergence STP“ v Infrastruktuře | 🟡 |
-| Ethernet Port Profiles | šablona portu (VLAN, PoE, STP, storm control) | profil = sada vlastností bridge port + bridge vlan + ethernet (poe-out, storm-rate…); aplikace přes plán změn s potvrzením | ◐ profily tenanta (PVID, tagované VLAN, PoE, edge), výběr v editoru portu, shoda portu s profilem; hromadné použití a storm control zbývají |
-| Port locking (10.6) | port uzamčený na konkrétní zařízení | bridge port `learn=no` + statický bridge host, nebo `/interface bridge filter` s MAC | ⏳ |
-| Device Supervisor (10.2) | ping watchdog, power-cycle přes PoE | controller pingne zařízení přes REST souseda → `/interface ethernet poe power-cycle` na portu switche (se schválením) | ⏳ |
+| Ethernet Port Profiles | šablona portu (VLAN, PoE, STP, storm control) | profil = sada vlastností bridge port + bridge vlan + ethernet (poe-out, storm-rate…); aplikace přes plán změn s potvrzením | ✅ profily tenanta (PVID, tagované VLAN, PoE, edge, PoE hlídač), úprava profilu, hromadné použití na porty víc switchů (záložka Porty, výběr více portů v detailu); storm control zbývá |
+| Bulk port edit (Meraki) | změna mnoha portů najednou | `portcfg.plan_many` – jeden plán s návratem na switch, členství ve VLAN se skládá přes porty | ✅ |
+| Link aggregation, MLAG | LACP, MC-LAG | `bondcfg`: 802.3ad bond z vybraných portů (VLAN a PVID se přenesou), MLAG dvojice (7.22+ `mlag-peer-port`, starší `/interface bridge mlag`), zrušení bondu | ✅ (MLAG ověřit v labu) |
+| Port locking (10.6) | port uzamčený na konkrétní zařízení | `learn=no` + statický bridge host + ACL čipu (CRS3xx/5xx), jinak bridge filtr | ✅ (ověřit na HW) |
+| Device Supervisor (10.2), Omada IntelliRecover | ping watchdog, power-cycle přes PoE | nativně v RouterOS: `/interface ethernet poe power-cycle-ping-*`, cíl IP/MAC zařízení na portu (navržený ze souseda/klienta), v editoru portu i v profilu | ✅ |
+| Live Tools (Meraki) | ping, traceroute, test kabelu, restart portu, WoL, blikání LED | `porttools`: REST `/ping`, `/tool/traceroute`, `/tool/wol`, `/interface/ethernet/cable-test`, `/interface/ethernet/blink` (ověřit), restart portu a PoE frontou příkazů | ✅ (test kabelu a blikání ověřit na HW) |
 
 ### Wi-Fi / AP
 
@@ -112,6 +115,9 @@ Rešerše 17. 10. 2026 (zdroje dole). Stav: ✅ hotovo · 🟡 částečně · �
 | --- | --- | --- | --- |
 | Radio Manager, Radios Overview + Time Machine | rádia, kanály, klienti, historie | přehled Wi-Fi (rádia, SSID, kanály, signál, CAPsMAN) | 🟡 bez historie |
 | Channel AI (9.5) | noční plán kanálů pro celou lokalitu | skutečný kanál z `/interface/wifi/monitor once`; plán kanálů lokality bez RF skenu (sken přeruší provoz): vyrovnané rozložení AP na EU kanály, bez meteoradarů 120–128, přednost non-DFS a současnému kanálu běžících AP s klienty, šířka podle hustoty (jen zúžení), počet překryvů teď → po; příkaz ke zkopírování ✅; ⏳ aplikace přes plán s návratem, RF sken v noci | 🟡 |
+| Auto TX power, band balancing (Meraki, Aruba) | výkon podle hustoty AP | `txpower.py`: 5 GHz podle počtu AP, 2,4 GHz o 6 dB níž, korekce podle signálu klientů; `tx-power` v master konfiguraci CAPsMAN | ✅ (řízená Wi-Fi) |
+| 802.11k/v (Client Balancing, ClientMatch) | navádění klientů | `/interface wifi steering` rrm+wnm (výchozí zapnuto, přepínač v nastavení Wi-Fi); CAPsMAN to sám nezapíná | ✅ |
+| Air Marshal (rogue AP) | podvržená AP s naším SSID | sken rádií AP (`/interface/wifi/scan`) ručně nebo v noci, třídění own/rogue/neighbor, alert `rogue_ap`, označení známých | ✅ (sken přeruší klienty na pár s) |
 | Multicast Suppressor | méně broadcastů ve vzduchu | `multicast-enhance`, IGMP snooping na bridge, filtrace mDNS | ⏳ |
 | OWE (Enhanced Open) | šifrované otevřené SSID | `security.authentication-types=owe` (wifi balík) | ⏳ |
 

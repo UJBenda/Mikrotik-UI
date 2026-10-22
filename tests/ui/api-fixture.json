@@ -2250,7 +2250,16 @@
      "new": "down",
      "text": "linka dole"
     }
-   ]
+   ],
+   "poe_watchdog": {
+    "enabled": false,
+    "address": "",
+    "timeout": 5
+   },
+   "watchdog_suggest": "192.168.88.31",
+   "lock": null,
+   "bond": null,
+   "learn": "auto"
   },
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/port-history?days=7": {
    "days": 7,
@@ -4728,7 +4737,124 @@
    "pending": false,
    "dir": "/var/backups/mtcontroller",
    "keep": 14
-  }
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/wifi/rogue": {
+   "bss": [
+    {
+     "bssid": "00:11:22:33:44:55",
+     "ssid": "Firma",
+     "frequency": 2412,
+     "signal": -71,
+     "security": "wpa2-psk",
+     "kind": "rogue",
+     "acknowledged": false,
+     "first_seen": "2026-10-22T02:10:00+00:00",
+     "last_seen": "2026-10-22T02:10:00+00:00",
+     "seen_by": null,
+     "seen_by_name": "ap1"
+    },
+    {
+     "bssid": "00:11:22:33:44:66",
+     "ssid": "Soused",
+     "frequency": 2437,
+     "signal": -80,
+     "security": "wpa2-psk",
+     "kind": "neighbor",
+     "acknowledged": false,
+     "first_seen": "2026-10-22T02:10:00+00:00",
+     "last_seen": "2026-10-22T02:10:00+00:00",
+     "seen_by": null,
+     "seen_by_name": "ap1"
+    }
+   ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/ports": {
+   "devices": [
+    {
+     "device_id": "06813aef-ac70-438a-a7d6-7859862f16ed",
+     "device": "sw",
+     "model": "CRS326",
+     "online": true,
+     "manage": true,
+     "ports": [
+      {
+       "port": "ether1",
+       "comment": "uplink",
+       "disabled": false,
+       "running": true,
+       "poe": null,
+       "pvid": 1,
+       "tagged": [
+        "10",
+        "20"
+       ],
+       "bond": null,
+       "lock": null,
+       "watchdog": null,
+       "profile": null,
+       "neighbor": "gw"
+      },
+      {
+       "port": "ether2",
+       "comment": "AP",
+       "disabled": false,
+       "running": true,
+       "poe": "auto-on",
+       "pvid": 20,
+       "tagged": [
+        "30"
+       ],
+       "bond": null,
+       "lock": null,
+       "watchdog": true,
+       "profile": "AP",
+       "neighbor": "AP-1"
+      }
+     ],
+     "bonds": [
+      {
+       "name": "bond-mtc1",
+       "slaves": [
+        "ether7",
+        "ether8"
+       ],
+       "mode": "802.3ad",
+       "mlag_id": null,
+       "running": true,
+       "mtc": true
+      }
+     ]
+    }
+   ],
+   "profiles": [
+    {
+     "id": 1,
+     "name": "AP",
+     "pvid": 20,
+     "tagged": [
+      "30"
+     ],
+     "poe": "auto-on",
+     "edge": "yes",
+     "poe_watchdog": true,
+     "poe_watchdog_timeout": 60
+    }
+   ]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/port-profiles": [
+   {
+    "id": 1,
+    "name": "AP",
+    "pvid": 20,
+    "tagged": [
+     "30"
+    ],
+    "poe": "auto-on",
+    "edge": "yes",
+    "poe_watchdog": true,
+    "poe_watchdog_timeout": 60
+   }
+  ]
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",
  "gw": "06813aef-ac70-438a-a7d6-7859862f16ed",
