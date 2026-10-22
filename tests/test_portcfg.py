@@ -148,3 +148,81 @@ def test_flow_rolled_back_and_poe_cycle():
         assert 'poe power-cycle [find name="ether3"] duration=5s' in s
     finally:
         drop_db(name)
+
+
+INV2 = dict(INV, poe=[{"name": "ether3", "poe-out": "auto-on", "power-cycle-ping-enabled": "false",
+                       "power-cycle-ping-address": "", "power-cycle-ping-timeout": "5s"}],
+            switch=[{"name": "switch1", "type": "Marvell-98DX3236"}],
+            ethernet=[dict(e, switch="switch1") for e in INV["ethernet"]],
+            bridge_ports=[dict(b, learn="auto") for b in INV["bridge_ports"]])
+
+
+def test_poe_watchdog_plan():
+    st = portcfg.port_state(INV2, "ether3")
+    assert st["poe_watchdog"] == {"enabled": False, "address": "", "timeout": 5}
+    p = portcfg.plan(INV2, "ether3", {"poe_watchdog": {"enabled": True, "address": "192.168.88.20", "timeout": 120}})
+    assert ('/interface ethernet poe set [find name="ether3"] power-cycle-ping-enabled=yes '
+            'power-cycle-ping-address="192.168.88.20" power-cycle-ping-timeout=120s') in p["apply"]
+    assert p["revert"].strip().endswith("power-cycle-ping-enabled=no")
+    assert "PoE hlídač" in p["summary"]
+    # MAC (MAC-ping z portu) je platný cíl
+    assert "AA:BB:CC:00:11:22" in portcfg.plan(INV2, "ether3", {"poe_watchdog": {"enabled": True, "address": "aa:bb:cc:00:11:22"}})["apply"]
+    for bad in ({"enabled": True, "address": "evil; /system reset"}, {"enabled": True, "address": "10.0.0.1", "timeout": 5}):
+        with pytest.raises(portcfg.PortError):
+            portcfg.plan(INV2, "ether3", {"poe_watchdog": bad})
+    with pytest.raises(portcfg.PortError):
+        portcfg.plan(INV2, "ether1", {"poe_watchdog": {"enabled": True, "address": "10.0.0.1"}})  # bez PoE
+    assert portcfg.duration_s("1m30s") == 90 and portcfg.duration_s("00:02:00") == 120 and portcfg.duration_s("") is None
+
+
+def test_port_lock_hw_and_sw():
+    p = portcfg.plan(INV2, "ether3", {"lock": "aa:bb:cc:00:11:22"})
+    a = p["apply"]
+    assert '/interface bridge port set [find interface="ether3" dynamic=no] learn=no' in a
+    assert 'bridge host add bridge="bridge" mac-address=AA:BB:CC:00:11:22 interface="ether3" vid=1 comment="mtc-lock ether3"' in a
+    assert 'switch rule add switch="switch1" ports="ether3" src-mac-address=AA:BB:CC:00:11:22/FF:FF:FF:FF:FF:FF' in a
+    assert 'new-dst-ports="" comment="mtc-lock ether3"' in a
+    r = p["revert"].splitlines()
+    assert r[0].startswith("/interface ethernet switch rule remove") and r[-1].endswith("learn=auto")
+    assert not p["warnings"]
+    # switch bez ACL v čipu: bridge filtr + varování
+    sw = dict(INV2, switch=[{"name": "switch1", "type": "Atheros-8327"}])
+    p = portcfg.plan(sw, "ether3", {"lock": "AA:BB:CC:00:11:22"})
+    assert "bridge filter add chain=forward in-interface=\"ether3\" src-mac-address=!AA:BB:CC:00:11:22" in p["apply"]
+    assert p["warnings"]
+    # zamčený port → odemknutí a změna MAC
+    locked = dict(INV2, bridge_hosts=[{"mac-address": "AA:BB:CC:00:11:22", "on-interface": "ether3", "dynamic": "false",
+                                       "local": "false"}],
+                  switch_rules=[{"comment": "mtc-lock ether3"}],
+                  bridge_ports=[dict(b, learn="no" if b["interface"] == "ether3" else "auto") for b in INV["bridge_ports"]])
+    assert portcfg.port_state(locked, "ether3")["lock"] == "AA:BB:CC:00:11:22"
+    un = portcfg.plan(locked, "ether3", {"lock": ""})
+    assert "learn=auto" in un["apply"] and "learn=no" in un["revert"] and "mac-address=AA:BB:CC:00:11:22" in un["revert"]
+    mv = portcfg.plan(locked, "ether3", {"lock": "AA:BB:CC:00:11:33"})
+    a = mv["apply"].splitlines()
+    assert a.index('/interface bridge host remove [find comment="mtc-lock ether3"]') < \
+        next(i for i, x in enumerate(a) if "AA:BB:CC:00:11:33" in x)
+    rv = mv["revert"].splitlines()
+    # návrat: nejdřív pryč nový zámek, pak zpět starý
+    assert next(i for i, x in enumerate(rv) if "remove" in x) < next(i for i, x in enumerate(rv) if "AA:BB:CC:00:11:22" in x)
+    with pytest.raises(portcfg.PortError):
+        portcfg.plan(INV2, "ether3", {"lock": "nesmysl"})
+    for s in (p["apply"], p["revert"], mv["apply"], mv["revert"]):
+        assert _balanced(s) and s.isascii()
+
+
+def test_plan_many_aggregates_vlan_membership():
+    items = {"ether2": {"tagged": ["40", "50"], "pvid": 20}, "ether3": {"tagged": ["40", "50"]}, "ether4": {"tagged": ["50"]}}
+    p = portcfg.plan_many(INV, items)
+    a = p["apply"]
+    # 50 neexistuje: první port řádek založí, další se přidají – nepřepíšou se navzájem
+    assert a.count('vlan add bridge="bridge" vlan-ids=50') == 1
+    assert 'vlan-ids=50 dynamic=no] tagged="ether2,ether3"' in a and 'vlan-ids=50 dynamic=no] tagged="ether2,ether3,ether4"' in a
+    assert 'vlan-ids=40 dynamic=no] tagged="ether1,ether3,ether2"' in a
+    assert p["summary"].startswith("3 portů") and {c["port"] for c in p["changes"]} == {"ether2", "ether3", "ether4"}
+    r = p["revert"].splitlines()
+    # návrat od posledního portu: řádek 50 se smaže až nakonec
+    assert r[-1].startswith("/interface bridge port set") or "vlan-ids=50" in "".join(r[-3:])
+    assert r.index('/interface bridge vlan remove [find bridge="bridge" vlan-ids=50 comment="mtc"]') > \
+        r.index('/interface bridge vlan set [find bridge="bridge" vlan-ids=50 dynamic=no] tagged="ether2"')
+    assert portcfg.plan_many(INV, {"ether3": {"pvid": 1}})["changes"] == []

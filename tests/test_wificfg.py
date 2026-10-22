@@ -444,3 +444,17 @@ def test_groups_ppsk_flow():
         assert {"device.ap_group", "site.ssid", "plan.create"} <= acts
     finally:
         drop_db(name)
+
+
+def test_manager_tx_power_and_steering_toggle():
+    """Vyvážený výkon: 2 AP → 5 GHz 20 dBm, 2,4 GHz o 6 dB níž; auto = bez tx-power; steering jde vypnout."""
+    aps, invs = _aps()
+    rad = wificfg.site_radios(aps, invs)
+    m = wificfg.manager(SSIDS, rad, POLICY, host_has_radios=False)
+    s = m["script"]
+    assert s.count("tx-power=20") == 2 and s.count("tx-power=14") == 2
+    assert all(r["tx_power"] in (14, 20) and r["tx_reason"] for r in m["radios"])
+    m = wificfg.manager(SSIDS, rad, dict(POLICY, tx_power="auto", steering=False), host_has_radios=False)
+    assert "tx-power=" not in m["script"] and "steering add" not in m["script"]
+    assert 'steering remove [find comment="mtc"]' in m["script"]  # starý steering pryč
+    assert _balanced(m["script"])

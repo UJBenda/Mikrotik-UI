@@ -41,12 +41,23 @@ SECTIONS: list[Section] = [
             "name,type,mac-address,running,disabled,mtu,comment,rx-byte,tx-byte,rx-error,tx-error,"
             "rx-drop,tx-drop,link-downs,last-link-up-time,slave,dynamic"),
     Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out,loop-protect,loop-protect-status,disabled"),
-    Section("switch", "/interface/ethernet/switch", "name,type"),
+    Section("switch", "/interface/ethernet/switch", "name,type,l3-hw-offloading"),
+    # PoE hlídač (power-cycle při ztrátě pingu) – nastavení je v podmenu poe
+    Section("poe", "/interface/ethernet/poe",
+            "name,poe-out,power-cycle-ping-enabled,power-cycle-ping-address,power-cycle-ping-timeout,power-cycle-interval"),
+    Section("bonds", "/interface/bonding",
+            "name,slaves,mode,transmit-hash-policy,lacp-rate,mlag-id,disabled,running,comment"),
+    Section("mlag", "/interface/bridge/mlag"),
+    # zamknutí portu: pravidla controlleru (komentář mtc-lock) v ACL switche a bridge filtru
+    Section("switch_rules", "/interface/ethernet/switch/rule",
+            "switch,ports,src-mac-address,new-dst-ports,disabled,comment"),
+    Section("bridge_filters", "/interface/bridge/filter",
+            "chain,in-interface,src-mac-address,action,disabled,comment"),
     Section("bridges", "/interface/bridge",
             "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority,"
-            "dhcp-snooping,add-dhcp-option82,igmp-snooping,mtu"),
+            "dhcp-snooping,add-dhcp-option82,igmp-snooping,mtu,mlag-peer-port,mlag-priority"),
     Section("bridge_ports", "/interface/bridge/port",
-            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment,edge,trusted"),
+            "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment,edge,trusted,learn"),
     Section("bridge_vlans", "/interface/bridge/vlan",
             "bridge,vlan-ids,tagged,untagged,current-tagged,current-untagged,disabled,dynamic,comment"),
     Section("vlans", "/interface/vlan", "name,vlan-id,interface,disabled,comment"),

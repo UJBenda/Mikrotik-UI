@@ -193,6 +193,15 @@ def conditions(tx: Tx) -> list[Active]:
         out.append(Active(r["tenant_id"], r["device_id"], "rogue_dhcp", r["iface"] or "", "critical",
                           f"{_label(r)}: na {r['iface']} odpovídá cizí DHCP server {r['srv']} – "
                           "najdi ho v Klientech podle MAC a zapni DHCP snooping"))
+    # podvržené AP: cizí BSSID vysílá SSID lokality (sken AP), dokud ho správce neoznačí jako známé
+    for r in tx.fetchall(
+            """SELECT b.tenant_id, b.seen_by AS device_id, b.bssid, b.ssid, b.signal, d.identity, d.serial, d.id
+               FROM wifi_bss b JOIN device d ON d.id = b.seen_by
+               WHERE b.kind = 'rogue' AND NOT b.acknowledged AND b.last_seen > now() - interval '2 days'"""):
+        out.append(Active(r["tenant_id"], r["device_id"], "rogue_ap", r["bssid"], "critical",
+                          f"{_label(r)}: cizí AP {r['bssid']} vysílá naše SSID „{r['ssid']}“"
+                          + (f" ({r['signal']} dBm)" if r["signal"] is not None else "")
+                          + " – podvržená síť? Najdi ho, nebo ho v Wi-Fi označ jako známé"))
     # loop protect zablokoval port = na portu je smyčka (RouterOS port dočasně vypne)
     for r in tx.fetchall(
             """SELECT i.tenant_id, i.device_id, e->>'name' AS name, d.identity, d.serial, d.id

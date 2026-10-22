@@ -576,5 +576,41 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 27) Wi-Fi sítě ze skenu (podvržené AP) izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO wifi_bss (tenant_id, site_id, bssid, ssid, kind)
+  VALUES ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-00000000b5b1', 'AA:BB:CC:00:00:10', 'Firma', 'rogue');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM wifi_bss) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí sken Wi-Fi tenanta B'; END IF;
+  UPDATE wifi_bss SET acknowledged = true; DELETE FROM wifi_bss;
+  BEGIN
+    INSERT INTO wifi_bss (tenant_id, site_id, bssid, kind)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-00000000b5b1', 'AA:BB:CC:00:00:11', 'neighbor');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal sken tenantovi B';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    -- lokalita tenanta B s tenant_id A: složený cizí klíč to nepustí
+    INSERT INTO wifi_bss (tenant_id, site_id, bssid, kind)
+      VALUES ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-00000000b5b1', 'AA:BB:CC:00:00:12', 'neighbor');
+    RAISE EXCEPTION 'FAIL: sken navázaný na cizí lokalitu';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 27 sken Wi-Fi izolovaný';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM wifi_bss WHERE NOT acknowledged) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: tenant A změnil sken Wi-Fi B'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

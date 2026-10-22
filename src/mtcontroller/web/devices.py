@@ -163,7 +163,11 @@ async def port_get(request: Request, p: Principal, tid: str) -> Response:
             mode = plans.module_modes(tx, did).get("ports")
             profs = profiles.list_profiles(tx)
             match = profiles.matching(profs, state)
+            from .. import porttools
+
+            sug = porttools.watchdog_target(tx, inv, did, port) if state.get("poe_watchdog") is not None else None
             return {**state, "known_vlans": vlans, "uplink": port in _uplinks(tx, inv), "module_mode": mode,
+                    "watchdog_suggest": sug,
                     "profiles": profs, "profile": match["id"] if match else None,
                     "history": porthistory.history(tx, did, port, days=30, limit=20)}
 
@@ -387,6 +391,130 @@ async def port_profiles(request: Request, p: Principal, tid: str) -> Response:
             return profiles.list_profiles(tx)
 
     return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def port_profile_update(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+    try:
+        pid = int(request.path_params["profile_id"])
+    except ValueError:
+        return _err(404, "profil neexistuje")
+    data = await _json(request)
+    return json_response(await run_in_threadpool(profiles.update, st.db, tid, pid, data, p.user_id, client_ip(request)))
+
+
+@endpoint(OPERATE)
+async def device_tool(request: Request, p: Principal, tid: str) -> Response:
+    """Živý nástroj na zařízení: ping, traceroute, Wake-on-LAN, test kabelu, blikání LED portu."""
+    from .. import porttools
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    return json_response(await run_in_threadpool(porttools.run_tool, st.db, st.box, tid, did,
+                                                 str(request.path_params["tool"]), data, p.user_id, client_ip(request)))
+
+
+@endpoint(OPERATE)
+async def ports_bulk(request: Request, p: Principal, tid: str) -> Response:
+    """Hromadná úprava portů (nastavení nebo profil) na víc switchích – plán s návratem na každé zařízení."""
+    from .. import porttools
+
+    st = get_state(request)
+    data = await _json(request)
+    pid = data.get("profile_id")
+    try:
+        pid = int(pid) if pid not in (None, "") else None
+    except (TypeError, ValueError):
+        return _err(400, "neplatný profil")
+    desired = data.get("desired") if pid is None else None
+    res = await run_in_threadpool(porttools.bulk, st.db, st.settings, tid, data.get("targets") or [],
+                                  desired=desired, profile_id=pid, apply=bool(data.get("apply")),
+                                  can_manage=p.can(tid, MANAGE), user_id=p.user_id, ip=client_ip(request))
+    return json_response({"results": res}, 201)
+
+
+@endpoint(READ)
+async def site_ports(request: Request, p: Principal, tid: str) -> Response:
+    from .. import porttools
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return {"devices": porttools.site_ports(tx, sid), "profiles": profiles.list_profiles(tx)}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def device_bond(request: Request, p: Principal, tid: str) -> Response:
+    """LACP z vybraných portů ("lacp") nebo zrušení bondu controlleru ("bond_remove")."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    kind = str(data.get("kind") or "lacp")
+    if kind not in ("lacp", "bond_remove"):
+        return _err(400, "neznámý druh")
+    ip = client_ip(request)
+
+    def run():
+        with tenant_scope(st.db, tid) as tx:
+            up = _uplinks(tx, inventory.load(tx, did))
+        res = plans.create_bond_plan(st.db, tid, did, kind, data, p.user_id, ip, up)
+        if data.get("apply"):
+            if not p.can(tid, MANAGE):
+                raise ServiceError("plán je uložený – schválit ho musí správce tenanta")
+            res["command_id"] = plans.approve_plan(st.db, st.settings, tid, res["plan_id"], p.user_id, ip)
+        return res
+
+    return json_response(await run_in_threadpool(run), 201)
+
+
+@endpoint(OPERATE)
+async def mlag_create(request: Request, p: Principal, tid: str) -> Response:
+    """MLAG mezi dvěma switchi: dva plány (A primární, B sekundární), aplikace vědomě po jednom."""
+    from .. import porttools
+
+    st = get_state(request)
+    data = await _json(request)
+    a, b = data.get("a"), data.get("b")
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return _err(400, "chybí nastavení obou switchů")
+    for x in (a, b):
+        x["device_id"] = str(_uuid(str(x.get("device_id") or "")))
+    res = await run_in_threadpool(porttools.mlag_pair, st.db, tid, a, b, p.user_id, client_ip(request))
+    return json_response({"plans": res}, 201)
+
+
+@endpoint(READ)
+async def site_rogue(request: Request, p: Principal, tid: str) -> Response:
+    """Wi-Fi sítě ze skenu AP lokality: podvržené (naše SSID z cizího AP), sousední, naše."""
+    from .. import rogue
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    if request.method == "POST":
+        if not p.can(tid, OPERATE):
+            return _err(404, "nenalezeno")
+        data = await _json(request)
+        if data.get("bssid"):
+            if not p.can(tid, MANAGE):
+                return _err(403, "označit známé AP smí správce tenanta")
+            await run_in_threadpool(rogue.acknowledge, st.db, tid, sid, str(data["bssid"]), bool(data.get("ack", True)),
+                                    p.user_id, client_ip(request))
+            return json_response({"ok": True})
+        did = _uuid(str(data.get("device_id") or ""))
+        res = await run_in_threadpool(rogue.scan_device, st.db, st.box, tid, did, p.user_id, client_ip(request))
+        return json_response(res, 201)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return rogue.site_list(tx, sid)
+
+    return json_response({"bss": await run_in_threadpool(q)})
 
 
 @endpoint(MANAGE)
@@ -1482,6 +1610,13 @@ def routes() -> list[Route]:
         Route(T + "/client-logos", client_logos, methods=["GET"]),
         Route(T + "/client-logos/{scope}/{key}", client_logo, methods=["GET", "PUT", "DELETE"]),
         Route(T + "/port-profiles/{profile_id}", port_profile_delete, methods=["DELETE"]),
+        Route(T + "/port-profiles/{profile_id}", port_profile_update, methods=["PUT"]),
+        Route(d + "/tools/{tool}", device_tool, methods=["POST"]),
+        Route(d + "/bonds", device_bond, methods=["POST"]),
+        Route(T + "/ports/bulk", ports_bulk, methods=["POST"]),
+        Route(T + "/mlag", mlag_create, methods=["POST"]),
+        Route(s + "/ports", site_ports, methods=["GET"]),
+        Route(s + "/wifi/rogue", site_rogue, methods=["GET", "POST"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),

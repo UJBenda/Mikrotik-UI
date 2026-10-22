@@ -558,8 +558,8 @@ def _identity_done(tx: Tx, tenant_id: Any, device_id: Any, command_id: int) -> N
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
-                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog"}
-USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package"}
+                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog", "port_bounce"}
+USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package", "port_bounce"}
 
 
 def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
@@ -596,12 +596,16 @@ def request_command(db: Database, tenant_id: Any, device_id: Any, kind: str,
                 raise ServiceError("aktualizace tohoto zařízení už čeká na provedení")
         if kind == "upgrade":
             p = _upgrade_params(tx, device_id, dev["ros_version"] or "", str((params or {}).get("version", "")))
-        if kind == "poe_cycle":
+        if kind in ("poe_cycle", "port_bounce"):
             from . import inventory, portcfg
 
             port = str((params or {}).get("port", ""))
             try:
-                portcfg.poe_cycle_body(inventory.load(tx, device_id, ["ethernet"]), port)
+                inv = inventory.load(tx, device_id, ["ethernet", "interfaces"])
+                if kind == "poe_cycle":
+                    portcfg.poe_cycle_body(inv, port)
+                else:
+                    portcfg.bounce_body(inv, port)
             except (portcfg.PortError, ValueError) as e:
                 raise ServiceError(str(e)) from e
             p = {"port": port}
@@ -722,6 +726,11 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
 
         return routeros.wrap_command(ack_url, key, portcfg.poe_cycle_body(
             inventory.load(tx, dev["id"], ["ethernet"]), str(cmd["params"].get("port", ""))), opts)
+    if kind == "port_bounce":
+        from . import inventory, portcfg
+
+        return routeros.wrap_command(ack_url, key, portcfg.bounce_body(
+            inventory.load(tx, dev["id"], ["ethernet", "interfaces"]), str(cmd["params"].get("port", ""))), opts)
     raise ServiceError(f"neznámý příkaz {kind}")
 
 

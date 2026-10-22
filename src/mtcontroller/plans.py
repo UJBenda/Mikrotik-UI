@@ -289,6 +289,72 @@ def create_port_plan(db: Database, tenant_id: Any, device_id: Any, port: str, de
     return {"plan_id": row["id"], "summary": p["summary"], "warnings": p["warnings"], "changes": p["changes"]}
 
 
+def _ports_ready(tx: Tx, device_id: Any) -> dict:
+    if not tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND state IN ('adopted', 'offline')",
+                       {"d": str(device_id)}):
+        raise NotFound("zařízení neexistuje nebo není adoptované")
+    inv = inventory.load(tx, device_id)
+    if not inv:
+        raise ServiceError("inventura zařízení zatím neproběhla")
+    return inv
+
+
+def _insert_ports_plan(tx: Tx, tenant_id: Any, device_id: Any, inv: dict, p: dict, chg: dict,
+                       user_id: Any, ip: str | None) -> dict:
+    if not p["changes"]:
+        raise ServiceError("žádná změna oproti aktuálnímu stavu")
+    row = tx.fetchone(
+        """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, revert_script,
+                                    confirm_minutes, basis_sha, created_by)
+           VALUES (%(t)s, %(d)s, 'ports', %(sum)s, %(chg)s, %(sc)s, %(rv)s, %(cm)s, %(b)s, %(u)s) RETURNING id""",
+        {"t": str(tenant_id), "d": str(device_id), "sum": p["summary"][:500],
+         "chg": {**chg, "changes": p["changes"], "warnings": p["warnings"]},
+         "sc": p["apply"], "rv": p["revert"], "cm": CONFIRM_MINUTES, "b": portcfg.config_basis(inv),
+         "u": _s(user_id)})
+    audit(tx, "plan.create", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+          after={"plan_id": row["id"], "module": "ports", "summary": p["summary"][:500]}, ip=ip)
+    return {"plan_id": row["id"], "summary": p["summary"], "warnings": p["warnings"], "changes": p["changes"]}
+
+
+def create_ports_plan(db: Database, tenant_id: Any, device_id: Any, items: dict[str, dict], user_id: Any = None,
+                      ip: str | None = None, uplinks: set[str] | None = None, warnings: list[str] | None = None) -> dict:
+    """Jeden plán pro víc portů zařízení (hromadná úprava, profil na víc portů)."""
+    with tenant_scope(db, tenant_id) as tx:
+        inv = _ports_ready(tx, device_id)
+        try:
+            p = portcfg.plan_many(inv, items, uplinks)
+        except portcfg.PortError as e:
+            raise ServiceError(str(e)) from e
+        p["warnings"] = list(warnings or []) + p["warnings"]
+        return _insert_ports_plan(tx, tenant_id, device_id, inv, p, {"ports": sorted(items)}, user_id, ip)
+
+
+def create_bond_plan(db: Database, tenant_id: Any, device_id: Any, kind: str, params: dict, user_id: Any = None,
+                     ip: str | None = None, uplinks: set[str] | None = None) -> dict:
+    """LACP bond z portů, zrušení bondu controlleru, nebo MLAG (jeden switch dvojice)."""
+    from . import bondcfg
+
+    with tenant_scope(db, tenant_id) as tx:
+        inv = _ports_ready(tx, device_id)
+        try:
+            if kind == "lacp":
+                p = bondcfg.lacp_plan(inv, [str(x) for x in params.get("ports") or []],
+                                      lacp_rate=str(params.get("lacp_rate") or "30secs"),
+                                      hash_policy=str(params.get("hash") or "layer-2-and-3"), uplinks=uplinks)
+            elif kind == "bond_remove":
+                p = bondcfg.remove_plan(inv, str(params.get("name") or ""))
+            elif kind == "mlag":
+                ver = (tx.fetchone("SELECT ros_version FROM device WHERE id = %(d)s", {"d": str(device_id)}) or {}).get("ros_version")
+                p = bondcfg.mlag_plan(inv, ver or "", str(params.get("peer_port") or ""), params.get("members") or [],
+                                      primary=bool(params.get("primary")))
+                p["warnings"] = list(params.get("pair_warnings") or []) + p["warnings"]
+            else:
+                raise ServiceError("neznámý druh agregace")
+        except portcfg.PortError as e:
+            raise ServiceError(str(e)) from e
+        return _insert_ports_plan(tx, tenant_id, device_id, inv, p, {"bond": kind}, user_id, ip)
+
+
 def plan_script(tx: Tx, plan_id: int, device_id: Any) -> dict:
     r = tx.fetchone("""SELECT module, script, revert_script, confirm_minutes FROM config_plan
                        WHERE id = %(i)s AND device_id = %(d)s AND status = 'queued'""",

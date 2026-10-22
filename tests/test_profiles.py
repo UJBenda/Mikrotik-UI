@@ -12,7 +12,8 @@ from mtcontroller.services import ServiceError
 
 def test_clean_and_matching():
     p = profiles.clean({"name": " AP trunk ", "pvid": "1", "tagged": "40, 10;10", "edge": "auto"})
-    assert p == {"name": "AP trunk", "pvid": 1, "tagged": "10,40", "poe": None, "edge": "auto"}
+    assert p == {"name": "AP trunk", "pvid": 1, "tagged": "10,40", "poe": None, "edge": "auto",
+                 "poe_watchdog": None, "poe_watchdog_timeout": None}
     assert profiles.clean({"name": "Bez tagů", "tagged": []})["tagged"] == ""
     for bad in ({"name": ""}, {"name": "x"}, {"name": "x", "pvid": 5000}, {"name": "x", "tagged": "1,abc"},
                 {"name": "x", "poe": "on"}, {"name": "x", "edge": "no-discover"}, {"name": "a\nb", "pvid": 1}):
@@ -22,7 +23,16 @@ def test_clean_and_matching():
              {"id": 2, "name": "Trunk", "pvid": 1, "tagged": ["10", "40"], "poe": None, "edge": None}]
     assert profiles.matching(profs, {"pvid": 1, "tagged": ["40", "10"], "poe": "auto-on"})["id"] == 2
     assert profiles.matching(profs, {"pvid": 10, "tagged": ["40"], "poe": "forced-on"}) is None
-    assert profiles.desired(profs[0]) == {"pvid": 10, "tagged": [], "poe": "forced-on"}
+    assert profiles.desired(profs[0]) == ({"pvid": 10, "tagged": [], "poe": "forced-on"}, None)
+    # PoE hlídač: s cílem se zapne, bez cíle varování
+    wd = dict(profs[0], poe_watchdog=True, poe_watchdog_timeout=90)
+    assert profiles.desired(wd, "192.168.1.5")[0]["poe_watchdog"] == {"enabled": True, "address": "192.168.1.5", "timeout": 90}
+    d, w = profiles.desired(wd)
+    assert "poe_watchdog" not in d and "hlídač" in w
+    assert profiles.clean({"name": "AP", "poe": "auto-on", "poe_watchdog": True})["poe_watchdog_timeout"] == 60
+    for bad in ({"name": "x", "poe_watchdog": True, "poe_watchdog_timeout": 3}, {"name": "x", "poe": "off", "poe_watchdog": True}):
+        with pytest.raises(ServiceError):
+            profiles.clean(bad)
 
 
 def test_api_flow():

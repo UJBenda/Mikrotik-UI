@@ -20,7 +20,7 @@ import json
 import re
 from typing import Any
 
-from . import channels, regional
+from . import channels, regional, txpower
 from .routeros import q
 
 TOKEN_RE = re.compile(r"MTCPSK([0-9a-f]{32})")
@@ -99,13 +99,14 @@ def site_radios(aps: list[dict], invs: dict[str, dict]) -> list[dict]:
         clients: dict[str, int] = {}
         for c in _rows(inv, "wifi_clients"):
             clients[str(c.get("interface"))] = clients.get(str(c.get("interface")), 0) + 1
+        sig = txpower.signals(inv)
         for r in radios(inv):
             f_now, w_now = channels.parse_channel((mon.get(r["interface"]) or {}).get("channel"))
             out.append({"device_id": str(d["id"]), "device": d.get("identity") or d.get("serial"),
                         "interface": r["interface"], "mac": r["mac"], "std": r["std"],
                         "band": "2ghz" if r["band"] == "2.4" else "5ghz", "freq_now": f_now, "width_now": w_now,
                         "frequency": "auto", "driver": "wifi", "running": True, "disabled": False,
-                        "clients": clients.get(r["interface"], 0)})
+                        "clients": clients.get(r["interface"], 0), "signals": sig.get(r["interface"], [])})
     return out
 
 
@@ -139,6 +140,8 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
         blockers.append("žádná zapnutá Wi-Fi síť (SSID)")
     plan = channels.plan(site_radio_list, max_width=int(policy.get("max_width") or 80), dfs=bool(policy.get("dfs", True)))
     by_radio = {(i["device_id"], i["interface"]): i for i in plan["items"]}
+    tx_mode = policy.get("tx_power") or "balanced"
+    tx = txpower.plan(site_radio_list, tx_mode)
     country = policy.get("country") or regional.country()
     lines = [
         "# Wi-Fi lokality - objekty controlleru se nahradi cele",
@@ -149,10 +152,12 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
         '/interface wifi security remove [find comment="mtc"]',
         '/interface wifi datapath remove [find comment="mtc"]',
         '/interface wifi steering remove [find comment="mtc"]',
-        # steering (802.11k/v) je doplněk: když ho RouterOS neumí, Wi-Fi musí běžet i bez něj
-        f':do {{ /interface wifi steering add name="{STEERING}" rrm=yes wnm=yes comment="mtc" }} '
-        'on-error={ :log warning "mtc: steering (802.11k/v) se nepodarilo nastavit" }',
     ]
+    steering = bool(policy.get("steering", True))
+    if steering:
+        # steering (802.11k/v) je doplněk: když ho RouterOS neumí, Wi-Fi musí běžet i bez něj
+        lines.append(f':do {{ /interface wifi steering add name="{STEERING}" rrm=yes wnm=yes comment="mtc" }} '
+                     'on-error={ :log warning "mtc: steering (802.11k/v) se nepodarilo nastavit" }')
     names: dict[str, int] = {}
     config_map: dict[str, str] = {}
     for n, s in enumerate(active, 1):
@@ -204,9 +209,11 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
         lines.append(ch + ' comment="mtc"')
         first, rest = mine[0], mine[1:]
         n1 = names[first["id"]]
+        tp = (tx.get((r["device_id"], r["interface"])) or {}).get("tx_power")
+        txa = f" tx-power={int(tp)}" if tp is not None else ""
         lines.append(f'/interface wifi configuration add name="mtc-r-{key}" ssid={q(first["ssid"])} country={q(country)} '
                      f'mode=ap security="mtc-sec{n1}" datapath="mtc-dp{n1}" '
-                     f'channel="mtc-ch-{key}" comment="mtc"')
+                     f'channel="mtc-ch-{key}"{txa} comment="mtc"')
         config_map[f"mtc-r-{key}"] = first["id"]
         slaves = ",".join(f"mtc-s{names[s['id']]}" for s in rest)
         lines.append(f"/interface wifi provisioning add radio-mac={mac} action=create-dynamic-enabled "
@@ -214,9 +221,11 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
                      + ' comment="mtc"')
         radio_rows.append({"device_id": r["device_id"], "device": r["device"], "interface": r["interface"], "band": band,
                            "group": r.get("group"), "chip": r.get("chip"), "ssids": [s["ssid"] for s in mine],
-                           "skipped": skipped, "channel": it["new"]["channel"] if it else None, "width": width})
+                           "skipped": skipped, "channel": it["new"]["channel"] if it else None, "width": width,
+                           "tx_power": tp, "tx_reason": (tx.get((r["device_id"], r["interface"])) or {}).get("reason")})
+    if steering:
+        lines.append(f':do {{ /interface wifi configuration set [find comment="mtc"] steering="{STEERING}" }} on-error={{}}')
     lines += [
-        f':do {{ /interface wifi configuration set [find comment="mtc"] steering="{STEERING}" }} on-error={{}}',
         '/interface wifi capsman set enabled=yes interfaces=bridge upgrade-policy=none require-peer-certificate=no',
     ]
     if host_has_radios:

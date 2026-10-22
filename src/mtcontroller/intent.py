@@ -254,8 +254,14 @@ def validate_wifi(raw: dict) -> dict:
             raise IntentError(f"Wi-Fi: skupina {name} je dvakrát")
         seen.add(gid)
         groups.append({"id": gid, "name": name})
+    tx = str(raw.get("tx_power") or "balanced")
+    if tx not in ("balanced", "auto"):
+        raise IntentError("Wi-Fi: výkon vysílání balanced | auto")
+    rogue = str(raw.get("rogue_scan") or "off")
+    if rogue not in ("off", "night"):
+        raise IntentError("Wi-Fi: sken cizích AP off | night")
     return {"capsman_device_id": host, "country": country, "dfs": bool(raw.get("dfs", True)), "max_width": width,
-            "groups": groups}
+            "groups": groups, "tx_power": tx, "steering": bool(raw.get("steering", True)), "rogue_scan": rogue}
 
 
 def validate_ssid(raw: dict, vids: set[int], need_psk: bool, group_ids: set[str] | None = None) -> dict:
