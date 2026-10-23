@@ -36,7 +36,8 @@ if [ -f "$ETC/config.toml" ]; then
   "$MTC_ADMIN" tls bootstrap || echo "!! certifikáty: mtc-admin tls bootstrap selhal" >&2
   systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path mtc-tls.path >/dev/null
   systemctl restart mtc-web mtc-worker mtc-syslog
-  systemctl start mtc-backup.timer mtc-backup.path mtc-tls.path
+  systemctl start mtc-backup.path mtc-tls.path
+  systemctl restart mtc-backup.timer  # plán záloh: timer co 15 min (starší verze měla denně)
   systemctl reload nginx 2>/dev/null || true
   exit 0
 fi

@@ -57,7 +57,12 @@ def _etc(tmp: Path) -> sysbackup.Paths:
     (ssl / "ca.key").write_text("KEY")
     (ssl / "ca.crt").write_text("CRT")
     (ssl / "server.key").write_text("ne")
-    return sysbackup.Paths(etc, ssl)
+    (ssl / "admin.crt").write_text("ADMIN-CRT")  # certifikát nginx (např. koupený)
+    (ssl / "admin.key").write_text("ADMIN-KEY")
+    pub = tmp / "pub"
+    pub.mkdir()
+    (pub / "active.json").write_text('{"admin": {"kind": "custom"}}')
+    return sysbackup.Paths(etc, ssl, pub)
 
 
 def test_create_content_and_prune(tmp_path):
@@ -87,7 +92,8 @@ def test_create_content_and_prune(tmp_path):
         assert man["schema"] == len(migrate.available()) and man["format"] == 1
         names = sorted(str(p.relative_to(work / "x")) for p in (work / "x").rglob("*") if p.is_file())
         assert names == ["db.dump", "etc/config.toml", "etc/device-ca.crt", "etc/master.key", "etc/setup-plan.json",
-                         "etc/vpn1.password", "manifest.json", "ssl/ca.crt", "ssl/ca.key"]
+                         "etc/vpn1.password", "manifest.json", "ssl-public/active.json", "ssl/admin.crt",
+                         "ssl/admin.key", "ssl/ca.crt", "ssl/ca.key"]
         assert (work / "x" / "db.dump").read_bytes() == b"DUMP2"
         with pytest.raises(sysbackup.BackupError, match="krátké"):
             sysbackup.create(s, owner, out, "kratke", paths, dump=lambda d, p: None)
@@ -141,12 +147,16 @@ def test_real_dump_and_restore(tmp_path):
 
         s2 = s.model_copy(deep=True)
         s2.database.migrate_dsn = f"dbname={target} user=mtc_owner host=/var/run/postgresql"
-        dest = sysbackup.Paths(tmp_path / "etc2", tmp_path / "ssl2")
+        dest = sysbackup.Paths(tmp_path / "etc2", tmp_path / "ssl2", tmp_path / "pub2")
         res = sysbackup.restore(f, PW, s2, paths=dest, recreate_db=recreate,
                                 migrate_db=lambda: migrate.upgrade(PgWireDatabase("mtc_owner", target)))
         assert res["manifest"]["schema"] == last - 1 and res["migrated"] == [last]
         assert (dest.etc / "master.key").read_text() == "MK" and not (dest.etc / "backup.key").exists()
         assert oct((dest.ssl / "ca.key").stat().st_mode & 0o777) == "0o600"
+        # certifikát nginx a jeho druh se obnoví (vlastní certifikát přežije přenos na nový server)
+        assert oct((dest.ssl / "admin.key").stat().st_mode & 0o777) == "0o600"
+        assert (dest.public / "admin.crt").read_text() == "ADMIN-CRT"
+        assert json.loads((dest.public / "active.json").read_text())["admin"]["kind"] == "custom"
         app = PgWireDatabase("mtc_app", target)
         with operator_scope(app) as tx:
             assert tx.fetchone("SELECT name FROM tenant")["name"] == "Zálohovaná"

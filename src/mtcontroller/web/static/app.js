@@ -1238,33 +1238,208 @@ $("system-refresh").addEventListener("click", () => loadSystem());
 
 // --- zálohy controlleru (superadmin) ------------------------------------------------------
 
+const BK_DAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
+const BT_HELP = {
+  nextcloud: "Heslo aplikace vytvoříš v Nextcloudu: Nastavení → Zabezpečení → Vytvořit nové heslo aplikace.",
+  gdrive: "Google Cloud Console → API a služby: zapni Google Drive API, OAuth klient typu „TVs and Limited Input devices“. "
+    + "Aplikaci přepni do produkce, jinak přihlášení po 7 dnech vyprší. Controller uvidí jen soubory, které sám vytvoří.",
+  onedrive: "Microsoft Entra → Registrace aplikací: účty v libovolné organizaci i osobní, „Povolit toky veřejného klienta“ = Ano, "
+    + "oprávnění Files.ReadWrite.AppFolder. Zálohy budou ve složce Aplikace/<název aplikace>.",
+};
+let bkTargets = [];
+let btEdit = null;
+const btPolls = {};
+
+function bkDaysInit() {
+  const box = $("bk-days");
+  if (box.children.length) return;
+  BK_DAYS.forEach((d, i) => {
+    const l = el("label"); const c = el("input"); c.type = "checkbox"; c.id = "bk-day-" + (i + 1);
+    l.append(c, d); box.appendChild(l);
+  });
+}
+
 async function loadBackups() {
   let b;
   try { b = await api("GET", "/system/backups"); } catch (e) { return; }
   $("backup-card").hidden = false;
+  bkDaysInit();
   const st = b.status || {};
   const last = b.backups[0];
+  const plan = b.plan || {};
+  const when = plan.enabled ? `${plan.days.length === 7 ? "denně" : plan.days.map((d) => BK_DAYS[d - 1]).join(", ")} v ${plan.time}` : "automaticky vypnuto";
   const txt = b.pending ? "Záloha čeká na spuštění…"
     : st.state === "running" ? "Záloha právě běží…"
     : st.state === "error" ? `Poslední záloha selhala: ${st.error || "?"}`
-    : last ? `Poslední záloha ${fmtTime(last.at)} · ponechává se ${b.keep} posledních v ${b.dir}`
-    : `Zatím žádná záloha · denně v noci, ponechává se ${b.keep} posledních v ${b.dir}`;
+    : last ? `Poslední záloha ${fmtTime(last.at)} · ${when} · ponechává se ${b.keep} posledních v ${b.dir}`
+    : `Zatím žádná záloha · ${when} · ponechává se ${b.keep} posledních v ${b.dir}`;
   const p = $("backup-summary"); p.textContent = "";
   p.appendChild(el("span", txt, st.state === "error" ? "sev-error" : ""));
-  const old = last && (Date.now() - new Date(last.at).getTime()) > 2 * 86400000;
-  if (old) p.append(" ", el("span", "· poslední záloha je starší než 2 dny", "sev-warning"));
+  const limit = (b.max_gap_hours || 24) + 6;
+  const old = plan.enabled && last && (Date.now() - new Date(last.at).getTime()) > limit * 3600000;
+  if (old) p.append(" ", el("span", "· poslední záloha je starší, než plán dovoluje", "sev-warning"));
+  const al = $("backup-alerts"); al.textContent = "";
+  for (const a of Object.values(b.alerts || {})) al.appendChild(el("li", a.message, a.severity === "critical" ? "sev-error" : "sev-warning"));
+  // plán
+  $("bk-en").checked = !!plan.enabled; $("bk-time").value = plan.time || "02:30"; $("bk-keep").value = plan.keep || 14;
+  for (let d = 1; d <= 7; d++) $("bk-day-" + d).checked = (plan.days || []).includes(d);
+  // cíle
+  bkTargets = b.targets || [];
+  renderTargets();
   const tb = $("backup-list"); tb.textContent = "";
   for (const x of b.backups) {
     const a = el("a", "Stáhnout");
     a.href = "/api/admin/system/backups/" + encodeURIComponent(x.name);
     a.setAttribute("download", x.name);
     const tr = el("tr");
-    tr.append(el("td", x.name, "mono"), el("td", fmtBytes(x.size)), el("td", fmtTime(x.at)), el("td", a));
+    const dl = el("td"); dl.appendChild(a);
+    tr.append(el("td", x.name, "mono"), el("td", fmtBytes(x.size)), el("td", fmtTime(x.at)), dl);
     tb.appendChild(tr);
   }
   $("backup-now").disabled = !!b.pending || st.state === "running";
-  if (b.pending || st.state === "running") setTimeout(() => { if (!$("backup-card").hidden) loadBackups(); }, 5000);
+  const uploading = bkTargets.some((t) => t.status.force);
+  if (b.pending || st.state === "running" || uploading) setTimeout(() => { if (!$("backup-card").hidden) loadBackups(); }, 5000);
 }
+
+function targetState(t) {
+  const s = t.status || {};
+  if (!t.enabled) return ["vypnuto", "muted"];
+  if (t.auth) return [null, ""];
+  if (t.kind !== "nextcloud" && !t.authorized) return [s.auth_error ? `nepřihlášeno – ${s.auth_error}` : "nepřihlášeno", "sev-warning"];
+  if (s.force) return ["odesílá se…", ""];
+  if (s.last_error) return [`chyba: ${s.last_error}`, "sev-error"];
+  if (s.last_ok_at) return ["v pořádku", "sev-ok"];
+  return ["čeká na první zálohu", "muted"];
+}
+
+function renderTargets() {
+  const tb = $("bt-list"); tb.textContent = "";
+  for (const t of bkTargets) {
+    const tr = el("tr");
+    const where = t.status.where || (t.kind === "nextcloud" ? `${t.config.url} · ${t.config.folder}`
+      : t.kind === "gdrive" ? `Google Drive · ${t.config.folder}` : "OneDrive · složka aplikace");
+    const [label, cls] = targetState(t);
+    const stTd = el("td", label, cls);
+    if (t.auth) {
+      stTd.append("Zadej kód ", el("span", t.auth.user_code, "bt-code"), " na ");
+      const a = el("a", t.auth.url); a.href = t.auth.url; a.target = "_blank"; a.rel = "noopener";
+      stTd.append(a);
+      pollTarget(t);
+    }
+    const s = t.status || {};
+    const lastTd = el("td", s.last_ok_at ? fmtTime(s.last_ok_at) : "–");
+    if (s.last_file) lastTd.title = s.last_file + (s.last_size ? ` (${fmtBytes(s.last_size)})` : "");
+    const acts = el("div", null, "bt-acts");
+    const btn = (label, fn, sec = true) => { const x = el("button", label, "small" + (sec ? " secondary" : "")); x.type = "button";
+      x.addEventListener("click", fn); acts.appendChild(x); return x; };
+    if (t.kind !== "nextcloud" && !t.auth) btn(t.authorized ? "Přihlásit znovu" : "Přihlásit", () => targetAuth(t), !!t.authorized);
+    if (t.kind === "nextcloud" || t.authorized) {
+      btn("Ověřit", () => targetCheck(t));
+      btn("Odeslat teď", () => targetAction(t, "upload", "Poslední záloha se odešle"));
+    }
+    btn("Upravit", () => openTarget(t));
+    btn("×", () => deleteTarget(t)).title = "Smazat cíl";
+    const actTd = el("td"); actTd.appendChild(acts);
+    const nameTd = el("td", `${t.name} `);
+    nameTd.append(el("span", `${t.kind_label} · nechat ${t.keep}`, "muted"), el("br"), el("span", where, "muted small"));
+    tr.append(nameTd, stTd, lastTd, actTd);
+    tb.appendChild(tr);
+  }
+  if (!bkTargets.length) {
+    const tr = el("tr"); const td = el("td", "Zatím jen na tomto serveru – přidej Nextcloud, Google Drive nebo OneDrive.", "muted");
+    td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
+async function targetAction(t, action, okMsg) {
+  try { await api("POST", `/system/backup-targets/${t.id}/${action}`, {}); if (okMsg) msg(okMsg); } catch (e) { msg(e.message, true); }
+  loadBackups();
+}
+async function targetCheck(t) {
+  try { const r = await api("POST", `/system/backup-targets/${t.id}/check`, {}); msg("Spojení v pořádku: " + r.where); }
+  catch (e) { msg(e.message, true); }
+  loadBackups();
+}
+async function targetAuth(t) {
+  try { await api("POST", `/system/backup-targets/${t.id}/auth`, {}); } catch (e) { msg(e.message, true); }
+  loadBackups();
+}
+function pollTarget(t) {
+  if (btPolls[t.id]) return;
+  btPolls[t.id] = setTimeout(async () => {
+    delete btPolls[t.id];
+    if ($("backup-card").hidden) return;
+    let r;
+    try { r = await api("POST", `/system/backup-targets/${t.id}/poll`, {}); } catch (e) { msg(e.message, true); return; }
+    if (r.state === "done") { msg(`${t.name}: přihlášeno`); loadBackups(); }
+    else if (r.state === "error") { msg(`${t.name}: ${r.error}`, true); loadBackups(); }
+    else pollTarget(t);
+  }, Math.max(5, (t.auth && t.auth.interval) || 5) * 1000);
+}
+async function deleteTarget(t) {
+  if (!await ask(`Smazat cíl ${t.name}? Zálohy, které už v cloudu jsou, zůstanou.`, "Smazat")) return;
+  try { await api("DELETE", `/system/backup-targets/${t.id}`); msg("Cíl smazán"); } catch (e) { msg(e.message, true); }
+  loadBackups();
+}
+
+function btKindUi() {
+  const k = $("bt-kind").value;
+  const show = (cls, on) => { for (const x of document.getElementsByClassName(cls)) x.hidden = !on; };
+  show("bt-nc", k === "nextcloud"); show("bt-oauth", k !== "nextcloud"); show("bt-gd", k === "gdrive");
+  show("bt-od", k === "onedrive"); show("bt-folder", k !== "onedrive");
+  $("bt-cid-l").textContent = k === "onedrive" ? "Application (client) ID" : "Client ID";
+  $("bt-help").textContent = BT_HELP[k];
+}
+function openTarget(t) {
+  btEdit = t || null;
+  const c = (t && t.config) || {};
+  $("bt-title").textContent = t ? `Upravit: ${t.name}` : "Nový cíl záloh";
+  $("bt-kind").value = t ? t.kind : "nextcloud"; $("bt-kind").disabled = !!t;
+  $("bt-name").value = t ? t.name : ""; $("bt-keep").value = t ? t.keep : 14;
+  $("bt-url").value = c.url || ""; $("bt-user").value = c.user || ""; $("bt-pass").value = "";
+  $("bt-cid").value = c.client_id || ""; $("bt-csec").value = ""; $("bt-tenant").value = c.tenant || "";
+  $("bt-folder").value = c.folder || "";
+  $("bt-keepsecret").hidden = !t;
+  btKindUi();
+  $("bt-dlg").hidden = false;
+}
+function closeTarget() { $("bt-dlg").hidden = true; btEdit = null; }
+$("bt-kind").addEventListener("change", btKindUi);
+$("bt-add").addEventListener("click", () => openTarget(null));
+$("bt-close").addEventListener("click", closeTarget);
+$("bt-cancel").addEventListener("click", closeTarget);
+$("bt-save").addEventListener("click", async () => {
+  const k = $("bt-kind").value;
+  const body = { name: $("bt-name").value.trim(), keep: Number($("bt-keep").value) };
+  if (k === "nextcloud") Object.assign(body, { url: $("bt-url").value.trim(), user: $("bt-user").value.trim(),
+    password: $("bt-pass").value, folder: $("bt-folder").value.trim() });
+  if (k === "gdrive") Object.assign(body, { client_id: $("bt-cid").value.trim(), client_secret: $("bt-csec").value,
+    folder: $("bt-folder").value.trim() });
+  if (k === "onedrive") Object.assign(body, { client_id: $("bt-cid").value.trim(), tenant: $("bt-tenant").value.trim() || "common" });
+  if (btEdit && k === "nextcloud" && !body.password) delete body.password;
+  if (btEdit && k === "gdrive" && !body.client_secret) delete body.client_secret;
+  try {
+    if (btEdit) await api("PATCH", `/system/backup-targets/${btEdit.id}`, body);
+    else {
+      const r = await api("POST", "/system/backup-targets", { kind: k, ...body });
+      if (k !== "nextcloud") await api("POST", `/system/backup-targets/${r.id}/auth`, {});
+    }
+    closeTarget();
+    msg(k === "nextcloud" ? "Cíl uložen – ověř spojení" : "Uloženo – dokonči přihlášení kódem v tabulce");
+  } catch (e) { msg(e.message, true); return; }
+  loadBackups();
+});
+
+$("bk-plan").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const days = [1, 2, 3, 4, 5, 6, 7].filter((d) => $("bk-day-" + d).checked);
+  try {
+    await api("PUT", "/system/backup-plan", { enabled: $("bk-en").checked, time: $("bk-time").value, days,
+                                              keep: Number($("bk-keep").value) });
+    msg("Plán záloh uložen");
+  } catch (err) { msg(err.message, true); }
+  loadBackups();
+});
 
 $("backup-now").addEventListener("click", async () => {
   try { await api("POST", "/system/backups", {}); msg("Záloha spuštěna"); } catch (e) { msg(e.message, true); }
@@ -1329,7 +1504,7 @@ $("tls-form").addEventListener("submit", async (e) => {
   if (action === "letsencrypt") body.email = $("tls-email").value.trim();
   if (action === "custom") { body.cert = $("tls-cert").value; body.key = $("tls-key").value; }
   if (action !== "own_ca" && (tlsLocal || slots.includes("checkin"))
-      && !confirm("Zařízení se hlásí přes tento certifikát. Bez důvěry ve veřejné CA (RouterOS 7.19+) se přestanou hlásit. Pokračovat?")) return;
+      && !await ask("Zařízení se hlásí přes tento certifikát. Bez důvěry ve veřejné CA (RouterOS 7.19+) se přestanou hlásit. Pokračovat?", "Pokračovat")) return;
   try {
     const r = await api("POST", "/system/tls", body);
     $("tls-warn").textContent = (r.warnings || []).join("; ");

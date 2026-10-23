@@ -389,6 +389,21 @@
     <div class="card" id="backup-card" hidden>
       <h2>Zálohy controlleru <button id="backup-now" type="button" class="small">Zálohovat teď</button></h2>
       <p id="backup-summary" class="muted"></p>
+      <ul id="backup-alerts" class="bk-alerts"></ul>
+      <h3>Plán</h3>
+      <form id="bk-plan" class="bk-plan">
+        <label class="check"><input type="checkbox" id="bk-en"> Zálohovat automaticky</label>
+        <label class="check">v <input id="bk-time" type="time" required></label>
+        <span id="bk-days" class="bk-days"></span>
+        <label class="check">nechat <input id="bk-keep" type="number" min="1" max="365" required> posledních</label>
+        <button type="submit" class="small">Uložit plán</button>
+      </form>
+      <h3>Kopie mimo server <button id="bt-add" type="button" class="small secondary">+ Přidat cíl</button></h3>
+      <p class="muted">Šifrovaná záloha se po vytvoření zkopíruje do všech zapnutých cílů; staré tam controller
+        promaže sám. Cloudu není potřeba věřit – bez hesla záloh je obsah nečitelný.</p>
+      <div class="ptable-wrap"><table><thead><tr><th>Cíl</th><th>Stav</th><th>Poslední kopie</th><th></th></tr></thead>
+        <tbody id="bt-list"></tbody></table></div>
+      <h3>Zálohy na serveru</h3>
       <table><thead><tr><th>Soubor</th><th>Velikost</th><th>Vytvořeno</th><th></th></tr></thead><tbody id="backup-list"></tbody></table>
       <p class="muted">Zálohy jsou šifrované heslem záloh (zobrazí ho <code>sudo mtc-admin recovery-kit</code>).
         Obsahují databázi, konfiguraci a klíče. Obnova: průvodce nové instalace nebo <code>sudo mtc-admin restore SOUBOR</code>.</p>
@@ -606,6 +621,31 @@
       </div>
     </div>
   </section>
+  <div id="bt-dlg" class="modal" hidden>
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="bt-title">
+      <div class="sd-head"><h3 id="bt-title">Cíl záloh</h3><button id="bt-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <div class="sd-grid">
+        <label class="pe-field"><span>Typ</span><select id="bt-kind">
+          <option value="nextcloud">Nextcloud</option><option value="gdrive">Google Drive</option><option value="onedrive">OneDrive</option></select></label>
+        <label class="pe-field"><span>Název</span><input id="bt-name" maxlength="80"></label>
+        <label class="pe-field"><span>Nechat posledních</span><input id="bt-keep" type="number" min="1" max="365" value="14"></label>
+        <label class="pe-field bt-nc"><span>Adresa Nextcloudu</span><input id="bt-url" placeholder="https://cloud.firma.cz"></label>
+        <label class="pe-field bt-nc"><span>Uživatel</span><input id="bt-user" autocomplete="off"></label>
+        <label class="pe-field bt-nc"><span>Heslo aplikace</span><input id="bt-pass" type="password" autocomplete="new-password"></label>
+        <label class="pe-field bt-oauth"><span id="bt-cid-l">Client ID</span><input id="bt-cid" autocomplete="off"></label>
+        <label class="pe-field bt-gd"><span>Client secret</span><input id="bt-csec" type="password" autocomplete="new-password"></label>
+        <label class="pe-field bt-od"><span>Tenant</span><input id="bt-tenant" placeholder="common"></label>
+        <label class="pe-field bt-folder"><span>Složka</span><input id="bt-folder" placeholder="MikroTik-Controller"></label>
+      </div>
+      <p id="bt-help" class="muted small"></p>
+      <p class="muted small" id="bt-keepsecret" hidden>Prázdné heslo / secret = ponechat uložené.</p>
+      <div class="modal-acts">
+        <button id="bt-cancel" type="button" class="secondary">Zrušit</button>
+        <button id="bt-save" type="button">Uložit</button>
+      </div>
+    </div>
+  </div>
+
   <div id="ssid-dlg" class="modal" hidden>
     <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="sd-title">
       <div class="sd-head"><h3 id="sd-title">Wi-Fi síť</h3><button id="sd-close" type="button" class="icon-btn" title="Zavřít">×</button></div>

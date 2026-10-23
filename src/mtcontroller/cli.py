@@ -277,6 +277,27 @@ def _audit_system(action: str, after: dict) -> None:
         print(f"audit se nezapsal: {e}", file=sys.stderr)
 
 
+def _backup_plan(s) -> dict:
+    from . import backupplan
+    try:
+        return backupplan.load(_db(), s.backup.keep)
+    except Exception as e:  # noqa: BLE001 – DB dole: záloha podle výchozího plánu
+        print(f"plán záloh z DB nejde načíst ({e}) – výchozí", file=sys.stderr)
+        return backupplan.defaults(s.backup.keep)
+
+
+def _backup_due(s, plan: dict) -> bool:
+    import datetime as dt
+
+    from . import backupplan, sysbackup
+    now = dt.datetime.now().astimezone()
+    last = sysbackup.listing(s.backup.dir)
+    last_at = dt.datetime.fromisoformat(last[0]["at"]) if last else None
+    st = sysbackup.read_status(s.paths.data_dir)
+    err_at = dt.datetime.fromisoformat(st["at"]) if st.get("state") == "error" and st.get("at") else None
+    return backupplan.due(plan, now, last_at, err_at)
+
+
 def cmd_backup(a) -> int:
     from . import sysbackup
     from .db import PsycopgDatabase
@@ -292,9 +313,12 @@ def cmd_backup(a) -> int:
         reason = "request"
     elif a.from_path:
         return 0  # path jednotka bez žádosti (už vyřízená)
+    plan = _backup_plan(s)
+    if reason == "scheduled" and not a.now and not _backup_due(s, plan):
+        return 0  # timer běží co 15 minut, plán z administrace rozhodne
     sysbackup.write_status(s.paths.data_dir, state="running", reason=reason)
     try:
-        f = sysbackup.create(s, PsycopgDatabase(s.database.migrate_dsn), reason=reason)
+        f = sysbackup.create(s, PsycopgDatabase(s.database.migrate_dsn), reason=reason, keep=plan["keep"])
     except Exception as e:  # noqa: BLE001
         sysbackup.write_status(s.paths.data_dir, state="error", error=str(e)[:500], reason=reason)
         _audit_system("system.backup_failed", {"error": str(e)[:300], "reason": reason, "by": who})
@@ -458,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup-code").set_defaults(fn=cmd_setup_code)
     sub.add_parser("setup-apply").set_defaults(fn=cmd_setup_apply)
     x = sub.add_parser("backup"); x.add_argument("--scheduled", action="store_true")
+    x.add_argument("--now", action="store_true", help="hned, bez ohledu na plán")
     x.add_argument("--from-path", action="store_true"); x.set_defaults(fn=cmd_backup)
     x = sub.add_parser("restore"); x.add_argument("file"); x.add_argument("--force", action="store_true")
     x.add_argument("--passphrase-file"); x.set_defaults(fn=cmd_restore)

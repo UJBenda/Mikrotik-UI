@@ -436,6 +436,32 @@ Potřebuješ CAPsMAN z 9d, jedno cAP ax a jedno cAP ac (wifi-qcom-ac) jako „AP
    ozve z nové adresy; s úmyslně špatnou bránou se do 5 minut samo vrátí.
 6. Výchozí hesla: ulož heslo ze štítku, „Zobrazit“ ho ukáže na 20 s a v Auditu je záznam `factory_password.reveal`.
 
+## 9f. Balíček na čistém Debianu: instalace, zálohy do cloudu, obnova
+
+Dvě čisté VM s Debianem 13 (nebo Raspberry Pi OS trixie), A a B, stejná IP pro controller
+(B až po vypnutí A), aspoň 2 GB RAM.
+
+1. **A:** `sudo apt install ./mtcontroller_<verze>_all.deb` → průvodce `https://<IP>/` (kód:
+   `sudo mtc-admin setup-code`), nová instalace, lokální režim, bez Let's Encrypt. Ulož záchranné údaje.
+2. Přihlas se, založ něco poznatelného (lokalita „Test-obnovy“, uživatel, poznámka ke klientovi).
+3. Systém → Certifikát HTTPS: nahraj vlastní certifikát (stačí self-signed s IP v SAN) – po obnově
+   musí zůstat.
+4. Systém → Zálohy:
+   - plán na čas za 20 minut, jen dnešní den, nechat 3 → *Uložit plán*; počkej – záloha vznikne
+     sama (`journalctl -u mtc-backup`, timer co 15 min),
+   - přidej Nextcloud (heslo aplikace) → *Ověřit* → *Odeslat teď*; soubor je v Nextcloudu,
+   - přidej Google Drive a OneDrive podle docs/install.md (vlastní OAuth aplikace), přihlas kódem,
+     *Odeslat teď*; soubory jsou v *MikroTik-Controller* / *Aplikace/<název>*,
+   - 4× *Zálohovat teď* → v cloudu zůstanou jen 3 (nebo kolik má cíl nastaveno).
+5. Chyby: v Nextcloudu odvolej heslo aplikace → *Odeslat teď* → stav „chyba“; po druhém pokusu
+   notifikace (máš-li `[[notify]]`) a `sudo mtc-admin doctor` hlásí cíl. Zase oprav (Upravit → nové heslo).
+6. Stáhni poslední `.mtcbak` z cloudu (ne ze serveru), **vypni A**.
+7. **B:** nainstaluj stejný balíček, v průvodci *Obnovit ze zálohy*, nahraj soubor, heslo záloh.
+   Ověř: přihlášení původním účtem (i MFA), lokalita „Test-obnovy“, cíle záloh (bez nového
+   přihlašování), vlastní certifikát v prohlížeči, zařízení se hlásí (stejná CA, stejná IP).
+8. Na B *Zálohovat teď* → soubor přibude do stejných složek v cloudu.
+9. Novější záloha do starší verze: obnova se musí odmítnout s hláškou o verzi a nic nezměnit.
+
 ## 10. Řešení problémů
 
 | Příznak | Kde hledat |

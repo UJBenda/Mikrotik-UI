@@ -253,6 +253,31 @@ def check_worker(s: Settings) -> list[Check]:
     return [Check(OK, "worker", f"běží (kolo {st.get('tick')}, před {st['age_seconds']} s)")]
 
 
+def check_backup_targets(db) -> list[Check]:
+    """Kopie záloh mimo server (Systém → Zálohy)."""
+    from . import cloudbackup
+
+    targets = cloudbackup.listing(db)
+    if not targets:
+        return [Check(WARN, "zálohy mimo server", "žádný cíl – při ztrátě disku přijdeš i o zálohy "
+                                                  "(Systém → Zálohy → Přidat cíl: Nextcloud / Google Drive / OneDrive)")]
+    out = []
+    for t in targets:
+        st = t["status"]
+        name = f"cíl {t['name']}"
+        if not t["enabled"]:
+            out.append(Check(WARN, name, "vypnutý"))
+        elif t["kind"] != "nextcloud" and not t["authorized"]:
+            out.append(Check(FAIL, name, "není přihlášený – Systém → Zálohy → Přihlásit"))
+        elif st.get("last_error"):
+            out.append(Check(FAIL, name, f"poslední kopie selhala: {st['last_error']}"))
+        elif st.get("last_ok_at"):
+            out.append(Check(OK, name, f"{t['kind_label']}, poslední kopie {st['last_ok_at'][:16]} UTC ({st.get('last_file')})"))
+        else:
+            out.append(Check(WARN, name, "zatím žádná kopie – odešle se po příští záloze"))
+    return out
+
+
 def check_tls(s: Settings, public: Path | None = None) -> list[Check]:
     """Certifikáty nginx (veřejné kopie slotů): existují, pokrývají jméno, nevyprší."""
     from . import tlscfg
@@ -316,7 +341,7 @@ def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
                lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s), lambda: check_worker(s),
                check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s), lambda: check_backup(s),
-               lambda: check_tls(s)):
+               lambda: check_tls(s), lambda: check_backup_targets(app_db)):
         try:
             checks.extend(fn())
         except Exception as e:  # noqa: BLE001 – jedna rozbitá kontrola nesmí shodit ostatní

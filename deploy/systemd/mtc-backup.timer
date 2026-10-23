@@ -1,9 +1,10 @@
 [Unit]
-Description=MikroTik Controller – denní záloha
+Description=MikroTik Controller – zálohy podle plánu z administrace
 
 [Timer]
-OnCalendar=*-*-* 02:30:00
-RandomizedDelaySec=30min
+# co 15 minut; jestli je čas zálohovat, rozhodne plán (Systém → Zálohy), ne timer
+OnCalendar=*:0/15
+RandomizedDelaySec=60
 Persistent=true
 
 [Install]

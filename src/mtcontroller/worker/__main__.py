@@ -231,7 +231,8 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
-    from .. import alerts, clients, heartbeat, inventory, notify, releases, rogue, routes, takeover, upgrades
+    from .. import (alerts, clients, cloudbackup, heartbeat, inventory, notify, releases, rogue, routes, sysalerts,
+                    takeover, upgrades)
 
     # -inf: monotonic() počítá od startu systému, 0.0 by po čerstvém bootu oddálilo první běh
     last_reconcile = last_rollup = last_releases = float("-inf")
@@ -251,6 +252,8 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                            ("rogue", lambda: rogue.nightly(db, box)),
                            ("alerts", lambda: alerts.reconcile(db)),
                            ("notify", lambda: notify.deliver(db, settings)),
+                           ("cloudbackup", lambda: cloudbackup.sync(db, box, settings.backup.dir)),
+                           ("sysalerts", lambda: len(sysalerts.reconcile(db, settings))),
                            ("routes", lambda: settings.tunnel.manage_routes and routes.sync(settings, providers))):
             t0 = time.monotonic()
             try:

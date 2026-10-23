@@ -48,7 +48,9 @@ SUFFIX = ".mtcbak"
 _SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1}
 # soubory z /etc/mtcontroller, které patří do zálohy (backup.key ne – je to heslo samo)
 ETC_FILES = re.compile(r"^(config\.toml|master\.key|[a-z0-9_-]+\.password|device-ca\.crt|setup-plan\.json)$")
-SSL_FILES = ("ca.key", "ca.crt")
+# CA controlleru a certifikáty nginx (slotů); active.json = druh certifikátu slotu (tlscfg)
+SSL_FILES = ("ca.key", "ca.crt", "admin.crt", "admin.key", "checkin.crt", "checkin.key")
+PUBLIC_FILES = ("active.json",)
 
 
 class BackupError(RuntimeError):
@@ -134,6 +136,7 @@ def decrypt_stream(src: BinaryIO, dst: BinaryIO, passphrase: str) -> None:
 class Paths:
     etc: Path = Path("/etc/mtcontroller")
     ssl: Path = Path("/etc/ssl/mtc")
+    public: Path = Path("/etc/ssl/mtc-public")
 
 
 def schema_version(db) -> int:
@@ -170,8 +173,9 @@ def _add_bytes(tar: tarfile.TarFile, name: str, data: bytes, mode: int = 0o600) 
 
 
 def create(settings, owner_db, out_dir: Path | None = None, passphrase: str | None = None, paths: Paths = Paths(),
-           dump: Callable[[str, Path], None] = _pg_dump, reason: str = "scheduled") -> Path:
-    """Vytvoří šifrovanou zálohu a promaže staré (nechá `backup.keep` posledních)."""
+           dump: Callable[[str, Path], None] = _pg_dump, reason: str = "scheduled", keep: int | None = None) -> Path:
+    """Vytvoří šifrovanou zálohu a promaže staré (nechá `keep` – plán z administrace –,
+    jinak `backup.keep` posledních)."""
     out_dir = Path(out_dir or settings.backup.dir)
     if passphrase is None:
         passphrase = settings.backup.passphrase_file.read_text().strip()
@@ -201,6 +205,11 @@ def create(settings, owner_db, out_dir: Path | None = None, passphrase: str | No
                 if f.is_file():
                     tar.add(f, f"ssl/{name}")
                     manifest["files"].append(f"ssl/{name}")
+            for name in PUBLIC_FILES:
+                f = paths.public / name
+                if f.is_file():
+                    tar.add(f, f"ssl-public/{name}")
+                    manifest["files"].append(f"ssl-public/{name}")
             _add_bytes(tar, "manifest.json", json.dumps(manifest, indent=1).encode(), 0o644)
         part = final.with_name("." + final.name + ".part")
         fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
@@ -208,7 +217,7 @@ def create(settings, owner_db, out_dir: Path | None = None, passphrase: str | No
             encrypt_stream(src, dst, passphrase)
         _group(part)
         os.replace(part, final)
-    prune(out_dir, settings.backup.keep)
+    prune(out_dir, keep or settings.backup.keep)
     log.info("záloha %s (%d B)", final, final.stat().st_size)
     return final
 
@@ -231,7 +240,8 @@ def listing(out_dir: Path) -> list[dict]:
             st = p.stat()
             out.append({"name": p.name, "size": st.st_size,
                         "at": dt.datetime.fromtimestamp(st.st_mtime, dt.timezone.utc).isoformat()})
-    return sorted(out, key=lambda x: x["name"], reverse=True)
+    # podle času v názvu (po obnově na jiný server se mění jméno hostitele)
+    return sorted(out, key=lambda x: x["name"][-22:], reverse=True)
 
 
 def prune(out_dir: Path, keep: int) -> list[str]:
@@ -250,7 +260,7 @@ def open_backup(src: Path, passphrase: str, work: Path) -> dict:
     fd = os.open(tar_p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as dst, open(src, "rb") as s:
         decrypt_stream(s, dst, passphrase)
-    allowed = {"manifest.json", "db.dump"} | {f"ssl/{n}" for n in SSL_FILES}
+    allowed = {"manifest.json", "db.dump"} | {f"ssl/{n}" for n in SSL_FILES} | {f"ssl-public/{n}" for n in PUBLIC_FILES}
     with tarfile.open(tar_p) as tar:
         for m in tar.getmembers():
             if not m.isfile() or not (m.name in allowed or (m.name.startswith("etc/") and "/" not in m.name[4:]
@@ -299,6 +309,14 @@ def restore(src: Path, passphrase: str, settings, *, paths: Paths = Paths(),
             if f.is_file():
                 paths.ssl.mkdir(mode=0o750, parents=True, exist_ok=True)
                 _put(paths.ssl / name, f.read_bytes(), 0o600 if name.endswith(".key") else 0o644)
+                if name in ("admin.crt", "checkin.crt"):
+                    paths.public.mkdir(mode=0o755, parents=True, exist_ok=True)
+                    _put(paths.public / name, f.read_bytes(), 0o644)
+        for name in PUBLIC_FILES:
+            f = x / "ssl-public" / name
+            if f.is_file():
+                paths.public.mkdir(mode=0o755, parents=True, exist_ok=True)
+                _put(paths.public / name, f.read_bytes(), 0o644)
     ran = migrate_db()
     return {"manifest": manifest, "migrated": ran}
 

@@ -367,19 +367,34 @@ def slot_hosts(plan: SetupPlan) -> dict[str, list[str]]:
     return {"admin": uniq(plan.ui_host, plan.controller_ip), "checkin": uniq(plan.checkin_host, plan.controller_ip)}
 
 
-def _certs(plan: SetupPlan, env: Env) -> list[str]:
+def _usable(crt: Path, host: str) -> bool:
+    from . import tlscfg
+
+    try:
+        i = tlscfg.inspect(crt.read_bytes())
+    except (OSError, tlscfg.TlsError):
+        return False
+    return i["days_left"] > 0 and tlscfg.covers(i, host)
+
+
+def _certs(plan: SetupPlan, env: Env, keep_custom: bool = False) -> list[str]:
     """Certifikáty slotů. Vždy nejdřív z CA controlleru (nginx naběhne i bez internetu a DNS),
     Let's Encrypt jen nad tím: když selže, zůstane vlastní a vrátí se varování – instalace pokračuje."""
     from . import tlscfg
 
     public = env.ssl.parent / "mtc-public"
     hosts = slot_hosts(plan)
+    marker = tlscfg.marker(public) if keep_custom else {}
+    kept = set()
     for slot, names in hosts.items():
+        if (marker.get(slot) or {}).get("kind") == "custom" and _usable(env.ssl / f"{slot}.crt", names[0]):
+            kept.add(slot)
+            continue  # obnova: vlastní (koupený) certifikát ze zálohy zůstává
         tlscfg.own_ca(slot, names, ssl_dir=env.ssl, public=public, device_ca=env.etc / DEVICE_CA.name)
     if plan.certs != "letsencrypt":
         return []
     warnings = []
-    for slot in hosts:
+    for slot in [s for s in hosts if s not in kept]:
         host = plan.ui_host if slot == "admin" else plan.checkin_host
         try:
             tlscfg.letsencrypt(slot, host, plan.acme_email, run=lambda *c: env.run(*c, check=False),
@@ -417,7 +432,7 @@ def kit_text(k: dict) -> str:
     L += ["",
           "HESLO ZÁLOH (bez něj zálohu nikdo neobnoví – ani ty):",
           f"    {k['backup_passphrase']}",
-          f"Zálohy:           {k['backup_dir']} (denně, šifrované; zkopíruj je i mimo server)",
+          f"Zálohy:           {k['backup_dir']} (šifrované; plán a kopie do cloudu nastav v Systém → Zálohy)",
           "",
           f"Databáze:         {k['db']['name']} – role {k['db']['roles']}",
           f"Přihlášení do DB: {k['db']['auth']}",
@@ -466,7 +481,7 @@ def _restore(req: dict, env: Env, sd: Path) -> None:
         upload.unlink(missing_ok=True)
     plan = _plan_from_config(env.etc, req.get("form") or {})
     _status(sd, "applying", "Certifikáty", step=2)
-    cert_warn = _certs(plan, env)
+    cert_warn = _certs(plan, env, keep_custom=True)
     _owned(env.etc / "setup-plan.json", plan.model_dump_json(indent=1), 0o640, "root")
     _write(env.etc / "backup.key", passphrase + "\n", 0o600)
     _finish_common(plan, env, sd)

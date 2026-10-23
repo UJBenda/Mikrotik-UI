@@ -612,5 +612,38 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 28) nastavení provozovatele a cíle záloh: tenant nevidí ani nezapíše nic
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO system_setting (key, data) VALUES ('backup', '{"enabled": true}');
+INSERT INTO backup_target (kind, name) VALUES ('nextcloud', 'nc');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM system_setting) <> 0 OR (SELECT count(*) FROM backup_target) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant vidí nastavení/cíle záloh provozovatele'; END IF;
+  UPDATE backup_target SET enabled = false; DELETE FROM system_setting;
+  BEGIN
+    INSERT INTO backup_target (kind, name) VALUES ('nextcloud', 'cizi');
+    RAISE EXCEPTION 'FAIL: tenant založil cíl záloh';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO system_setting (key, data) VALUES ('x', '{}');
+    RAISE EXCEPTION 'FAIL: tenant zapsal nastavení provozovatele';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  RAISE NOTICE 'OK 28 nastavení a cíle záloh jen pro provozovatele';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM system_setting) <> 1 OR (SELECT count(*) FROM backup_target WHERE enabled) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: tenant změnil nastavení provozovatele'; END IF;
+END $$;
+COMMIT;
+
 RESET ROLE;
 \echo ALL CHECKS PASSED

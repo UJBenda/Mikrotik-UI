@@ -121,7 +121,8 @@ else
 fi
 systemctl daemon-reload
 systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path mtc-tls.path >/dev/null
-systemctl start mtc-backup.timer mtc-backup.path mtc-tls.path
+systemctl start mtc-backup.path mtc-tls.path
+systemctl restart mtc-backup.timer
 systemctl restart mtc-web mtc-worker mtc-syslog
 sleep 2
 systemctl --no-pager --lines=5 status mtc-web mtc-worker mtc-syslog || true

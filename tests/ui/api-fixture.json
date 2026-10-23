@@ -4736,7 +4736,102 @@
    },
    "pending": false,
    "dir": "/var/backups/mtcontroller",
-   "keep": 14
+   "keep": 14,
+   "plan": {
+    "enabled": true,
+    "time": "02:30",
+    "days": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7
+    ],
+    "keep": 14
+   },
+   "max_gap_hours": 24,
+   "alerts": {
+    "cloud_x": {
+     "severity": "warning",
+     "message": "Cíl záloh Google Drive: kopie se nedaří (HTTP 403 storageQuotaExceeded)",
+     "opened_at": "2026-10-22T03:00:00+00:00",
+     "notified": true
+    }
+   },
+   "targets": [
+    {
+     "id": "7a1e0000-0000-4000-8000-000000000001",
+     "kind": "nextcloud",
+     "kind_label": "Nextcloud",
+     "name": "Nextcloud firma",
+     "enabled": true,
+     "keep": 30,
+     "config": {
+      "url": "https://cloud.firma.cz",
+      "user": "mtc-backup",
+      "folder": "MikroTik-Controller"
+     },
+     "has_secret": true,
+     "status": {
+      "authorized": true,
+      "last_ok_at": "2026-10-21T02:31:10+00:00",
+      "last_file": "mtc-vm-20261021-023000.mtcbak",
+      "last_size": 3500000,
+      "where": "https://cloud.firma.cz · MikroTik-Controller"
+     },
+     "auth": null,
+     "authorized": true
+    },
+    {
+     "id": "7a1e0000-0000-4000-8000-000000000002",
+     "kind": "gdrive",
+     "kind_label": "Google Drive",
+     "name": "Google Drive",
+     "enabled": true,
+     "keep": 14,
+     "config": {
+      "client_id": "123-abc.apps.googleusercontent.com",
+      "folder": "MikroTik-Controller",
+      "folder_id": "1AbC"
+     },
+     "has_secret": true,
+     "status": {
+      "authorized": true,
+      "last_ok_at": "2026-10-20T02:31:40+00:00",
+      "last_file": "mtc-vm-20261020-023000.mtcbak",
+      "last_error": "HTTP 403 storageQuotaExceeded",
+      "attempts": 3
+     },
+     "auth": null,
+     "authorized": true
+    },
+    {
+     "id": "7a1e0000-0000-4000-8000-000000000003",
+     "kind": "onedrive",
+     "kind_label": "OneDrive",
+     "name": "OneDrive",
+     "enabled": true,
+     "keep": 14,
+     "config": {
+      "client_id": "0b1c2d3e-0000-4000-8000-00000000abcd",
+      "tenant": "common"
+     },
+     "has_secret": true,
+     "status": {
+      "authorized": false
+     },
+     "auth": {
+      "user_code": "F7KQ-2MXP",
+      "url": "https://microsoft.com/devicelogin",
+      "expires_at": 4102444800,
+      "interval": 5,
+      "next_poll": 0
+     },
+     "authorized": false
+    }
+   ]
   },
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/wifi/rogue": {
    "bss": [

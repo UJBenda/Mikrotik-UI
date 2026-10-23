@@ -55,9 +55,10 @@ přihlášení), první firmu a lokalitu, zapíše konfiguraci, nginx, zapne slu
 záloh; ulož si je (stáhnout / vytisknout). Databáze žádná hesla nemá (jen lokální peer přihlášení).
 Místo nové instalace jde zvolit **Obnovit ze zálohy** (soubor `.mtcbak` + heslo záloh).
 
-Zálohy: `/var/backups/mtcontroller`, denně, 14 posledních; ručně `sudo mtc-admin backup` nebo v UI
-Systém → Zálohy. Zkopíruj je i mimo server. Heslo záloh znovu: `sudo mtc-admin recovery-kit`. Webová část průvodce běží
-neprivilegovaně, nastavení systému provádí root služba `mtc-setup-apply` a požadavek ověřuje znovu.
+Zálohy: `/var/backups/mtcontroller`, výchozí plán denně ve 2:30 a 14 posledních; plán (čas, dny,
+počet) a kopie mimo server se nastavují v UI **Systém → Zálohy**; ručně `sudo mtc-admin backup`.
+Heslo záloh znovu: `sudo mtc-admin recovery-kit`. Webová část průvodce běží neprivilegovaně,
+nastavení systému provádí root služba `mtc-setup-apply` a požadavek ověřuje znovu.
 
 Aktualizace: `sudo apt install ./mtcontroller_<novější>_all.deb` (migrace a restart služeb).
 
@@ -112,8 +113,54 @@ Brána je adresa z `api_url`, jinak `route_via` u koncentrátoru.
 
 ## Zálohy
 
-- `/etc/mtcontroller/master.key` – **offline** (bez něj nejdou dešifrovat hesla zařízení).
-- Databáze: `sudo -u postgres pg_dump -Fc mtcontroller > mtc-$(date +%F).dump`.
+Šifrovaná záloha (`.mtcbak`) obsahuje databázi, konfiguraci, `master.key`, CA controlleru
+i certifikáty nginx. Plán a cíle: UI **Systém → Zálohy**. Bez hesla záloh (záchranné údaje,
+`sudo mtc-admin recovery-kit`) ji nikdo neobnoví – ani ty.
+
+### Kopie mimo server
+
+Controller po každé záloze zkopíruje soubor do všech zapnutých cílů a promaže tam staré (každý
+cíl má vlastní „nechat posledních“). Cloudu není potřeba věřit – záloha je šifrovaná už na serveru.
+Každý controller potřebuje vlastní složku (retence maže nejstarší zálohy ve složce).
+
+**Nextcloud** – v Nextcloudu Nastavení → Zabezpečení → *Vytvořit nové heslo aplikace*; do cíle
+adresu (`https://cloud.firma.cz`), uživatele, heslo aplikace a složku. Tlačítko *Ověřit* zkusí
+přihlášení a založí složku.
+
+**Google Drive** – jednou si vytvoř vlastní OAuth klienta (Google sdílené ID pro všechny instalace nedovolí):
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → nový projekt → *API a služby →
+   Knihovna* → zapni **Google Drive API**.
+2. *OAuth consent screen*: typ External (nebo Internal ve Workspace), název aplikace, e-mail;
+   scope `…/auth/drive.file`. **Publish app → In production** – ve stavu Testing vyprší
+   přihlášení po 7 dnech. Scope `drive.file` ověření Googlem nepotřebuje.
+3. *Credentials → Create credentials → OAuth client ID* → typ **TVs and Limited Input devices**.
+4. Client ID a Client secret vlož do cíle v administraci, *Uložit*; v tabulce se ukáže kód –
+   zadej ho na <https://www.google.com/device> pod účtem, kam se má zálohovat.
+
+Controller vidí jen soubory, které sám vytvořil (složka *MikroTik-Controller*), ne celý disk.
+
+**OneDrive** (osobní i firemní):
+
+1. [Microsoft Entra](https://entra.microsoft.com/) → *Registrace aplikací → Nová registrace*:
+   *Účty v libovolném adresáři organizace a osobní účty Microsoft*; přesměrování nevyplňovat.
+2. *Ověřování → Povolit toky veřejného klienta*: **Ano**.
+3. *Oprávnění rozhraní API → Microsoft Graph → Delegovaná*: `Files.ReadWrite.AppFolder`
+   (a `offline_access`).
+4. *Application (client) ID* vlož do cíle (tenant `common`; jen firemní účty: `organizations`
+   nebo ID tenanta), *Uložit* a kód zadej na <https://microsoft.com/devicelogin>.
+
+Zálohy budou ve složce *Aplikace/<název aplikace>*; controller jinam nevidí.
+
+Stav cílů ukazuje Systém → Zálohy a `mtc-admin doctor`; když záloha chybí déle, než plán dovoluje,
+nebo se kopie dvakrát nepovede, přijde notifikace cílům `[[notify]]` bez omezení na tenanty.
+
+### Obnova na čistém serveru
+
+Nainstaluj balíček, v průvodci zvol **Obnovit ze zálohy**, nahraj `.mtcbak` (ze serveru, z UI nebo
+z cloudu) a zadej heslo záloh. Obnoví se data, uživatelé, cíle záloh, CA controlleru i vlastní
+certifikát nginx; starší záloha se domigruje. Starý server vypni – oba by zapisovaly do stejné
+složky v cloudu. Z příkazové řádky: `sudo mtc-admin restore SOUBOR`.
 
 ## Užitečné příkazy
 

@@ -115,7 +115,7 @@ tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--hove
 .badge { font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); }
 .badge.conforming, .badge.simple { color: var(--ok); border-color: var(--ok); }
 .badge.legacy { color: var(--warn); border-color: var(--warn); }
-.sev-error { color: var(--bad); } .sev-warning { color: var(--warn); } .sev-info { color: var(--muted); }
+.sev-error { color: var(--bad); } .sev-warning { color: var(--warn); } .sev-info { color: var(--muted); } .sev-ok { color: var(--ok); }
 .plan { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; }
 .plan pre { margin: 6px 0; }
 #topo { width: 100%; height: auto; background: var(--bg); border-radius: 6px; }
@@ -780,3 +780,16 @@ tr.rogue-row td { color: var(--bad); font-weight: 600; }
 .tls-pem input[type=file] { display: block; margin: 4px 0; max-width: 100%; }
 .tls-pem textarea { width: 100%; box-sizing: border-box; font-family: var(--mono, monospace); font-size: 12px; }
 #tls-le input { max-width: 100%; }
+
+/* zálohy: plán a cíle */
+.bk-plan { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 8px; }
+.bk-plan input[type=time] { width: 8.5em; }
+.bk-plan input[type=number] { width: 5em; }
+.bk-days { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.bk-days label { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--line);
+  border-radius: 999px; font-size: 13px; cursor: pointer; margin: 0; }
+.bk-days label:has(input:checked) { background: var(--accent-weak); border-color: var(--accent); }
+.bk-days input { margin: 0; }
+.bk-alerts { margin: 4px 0 10px; padding-left: 18px; }
+.bt-code { font-family: var(--mono, monospace); font-size: 15px; font-weight: 600; letter-spacing: 1px; }
+.bt-acts { display: flex; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; white-space: nowrap; }

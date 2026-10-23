@@ -912,17 +912,20 @@ spojení** – žádné tunely na jednotlivá zařízení, žádné otevřené p
 
 ## Zálohy a obnova controlleru
 
-`sysbackup.py`, spouští root (`mtc-admin backup`): denně `mtc-backup.timer`, na žádost z UI
+`sysbackup.py`, spouští root (`mtc-admin backup`): podle plánu z administrace (`mtc-backup.timer`
+běží co 15 minut, `backupplan.py` rozhodne, zda je čas), na žádost z UI
 (Systém → Zálohy zapíše `/var/lib/mtcontroller/backup-request`, `mtc-backup.path` spustí službu).
 
 | Co | Jak |
 | --- | --- |
-| Obsah | `pg_dump -Fc` celé DB (jako `postgres` – RLS je FORCE i pro vlastníka schématu), `config.toml`, `master.key`, hesla koncentrátorů, CA pro zařízení (`ssl/ca.key`, aby jí zařízení věřila i po obnově), plán průvodce, `manifest.json` (formát, verze aplikace, verze schématu) |
+| Obsah | `pg_dump -Fc` celé DB (jako `postgres` – RLS je FORCE i pro vlastníka schématu), `config.toml`, `master.key`, hesla koncentrátorů, CA pro zařízení (`ssl/ca.key`, aby jí zařízení věřila i po obnově), certifikáty nginx a jejich druh (`active.json` – vlastní/koupený certifikát přežije obnovu), plán průvodce, `manifest.json` (formát, verze aplikace, verze schématu) |
 | Šifrování | heslo záloh → scrypt (2^15, 8, 1) → AES-256-GCM po blocích 1 MiB; číslo bloku a příznak posledního bloku v AAD (zkrácení i přehození se pozná) |
 | Heslo | vygeneruje průvodce, `/etc/mtcontroller/backup.key` (0600 root), ukáže se v záchranných údajích a `mtc-admin recovery-kit` |
-| Uložení | `/var/backups/mtcontroller` (0750 root:mtcontroller, soubory 0640 – UI je nabízí ke stažení, jsou šifrované), ponechá se `backup.keep` posledních |
-| Kontrola | `doctor`: heslo existuje, poslední záloha < 2 dny, poslední běh bez chyby; UI ukazuje stav a stáří |
-| Audit | `system.backup`, `system.backup_failed`, `system.backup_request`, `system.backup_download`, `system.restore` |
+| Plán | `system_setting` `backup`: zapnuto, čas (místní čas serveru), dny v týdnu, kolik nechat; zmeškaný termín se dožene týž den, po chybě nový pokus nejdřív za hodinu |
+| Uložení | `/var/backups/mtcontroller` (0750 root:mtcontroller, soubory 0640 – UI je nabízí ke stažení, jsou šifrované), ponechá se `keep` z plánu |
+| Mimo server | `cloudbackup.py`, tabulka `backup_target` (jen provozovatel, RLS): Nextcloud (WebDAV, heslo aplikace, chunked upload v2 nad 10 MiB), Google Drive (OAuth device code, scope `drive.file`, resumable upload), OneDrive (device code, `Files.ReadWrite.AppFolder`, upload session). Víc cílů, každý vlastní `keep` (maže jen své `mtc-*.mtcbak`). Tajemství v SecretBox (kontext `backup_target:<id>`), refresh token Microsoftu rotuje a ukládá se po každém obnovení. Nahrává worker (uživatel mtcontroller, soubory čte přes skupinu) ve vlákně; po chybě odklad 15 min → 6 h, „Odeslat teď“ v UI |
+| Kontrola | `doctor`: heslo existuje, poslední záloha, cíle mimo server; worker `sysalerts.py`: záloha starší než plán + 6 h, chyba zálohy, cíl nepřihlášený nebo 2× selhal, plán vypnutý → notifikace cílům `[[notify]]` bez omezení na tenanty (jednou při otevření, jednou při vyřešení) |
+| Audit | `system.backup`, `system.backup_failed`, `system.backup_request`, `system.backup_download`, `system.backup_plan`, `system.backup_target_*`, `system.backup_upload(_failed)`, `system.restore` |
 
 Obnova (průvodce „Obnovit ze zálohy“ nebo `mtc-admin restore SOUBOR`): rozšifrovat, ověřit
 manifest a obsah tar (jen očekávané cesty), **zkontrolovat verzi**, znovu založit prázdnou DB,
@@ -935,7 +938,12 @@ verzi. Konfigurace je zpětně kompatibilní (nové volby mají výchozí hodnot
 serveru průvodce upozorní, když se IP serveru liší od `controller_ip` v záloze (zařízení se hlásí
 na původní adresu).
 
-Ke zvážení dál: kopie záloh mimo server (SFTP/S3/Nextcloud WebDAV) – teď je to na správci.
+Jeden controller = jedna složka v cloudu: retence maže nejstarší `mtc-*.mtcbak` ve složce, dva
+controllery ve stejné složce by si zálohy mazaly navzájem. Po obnově na nový server se cíle
+obnoví z DB a nový server pokračuje do stejné složky – starý server je potřeba vypnout.
+
+Google OAuth aplikace ve stavu „Testing“ má refresh token jen na 7 dní – je nutné ji přepnout do
+produkce (scope `drive.file` nevyžaduje ověření Googlem).
 
 ### Průvodce prvního spuštění – kroky
 

@@ -359,7 +359,7 @@ function showKit(st) {
   S.kitText = st.kit_text || "";
   $("kit-pass").textContent = k.backup_passphrase || "";
   const w = $("kit-warning"); w.textContent = k.warning || ""; w.hidden = !k.warning;
-  const rows = [["Adresa", k.url], ["Správce", k.admin], ["Zálohy", k.backup_dir ? k.backup_dir + " (denně, šifrované)" : ""],
+  const rows = [["Adresa", k.url], ["Správce", k.admin], ["Zálohy", k.backup_dir ? k.backup_dir + " (šifrované; plán a kopie do cloudu: Systém → Zálohy)" : ""],
     ["Databáze", k.db ? `${k.db.name} – ${k.db.roles}` : ""], ["Přihlášení do DB", k.db ? k.db.auth : ""],
     ["Hlavní klíč", k.files ? k.files.master_key + " (je i v každé záloze)" : ""]];
   if (k.restored) rows.unshift(["Obnoveno ze zálohy", `${(k.restored.from || "").slice(0, 16).replace("T", " ")} · verze ${k.restored.version || "?"}` +

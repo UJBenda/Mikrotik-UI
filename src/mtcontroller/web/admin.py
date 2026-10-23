@@ -238,9 +238,80 @@ async def system_backups(request: Request, p: Principal, _t) -> Response:
 
         await run_in_threadpool(q)
         return json_response({"ok": True})
+    from .. import backupplan, cloudbackup, sysalerts
+
+    def q():
+        return backupplan.load(st.db, st.settings.backup.keep), cloudbackup.listing(st.db)
+
+    plan, targets = await run_in_threadpool(q)
     return json_response({"backups": await run_in_threadpool(sysbackup.listing, bdir),
                           "status": sysbackup.read_status(data_dir), "pending": sysbackup.request_path(data_dir).exists(),
-                          "dir": str(bdir), "keep": st.settings.backup.keep})
+                          "dir": str(bdir), "keep": plan["keep"], "plan": plan, "targets": targets,
+                          "max_gap_hours": backupplan.max_gap_hours(plan),
+                          "alerts": sysalerts.read(st.settings)})
+
+
+@endpoint(None)
+async def system_backup_plan(request: Request, p: Principal, _t) -> Response:
+    """Plán záloh controlleru (čas, dny, kolik nechat) – timer se podle něj řídí sám."""
+    from .. import backupplan
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    data = await _json(request)
+    plan = await run_in_threadpool(backupplan.save, st.db, data, p.user_id, client_ip(request),
+                                   st.settings.backup.keep)
+    return json_response({"plan": plan})
+
+
+@endpoint(None)
+async def system_backup_targets(request: Request, p: Principal, _t) -> Response:
+    """Cíle záloh v cloudu: seznam / přidání."""
+    from .. import cloudbackup
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    if request.method == "POST":
+        data = await _json(request)
+        tid = await run_in_threadpool(cloudbackup.create, st.db, st.box, data, p.user_id, client_ip(request))
+        return json_response({"id": tid})
+    return json_response({"targets": await run_in_threadpool(cloudbackup.listing, st.db)})
+
+
+@endpoint(None)
+async def system_backup_target(request: Request, p: Principal, _t) -> Response:
+    """Jeden cíl: úprava, smazání a akce (přihlášení, ověření, odeslat teď)."""
+    from .. import cloudbackup
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    tid = str(_uuid(request.path_params["target_id"]))
+    action = request.path_params.get("action")
+    ip = client_ip(request)
+    if action is None:
+        if request.method == "DELETE":
+            await run_in_threadpool(cloudbackup.delete, st.db, tid, p.user_id, ip)
+        else:
+            data = await _json(request)
+            await run_in_threadpool(cloudbackup.update, st.db, st.box, tid, data, p.user_id, ip)
+        return json_response({"ok": True})
+    if action == "auth":
+        return json_response(await run_in_threadpool(cloudbackup.device_start, st.db, st.box, tid, p.user_id, ip))
+    if action == "poll":
+        return json_response(await run_in_threadpool(cloudbackup.device_poll, st.db, st.box, tid))
+    if action == "check":
+        try:
+            where = await run_in_threadpool(cloudbackup.check, st.db, st.box, tid)
+        except cloudbackup.CloudError as e:
+            return _err(502, str(e))
+        return json_response({"ok": True, "where": where})
+    if action == "upload":
+        await run_in_threadpool(cloudbackup.request_upload, st.db, tid, p.user_id, ip)
+        return json_response({"ok": True})
+    return _err(404, "nenalezeno")
 
 
 @endpoint(None)
@@ -539,6 +610,10 @@ def routes() -> list[Route]:
         Route("/api/admin/me/password", my_password, methods=["POST"]),
         Route("/api/admin/system", system_status, methods=["GET"]),
         Route("/api/admin/system/backups", system_backups, methods=["GET", "POST"]),
+        Route("/api/admin/system/backup-plan", system_backup_plan, methods=["PUT"]),
+        Route("/api/admin/system/backup-targets", system_backup_targets, methods=["GET", "POST"]),
+        Route("/api/admin/system/backup-targets/{target_id}", system_backup_target, methods=["PATCH", "DELETE"]),
+        Route("/api/admin/system/backup-targets/{target_id}/{action:str}", system_backup_target, methods=["POST"]),
         Route("/api/admin/system/tls", system_tls, methods=["GET", "POST"]),
         Route("/api/admin/system/backups/{name}", system_backup_download, methods=["GET"]),
         Route("/api/admin/users/{user_id}/reset-mfa", user_mfa_reset, methods=["POST"]),
