@@ -253,6 +253,38 @@ def check_worker(s: Settings) -> list[Check]:
     return [Check(OK, "worker", f"běží (kolo {st.get('tick')}, před {st['age_seconds']} s)")]
 
 
+def check_tls(s: Settings, public: Path | None = None) -> list[Check]:
+    """Certifikáty nginx (veřejné kopie slotů): existují, pokrývají jméno, nevyprší."""
+    from . import tlscfg
+
+    st = tlscfg.status(public)
+    hosts = tlscfg.hosts_of(s)
+    out = []
+    for slot in ("admin",) if s.tunnel.local else ("admin", "checkin"):
+        name = f"certifikát {slot}"
+        i = st.get(slot)
+        if not i:
+            out.append(Check(WARN, name, "slot nemá certifikát (starší instalace?) – sudo mtc-admin tls bootstrap"))
+            continue
+        if "error" in i:
+            out.append(Check(FAIL, name, i["error"]))
+            continue
+        kind = {"own_ca": "CA controlleru", "letsencrypt": "Let's Encrypt", "custom": "vlastní"}.get(i["kind"] or "", "?")
+        detail = f"{kind}, platí do {i['not_after'][:10]} ({i['days_left']} dní)"
+        if i["days_left"] < 0:
+            out.append(Check(FAIL, name, f"VYPRŠEL {i['not_after'][:10]} – sudo mtc-admin tls"))
+        elif i["days_left"] < 14:
+            hint = " – obnova certbotu neproběhla? certbot renew" if i["kind"] == "letsencrypt" else " – vyměň ho"
+            out.append(Check(WARN, name, detail + hint))
+        elif not tlscfg.covers(i, hosts[slot]):
+            out.append(Check(WARN, name, f"{detail}, ale neobsahuje {hosts[slot]}"))
+        elif i["kind"] == "own_ca" and slot == "admin":
+            out.append(Check(OK, name, detail + " (prohlížeč ho hlásí jako nedůvěryhodný; Let's Encrypt: Systém → Certifikát HTTPS)"))
+        else:
+            out.append(Check(OK, name, detail))
+    return out
+
+
 def check_backup(s: Settings) -> list[Check]:
     import datetime as dt
 
@@ -283,7 +315,8 @@ def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     checks: list[Check] = []
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
                lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s), lambda: check_worker(s),
-               check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s), lambda: check_backup(s)):
+               check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s), lambda: check_backup(s),
+               lambda: check_tls(s)):
         try:
             checks.extend(fn())
         except Exception as e:  # noqa: BLE001 – jedna rozbitá kontrola nesmí shodit ostatní

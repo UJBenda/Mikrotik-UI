@@ -393,6 +393,40 @@
       <p class="muted">Zálohy jsou šifrované heslem záloh (zobrazí ho <code>sudo mtc-admin recovery-kit</code>).
         Obsahují databázi, konfiguraci a klíče. Obnova: průvodce nové instalace nebo <code>sudo mtc-admin restore SOUBOR</code>.</p>
     </div>
+    <div class="card" id="tls-card" hidden>
+      <h2>Certifikát HTTPS</h2>
+      <p id="tls-summary" class="muted"></p>
+      <div class="ptable-wrap"><table><thead><tr><th>Pro</th><th>Druh</th><th>Jména</th><th>Vydal</th><th>Platí do</th></tr></thead>
+        <tbody id="tls-list"></tbody></table></div>
+      <form id="tls-form" class="tls-form">
+        <div class="row">
+          <label class="check"><input type="radio" id="tls-a-le" name="tls-action" value="letsencrypt" checked> Let's Encrypt</label>
+          <label class="check"><input type="radio" id="tls-a-custom" name="tls-action" value="custom"> Vlastní certifikát (PEM)</label>
+          <label class="check"><input type="radio" id="tls-a-own" name="tls-action" value="own_ca"> Znovu vydat z CA controlleru</label>
+        </div>
+        <div class="row" id="tls-slots">
+          <span class="muted">Pro:</span>
+          <label class="check"><input type="checkbox" id="tls-slot-admin" checked> administraci</label>
+          <label class="check"><input type="checkbox" id="tls-slot-checkin"> check-in zařízení</label>
+        </div>
+        <div class="row" id="tls-le"><input id="tls-email" type="email" placeholder="e-mail pro Let's Encrypt" size="30">
+          <span class="muted">DNS jména musí mířit na tento server a port 80 být dostupný z internetu.</span></div>
+        <div id="tls-custom" hidden>
+          <div class="tls-pem">
+            <label>Certifikát s řetězcem <input id="tls-cert-file" type="file" accept=".pem,.crt,.cer">
+              <textarea id="tls-cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea></label>
+            <label>Klíč bez hesla <input id="tls-key-file" type="file" accept=".pem,.key">
+              <textarea id="tls-key" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off"></textarea></label>
+          </div>
+        </div>
+        <div class="row"><button id="tls-apply" type="submit" class="small">Použít</button>
+          <span id="tls-warn" class="sev-warning"></span></div>
+      </form>
+      <p class="muted">Když se nový certifikát nepovede (nebo nginx neprojde kontrolou), zůstane běžet předchozí.
+        Zařízení ověřují check-in: CA controlleru znají z adopce, veřejnou CA jen s RouterOS 7.19+
+        s vestavěnými kořenovými CA povolenými pro fetch
+        (<code>/certificate/settings builtin-trust-store</code>). Z příkazové řádky: <code>sudo mtc-admin tls</code>.</p>
+    </div>
       </div>
     </div>
   </section>

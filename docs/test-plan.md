@@ -4,7 +4,7 @@ Cíl prvního testu: čistý Debian 13 jako controller, jeden MikroTik jako
 koncentrátor (druhý volitelně jako záložní koncentrátor) a dva testovací
 MikroTiky, které se adoptují, dostanou tunel a controller na ně dosáhne přes REST.
 
-Doporučuju začít v **laboratorním režimu** (`--lab`): self-signed certifikáty
+Doporučuju začít v **laboratorním režimu** (`--lab`): certifikáty z CA controlleru
 a vypnuté ověřování certifikátů na MikroTicích. Odpadá řešení DNS a Let's
 Encrypt a otestuje se celý tok. Produkční režim je v sekci 9.
 
@@ -287,7 +287,8 @@ Neodeslané notifikace worker zkouší znovu (max. 5×); stejně funguje JSON we
 ## 9. Produkční režim (místo --lab)
 
 - Veřejné DNS pro `mtc-checkin.<doména>` (a `mtc-admin.<doména>`), certifikát Let's Encrypt:
-  `./deploy/install.sh --certbot admin@domena.cz ...`
+  `./deploy/install.sh --certbot admin@domena.cz ...` (když selže, běží CA controlleru a LE se
+  doplní později: `mtc-admin tls letsencrypt EMAIL` nebo UI Systém → Certifikát HTTPS).
 - V config.toml `device_check_certificate = "yes-without-crl"` (výchozí).
 - Koncentrátor: `/certificate enable-ssl-certificate dns-name=vpn1.<doména>` (potřebuje
   dočasně port 80 z internetu), pak znovu `concentrator-script`.

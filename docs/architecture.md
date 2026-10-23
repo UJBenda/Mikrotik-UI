@@ -970,3 +970,24 @@ Podle srovnání s UniFi, Meraki, Aruba a Omada (dokument „Správa switchů a 
 
 K ověření v labu: `cable-test` a `blink` přes REST, ACL pravidla zámku na CRS3xx, MLAG na dvou CRS
 (7.22+ i 7.16), výstup `/interface/wifi/scan` přes REST (pole `address`, `channel`, `signal`).
+
+## Certifikáty HTTPS (tlscfg)
+
+Instalace nesmí záviset na Let's Encrypt. nginx ukazuje na stálé sloty `/etc/ssl/mtc/admin.{crt,key}`
+a `checkin.{crt,key}` (lokální režim jen `admin`); obsah slotů se mění bez úpravy konfigurace nginx.
+
+- **Start:** průvodce, `install.sh` i aktualizace balíčku (`mtc-admin tls bootstrap`) nejdřív naplní
+  prázdné sloty certifikátem z CA controlleru (jména + IP controlleru) – nginx naběhne vždy.
+  Starší instalace s LE `mtcontroller` se převezme. `device_ca_file` je v konfiguraci vždy: CA
+  controlleru zařízení dostanou při adopci a návrat check-inu na ni funguje bez zásahu na zařízení.
+- **Let's Encrypt:** `certbot certonly --webroot` (port 80 obsluhuje nginx vždy, i průvodce),
+  lineage `mtc-<slot>`. Selhání = varování, zůstane předchozí certifikát. Obnovy přenese do slotu
+  deploy hook (`renewal-hooks/deploy/mtcontroller` → `mtc-admin tls-sync`).
+- **Vlastní PEM:** kontrola, že klíč patří k certifikátu a platí; jiné jméno jen varování.
+- **Návrat:** po každé změně `nginx -t`; při chybě se vrátí předchozí soubory slotů.
+- **Oprávnění:** web (superadmin) jen ověří vstup a zapíše `tls-request.json` (0600); provádí root
+  `mtc-tls.path` → `mtc-admin tls-apply`, stav do `tls-status.json`, audit `system.tls*`
+  (bez klíče). Veřejné kopie certifikátů a `active.json` (druh slotu) jsou v `/etc/ssl/mtc-public`.
+- **Zařízení:** check-in ověřují; veřejnou CA jen s RouterOS 7.19+ a vestavěnými CA pro fetch (`/certificate/settings builtin-trust-store`).
+  UI proto u check-inu varuje a doporučuje LE jen pro administraci.
+- `mtc-admin doctor` hlásí chybějící slot, nepokryté jméno a expiraci < 14 dní.

@@ -50,3 +50,14 @@ EOSYS
   sysctl -q --system >/dev/null 2>&1 || true
   ip route flush cache 2>/dev/null || true
 }
+
+# Certifikáty HTTPS: nginx musí naběhnout vždy – sloty bez certifikátu dostanou certifikát
+# z CA controlleru (Let's Encrypt / vlastní se nastaví potom: mtc-admin tls … nebo v UI).
+# Obnovy Let's Encrypt přenese do slotů deploy hook certbotu.
+mtc_tls_hook() {
+  install -d -m 0750 /etc/ssl/mtc
+  install -d -m 0755 /etc/ssl/mtc-public /var/www/html /etc/letsencrypt/renewal-hooks/deploy
+  printf '#!/bin/sh\n# MikroTik Controller: obnoveny certifikat do /etc/ssl/mtc a prenacteni nginx\nexec %s tls-sync\n' \
+    "$MTC_ADMIN" > /etc/letsencrypt/renewal-hooks/deploy/mtcontroller
+  chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/mtcontroller
+}

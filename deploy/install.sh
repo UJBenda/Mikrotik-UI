@@ -6,10 +6,14 @@
 #        --checkin-host mtc-checkin.firma.cz --controller-ip 10.10.0.10 \
 #        --admin-net 10.10.0.0/24 [--lab] [--certbot admin@firma.cz]
 #
-#   --lab       laboratoř: self-signed certifikáty pro nginx a vypnuté ověřování
-#               certifikátů na MikroTicích (device_check_certificate = "no").
-#               NIKDY v produkci.
-#   --certbot   získá certifikáty Let's Encrypt (DNS obou hostname musí mířit sem).
+#   Certifikáty: nginx vždy naběhne s certifikátem z CA controlleru (prohlížeč ho bez importu
+#   CA hlásí jako nedůvěryhodný, zařízení si CA ověří otiskem). Let's Encrypt nebo vlastní
+#   certifikát se nastaví kdykoli potom: mtc-admin tls … nebo v UI Systém → Certifikát HTTPS.
+#
+#   --lab       laboratoř: vypnuté ověřování certifikátů na MikroTicích
+#               (device_check_certificate = "no"). NIKDY v produkci.
+#   --certbot   zkusí hned Let's Encrypt (DNS obou hostname musí mířit sem, port 80 otevřený);
+#               když selže, instalace pokračuje s certifikátem z CA controlleru.
 set -eu
 
 ADMIN_HOST="" CHECKIN_HOST="" CONTROLLER_IP="" ADMIN_NET="" LAB=0 CERTBOT=""
@@ -38,7 +42,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q python3 python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
   python3-cryptography postgresql nginx openssl ca-certificates ieee-data
-[ -n "$CERTBOT" ] && apt-get install -y -q certbot python3-certbot-nginx
+[ -n "$CERTBOT" ] && apt-get install -y -q certbot
 python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python >= 3.12"'
 python3 -c 'import pydantic; assert int(pydantic.VERSION.split(".")[0]) >= 2, "pydantic >= 2 (Debian 13; Ubuntu 24.04 má jen 1.10)"' 
 
@@ -98,7 +102,8 @@ mtc-admin migrate
 
 say "systemd"
 install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" "$SRC/deploy/systemd/mtc-syslog.service" \
-  "$SRC/deploy/systemd/mtc-backup.service" "$SRC/deploy/systemd/mtc-backup.timer" "$SRC/deploy/systemd/mtc-backup.path" /etc/systemd/system/
+  "$SRC/deploy/systemd/mtc-backup.service" "$SRC/deploy/systemd/mtc-backup.timer" "$SRC/deploy/systemd/mtc-backup.path" \
+  "$SRC/deploy/systemd/mtc-tls.service" "$SRC/deploy/systemd/mtc-tls.path" /etc/systemd/system/
 install -d -o root -g mtcontroller -m 0750 /var/backups/mtcontroller
 if [ ! -f "$ETC/backup.key" ]; then
   (umask 077; PYTHONPATH="$APP" python3 -c 'from mtcontroller.sysbackup import new_passphrase; print(new_passphrase())' > "$ETC/backup.key")
@@ -115,8 +120,8 @@ else
   rm -f /etc/systemd/system/mtc-worker.service.d/routes.conf
 fi
 systemctl daemon-reload
-systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path >/dev/null
-systemctl start mtc-backup.timer mtc-backup.path
+systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path mtc-tls.path >/dev/null
+systemctl start mtc-backup.timer mtc-backup.path mtc-tls.path
 systemctl restart mtc-web mtc-worker mtc-syslog
 sleep 2
 systemctl --no-pager --lines=5 status mtc-web mtc-worker mtc-syslog || true
@@ -127,42 +132,35 @@ H_ADMIN=$(sed -n 's/^ui_host = "\(.*\)"/\1/p' "$ETC/config.toml")
 H_CHECKIN=$(sed -n 's/^checkin_host = "\(.*\)"/\1/p' "$ETC/config.toml")
 NET="${ADMIN_NET:-$(sed -n 's/^ *allow \([0-9./]*\);.*mtc-admin-net/\1/p' "$NGX" 2>/dev/null || true)}"
 [ -n "$NET" ] || NET=10.10.0.0/24
-if [ "$LAB" = 1 ] && [ ! -f /etc/ssl/mtc/admin.crt ]; then
-  install -d -m 0750 /etc/ssl/mtc
-  for h in admin checkin; do
-    if [ $h = admin ]; then host=$H_ADMIN; else host=$H_CHECKIN; fi
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
-      -subj "/CN=$host" -addext "subjectAltName=DNS:$host" \
-      -keyout /etc/ssl/mtc/$h.key -out /etc/ssl/mtc/$h.crt 2>/dev/null
-  done
-  chmod 0640 /etc/ssl/mtc/*.key
+mtc_tls_hook
+# CA controlleru pro zařízení (zařízení si ji stáhnou a ověří otiskem) – i když check-in poběží na LE
+if ! grep -q '^device_ca_file' "$ETC/config.toml"; then
+  sed -i '/^\[security\]/a device_ca_file = "/etc/mtcontroller/device-ca.crt"' "$ETC/config.toml"
+  CA_ADDED=1
 fi
-if [ "$LAB" = 1 ]; then
-  CA="/etc/ssl/mtc/admin.crt"; KA="/etc/ssl/mtc/admin.key"; CC="/etc/ssl/mtc/checkin.crt"; KC="/etc/ssl/mtc/checkin.key"
-else
-  # jeden certifikát Let's Encrypt pro oba hostname (SAN)
-  CA="/etc/letsencrypt/live/mtcontroller/fullchain.pem"; KA="/etc/letsencrypt/live/mtcontroller/privkey.pem"
-  CC="$CA"; KC="$KA"
-fi
-if [ -n "$CERTBOT" ] && [ ! -f "$CC" ]; then
-  systemctl stop nginx || true
-  certbot certonly --standalone --non-interactive --agree-tos -m "$CERTBOT" \
-    -d "$H_ADMIN" -d "$H_CHECKIN" --cert-name mtcontroller \
-    --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" \
-    || echo "!! certbot selhal (DNS/port 80?) – nginx se nastaví, až certifikát bude"
-  systemctl start nginx || true
-fi
+# 1) vždy nejdřív certifikáty, se kterými nginx naběhne (CA controlleru, nebo převzatý starší LE)
+mtc-admin tls bootstrap
+[ "${CA_ADDED:-0}" = 1 ] && systemctl restart mtc-web mtc-worker
+# 2) Let's Encrypt jen nad tím: když selže (DNS, port 80), zůstane CA controlleru a jde se dál
+NGX_CERT_DIR=/etc/ssl/mtc
 sed -e "s|mtc-admin.example.cz|$H_ADMIN|g" -e "s|mtc-checkin.example.cz|$H_CHECKIN|g" \
     -e "s|10.10.0.0/24;|$NET;|" \
-    -e "s|__ADMIN_CERT__|$CA|" -e "s|__ADMIN_KEY__|$KA|" -e "s|__CHECKIN_CERT__|$CC|" -e "s|__CHECKIN_KEY__|$KC|" \
+    -e "s|__ADMIN_CERT__|$NGX_CERT_DIR/admin.crt|" -e "s|__ADMIN_KEY__|$NGX_CERT_DIR/admin.key|" \
+    -e "s|__CHECKIN_CERT__|$NGX_CERT_DIR/checkin.crt|" -e "s|__CHECKIN_KEY__|$NGX_CERT_DIR/checkin.key|" \
     "$SRC/deploy/nginx/mtcontroller.conf" > "$NGX"
 ln -sfn "$NGX" /etc/nginx/sites-enabled/mtcontroller.conf
 rm -f /etc/nginx/sites-enabled/default
-if [ -f "$CA" ] && [ -f "$CC" ]; then
-  nginx -t && systemctl reload nginx
+if nginx -t; then
+  systemctl reload nginx 2>/dev/null || systemctl restart nginx
 else
-  echo "!! chybí certifikáty ($CA, $CC) – nginx nepřenačten. Spusť znovu s --certbot EMAIL nebo --lab."
+  echo "!! nginx -t selhal – zkontroluj $NGX" >&2
 fi
+if [ -n "$CERTBOT" ]; then
+  # webroot přes běžící nginx (port 80 obsluhuje /.well-known/acme-challenge/ vždy)
+  mtc-admin tls letsencrypt "$CERTBOT" --slot admin --slot checkin \
+    || echo "!! Let's Encrypt se nepodařil – běží certifikát z CA controlleru. Později: mtc-admin tls letsencrypt EMAIL, nebo v UI Systém → Certifikát HTTPS"
+fi
+mtc-admin tls status
 
 say "Hotovo"
 cat <<EOF

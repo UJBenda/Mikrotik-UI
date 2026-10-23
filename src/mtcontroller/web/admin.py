@@ -266,6 +266,38 @@ async def system_backup_download(request: Request, p: Principal, _t) -> Response
 
 
 @endpoint(None)
+async def system_tls(request: Request, p: Principal, _t) -> Response:
+    """Certifikát HTTPS (superadmin): stav slotů; POST = žádost pro root (mtc-tls.path)."""
+    from .. import tlscfg
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    s = st.settings
+    data_dir, hosts = s.paths.data_dir, tlscfg.hosts_of(s)
+    if request.method == "POST":
+        if tlscfg.request_path(data_dir).exists():
+            return _err(409, "změna certifikátu už probíhá")
+        data = await _json(request, limit=3 * tlscfg.MAX_PEM)
+        try:
+            req = tlscfg.check_request(data, local=s.tunnel.local, hosts=hosts)
+        except tlscfg.TlsError as e:
+            return _err(400, str(e))
+
+        def q():
+            with operator_scope(st.db) as tx:
+                audit(tx, "system.tls_request", user_id=p.user_id, target="system:tls",
+                      after={"action": req["action"], "slots": req["slots"], "email": req.get("email")},
+                      ip=client_ip(request))
+            tlscfg.write_request(data_dir, {k: v for k, v in req.items() if k != "warnings"} | {"user": p.email})
+
+        await run_in_threadpool(q)
+        return json_response({"ok": True, "warnings": req.get("warnings") or []})
+    return json_response({"slots": await run_in_threadpool(tlscfg.status), "local": s.tunnel.local, "hosts": hosts,
+                          "status": tlscfg.read_status(data_dir), "pending": tlscfg.request_path(data_dir).exists()})
+
+
+@endpoint(None)
 async def system_status(request: Request, p: Principal, _t) -> Response:
     """Stav controlleru pro superadmina: worker (heartbeat), fronty, alerty, verze."""
     from .. import heartbeat
@@ -507,6 +539,7 @@ def routes() -> list[Route]:
         Route("/api/admin/me/password", my_password, methods=["POST"]),
         Route("/api/admin/system", system_status, methods=["GET"]),
         Route("/api/admin/system/backups", system_backups, methods=["GET", "POST"]),
+        Route("/api/admin/system/tls", system_tls, methods=["GET", "POST"]),
         Route("/api/admin/system/backups/{name}", system_backup_download, methods=["GET"]),
         Route("/api/admin/users/{user_id}/reset-mfa", user_mfa_reset, methods=["POST"]),
         Route(t + "/users", tenant_users, methods=["GET", "POST"]),

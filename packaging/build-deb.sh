@@ -26,7 +26,7 @@ EOS
 chmod 0755 "$ROOT/usr/sbin/mtc-admin"
 
 for u in mtc-web.service mtc-worker.service mtc-syslog.service mtc-setup.service mtc-setup-apply.service mtc-setup-apply.path \
-         mtc-backup.service mtc-backup.timer mtc-backup.path; do
+         mtc-backup.service mtc-backup.timer mtc-backup.path mtc-tls.service mtc-tls.path; do
   install -m 0644 "$SRC/deploy/systemd/$u" "$ROOT/lib/systemd/system/$u"
 done
 install -m 0644 "$SRC/deploy/common.sh" "$ROOT/usr/share/mtcontroller/common.sh"

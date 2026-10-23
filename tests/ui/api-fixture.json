@@ -4854,7 +4854,61 @@
     "poe_watchdog": true,
     "poe_watchdog_timeout": 60
    }
-  ]
+  ],
+  "/api/admin/system/tls": {
+   "slots": {
+    "admin": {
+     "subject": "mtc-admin.firma.cz",
+     "names": [
+      "mtc-admin.firma.cz"
+     ],
+     "issuer": "R11 (Let's Encrypt)",
+     "not_before": "2026-09-20T10:00:00+00:00",
+     "not_after": "2026-12-19T10:00:00+00:00",
+     "days_left": 57,
+     "self_signed": false,
+     "kind": "letsencrypt",
+     "meta": {
+      "kind": "letsencrypt",
+      "since": "2026-09-20T10:01:00+00:00",
+      "host": "mtc-admin.firma.cz",
+      "lineage": "mtc-admin"
+     }
+    },
+    "checkin": {
+     "subject": "mtc-checkin.firma.cz",
+     "names": [
+      "mtc-checkin.firma.cz",
+      "10.10.0.10"
+     ],
+     "issuer": "mtc controller CA",
+     "not_before": "2026-09-01T10:00:00+00:00",
+     "not_after": "2028-12-04T10:00:00+00:00",
+     "days_left": 773,
+     "self_signed": false,
+     "kind": "own_ca",
+     "meta": {
+      "kind": "own_ca",
+      "since": "2026-09-01T10:00:00+00:00"
+     }
+    }
+   },
+   "local": false,
+   "hosts": {
+    "admin": "mtc-admin.firma.cz",
+    "checkin": "mtc-checkin.firma.cz"
+   },
+   "status": {
+    "at": "2026-09-20T10:01:00+00:00",
+    "state": "done",
+    "action": "letsencrypt",
+    "slots": [
+     "admin"
+    ],
+    "warnings": []
+   },
+   "pending": false
+  }
  },
  "tid": "061b0f18-cf0a-4a0a-83f8-f5e9d813870c",
  "gw": "06813aef-ac70-438a-a7d6-7859862f16ed",

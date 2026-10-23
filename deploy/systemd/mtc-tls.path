@@ -1,0 +1,9 @@
+[Unit]
+Description=MikroTik Controller – změna certifikátu HTTPS na žádost z UI
+
+[Path]
+PathExists=/var/lib/mtcontroller/tls-request.json
+Unit=mtc-tls.service
+
+[Install]
+WantedBy=multi-user.target

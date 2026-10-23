@@ -30,6 +30,25 @@ V prohlížeči se zvolí režim:
 - **Centrální vzdálená správa** – dvě DNS jména (admin, check-in), Let's Encrypt nebo vlastní CA;
   koncentrátory se doplní do `/etc/mtcontroller/config.toml` jako dřív.
 
+Certifikáty HTTPS nejsou na Let's Encryptu závislé: průvodce (i skript) vždy nejdřív vydá certifikát
+z vlastní CA controlleru, takže nginx naběhne i bez DNS a internetu (prohlížeč ho jen označí za
+nedůvěryhodný). Let's Encrypt se zkusí navíc; když selže, instalace doběhne s varováním. Později se
+dá kdykoli nastavit v UI **Systém → Certifikát HTTPS** (Let's Encrypt, nahrání vlastního PEM, nové
+vydání z CA controlleru) nebo `sudo mtc-admin tls …`:
+
+```sh
+mtc-admin tls                                  # stav: druh, jména, platnost
+mtc-admin tls letsencrypt it@firma.cz --slot admin
+mtc-admin tls custom cert.pem key.pem --slot admin
+mtc-admin tls own                              # zpět na CA controlleru
+```
+
+nginx ukazuje na `/etc/ssl/mtc/{admin,checkin}.{crt,key}`; když nový certifikát neprojde `nginx -t`,
+vrátí se předchozí. Obnovy Let's Encrypt přenáší hook `/etc/letsencrypt/renewal-hooks/deploy/mtcontroller`.
+Zařízení ověřují check-in: CA controlleru znají, veřejnou CA jen RouterOS 7.19+ s
+vestavěnými kořenovými CA povolenými pro fetch (`/certificate/settings builtin-trust-store`) – proto u vzdálené správy stačí Let's Encrypt
+pro administraci a check-in nechat na CA controlleru.
+
 Průvodce se zeptá i na zemi (regulace Wi-Fi), časovou zónu a NTP, založí superadmina (MFA při prvním
 přihlášení), první firmu a lokalitu, zapíše konfiguraci, nginx, zapne služby `mtc-web`, `mtc-worker`,
 `mtc-syslog` a denní zálohy a udělá první zálohu. Na konci ukáže **záchranné údaje** – hlavně heslo
@@ -54,8 +73,9 @@ cd /root/Mikrotik-UI
   --controller-ip 10.10.0.10 --admin-net 10.10.0.0/24 --certbot admin@firma.cz
 ```
 
-Pro první test v laboratoři místo `--certbot` použij `--lab` – viz
-[test-plan.md](test-plan.md).
+Bez `--certbot` (nebo když Let's Encrypt selže) poběží nginx s certifikátem z CA controlleru
+a Let's Encrypt se nastaví později (`mtc-admin tls letsencrypt EMAIL` nebo v UI). `--lab` navíc
+vypne ověřování certifikátů na MikroTicích – jen laboratoř, viz [test-plan.md](test-plan.md).
 
 Aktualizace: `git pull && ./deploy/install.sh` (konfigurace, klíče i DB zůstanou,
 aplikují se nové migrace, služby se restartují).

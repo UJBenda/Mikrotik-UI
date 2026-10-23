@@ -31,9 +31,12 @@ if [ -f "$ETC/config.toml" ]; then
     (umask 077; python3 -c 'import sys; sys.path.insert(0, "/opt/mtcontroller/app"); from mtcontroller.sysbackup import new_passphrase; print(new_passphrase())' > "$ETC/backup.key")
     echo "vytvořeno heslo záloh – zobrazí ho: sudo mtc-admin recovery-kit"
   fi
-  systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path >/dev/null
+  # certifikáty HTTPS ve slotech (starší verze je měly jinde); nginx musí naběhnout vždy
+  mtc_tls_hook
+  "$MTC_ADMIN" tls bootstrap || echo "!! certifikáty: mtc-admin tls bootstrap selhal" >&2
+  systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path mtc-tls.path >/dev/null
   systemctl restart mtc-web mtc-worker mtc-syslog
-  systemctl start mtc-backup.timer mtc-backup.path
+  systemctl start mtc-backup.timer mtc-backup.path mtc-tls.path
   systemctl reload nginx 2>/dev/null || true
   exit 0
 fi
@@ -45,7 +48,9 @@ fi
 chown root:mtcontroller "$ETC/setup-code"
 chmod 0640 "$ETC/setup-code"
 
-install -d -m 0750 /etc/ssl/mtc
+mtc_tls_hook
+# průvodce běží na dočasném self-signed certifikátu (bez DNS a internetu); certifikáty controlleru
+# vydá průvodce: vždy z CA controlleru, Let's Encrypt jen navíc (když selže, instalace pokračuje)
 if [ ! -f /etc/ssl/mtc/setup.crt ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=mtcontroller-setup" \
     -keyout /etc/ssl/mtc/setup.key -out /etc/ssl/mtc/setup.crt 2>/dev/null

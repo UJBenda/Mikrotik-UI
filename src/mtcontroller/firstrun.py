@@ -154,9 +154,9 @@ def render_config(plan: SetupPlan, device_ca: Path = DEVICE_CA) -> str:
     L = [f"# Vytvořil průvodce prvního spuštění {now}. Úpravy: viz /usr/share/mtcontroller/config.toml.example",
          "", "[web]", f"ui_host = {j(plan.ui_host)}", f"checkin_host = {j(plan.checkin_host)}",
          "", "[security]", 'device_check_certificate = "yes-without-crl"']
-    if plan.certs == "own_ca":
-        L.append("# vlastní CA controlleru: zařízení si ji stáhnou a ponechají jen při shodě otisku")
-        L.append(f"device_ca_file = {j(str(device_ca))}")
+    # CA controlleru existuje vždy (první certifikát nginx je od ní); zařízení si ji stáhnou
+    # a ponechají jen při shodě otisku. S Let's Encrypt na check-inu nevadí – navíc věří i jí.
+    L.append(f"device_ca_file = {j(str(device_ca))}")
     L += ["", "# výchozí hodnoty pro nové lokality a výchozí konfiguraci zařízení", "[site_defaults]",
           f"timezone = {j(plan.timezone)}", f"country = {j(plan.country)}", f"ntp = {j(plan.ntp)}",
           "", "# denní šifrované zálohy (mtc-backup.timer); heslo je v passphrase_file (jen root)", "[backup]",
@@ -277,17 +277,22 @@ def ensure_own_ca(hosts: list[str], ssl_dir: Path = SSL, device_ca: Path = DEVIC
 # --- nginx ------------------------------------------------------------------------------
 
 
-def render_nginx(plan: SetupPlan, cert: str, key: str, share: Path = SHARE) -> str:
+def render_nginx(plan: SetupPlan, ssl_dir: Path = SSL, share: Path = SHARE) -> str:
+    """nginx ukazuje na stálé soubory slotů (tlscfg) – výměna certifikátu nemění konfiguraci."""
+    from . import tlscfg
+
     allow = "\n".join(f"    allow {n};" for n in plan.admin_nets)
+    acrt, akey = (str(p) for p in tlscfg.slot_paths("admin", ssl_dir))
     if plan.mode == "local":
         tpl = (share / "nginx" / "mtcontroller-local.conf").read_text()
         out = tpl.replace("mtc.example.lan", plan.ui_host)
-        out = out.replace("__CERT__", cert).replace("__KEY__", key)
+        out = out.replace("__CERT__", acrt).replace("__KEY__", akey)
     else:
+        ccrt, ckey = (str(p) for p in tlscfg.slot_paths("checkin", ssl_dir))
         tpl = (share / "nginx" / "mtcontroller.conf").read_text()
         out = (tpl.replace("mtc-admin.example.cz", plan.ui_host).replace("mtc-checkin.example.cz", plan.checkin_host)
-               .replace("__ADMIN_CERT__", cert).replace("__ADMIN_KEY__", key)
-               .replace("__CHECKIN_CERT__", cert).replace("__CHECKIN_KEY__", key))
+               .replace("__ADMIN_CERT__", acrt).replace("__ADMIN_KEY__", akey)
+               .replace("__CHECKIN_CERT__", ccrt).replace("__CHECKIN_KEY__", ckey))
     out = re.sub(r"^\s*allow [0-9a-fA-F.:/]+;\s*# mtc-admin-net\s*$", allow + "  # mtc-admin-net", out, count=1,
                  flags=re.M)
     return out
@@ -319,6 +324,7 @@ class Env:
     data: Path = DATA
     share: Path = SHARE
     ssl: Path = SSL
+    le_live: Path = Path("/etc/letsencrypt/live")
     nginx: Path = Path("/etc/nginx")
     run: Callable[..., Any] = _run
     # obnova ze zálohy: (soubor, heslo) -> výsledek sysbackup.restore
@@ -326,6 +332,14 @@ class Env:
     # první záloha po instalaci (chyba instalaci nezastaví)
     backup: Callable[[], Any] | None = None
     current_ip: Callable[[], str] = lambda: default_ip()  # noqa: E731
+
+
+def _restore_certs(s, form: dict) -> str:
+    """Let's Encrypt po obnově jen když ho chce průvodce (e-mail) a jména nejsou IP."""
+    if not form.get("acme_email"):
+        return "own_ca"
+    names = [s.web.ui_host] + ([] if s.tunnel.local else [s.web.checkin_host])
+    return "own_ca" if any(_is_ip(n) for n in names) else "letsencrypt"
 
 
 def _plan_from_config(etc: Path, form: dict) -> SetupPlan:
@@ -340,22 +354,42 @@ def _plan_from_config(etc: Path, form: dict) -> SetupPlan:
     return SetupPlan.model_validate({
         "mode": "local" if s.tunnel.local else "remote", "controller_ip": s.tunnel.controller_ip,
         "ui_host": s.web.ui_host, "checkin_host": s.web.checkin_host,
-        "admin_nets": form.get("admin_nets") or [], "certs": "own_ca" if s.security.device_ca_file else "letsencrypt",
+        "admin_nets": form.get("admin_nets") or [], "certs": _restore_certs(s, form),
         "acme_email": form.get("acme_email") or "", "timezone": s.site_defaults.timezone,
         "country": s.site_defaults.country, "ntp": s.site_defaults.ntp})
 
 
-def _certs(plan: SetupPlan, env: Env) -> tuple[Path, Path]:
-    if plan.certs == "own_ca":
-        return ensure_own_ca([plan.ui_host, plan.checkin_host, plan.controller_ip], env.ssl,
-                             env.etc / DEVICE_CA.name, env.ssl.parent / "mtc-public" / "ca.crt")
-    r = env.run("certbot", "certonly", "--webroot", "-w", "/var/www/html", "--non-interactive", "--agree-tos",
-                "-m", plan.acme_email, "-d", plan.ui_host, "-d", plan.checkin_host, "--cert-name",
-                "mtcontroller", check=False)
-    if r.returncode != 0:
-        raise RuntimeError("certbot selhal (DNS obou jmen musí mířit sem, port 80 otevřený): "
-                           + (r.stderr or r.stdout or "")[-400:])
-    return Path("/etc/letsencrypt/live/mtcontroller/fullchain.pem"), Path("/etc/letsencrypt/live/mtcontroller/privkey.pem")
+def slot_hosts(plan: SetupPlan) -> dict[str, list[str]]:
+    """Jména do certifikátů z CA controlleru podle slotů (IP controlleru vždy – přístup bez DNS)."""
+    uniq = lambda *a: [x for x in dict.fromkeys(a) if x]  # noqa: E731
+    if plan.mode == "local":
+        return {"admin": uniq(plan.ui_host, plan.checkin_host, plan.controller_ip)}
+    return {"admin": uniq(plan.ui_host, plan.controller_ip), "checkin": uniq(plan.checkin_host, plan.controller_ip)}
+
+
+def _certs(plan: SetupPlan, env: Env) -> list[str]:
+    """Certifikáty slotů. Vždy nejdřív z CA controlleru (nginx naběhne i bez internetu a DNS),
+    Let's Encrypt jen nad tím: když selže, zůstane vlastní a vrátí se varování – instalace pokračuje."""
+    from . import tlscfg
+
+    public = env.ssl.parent / "mtc-public"
+    hosts = slot_hosts(plan)
+    for slot, names in hosts.items():
+        tlscfg.own_ca(slot, names, ssl_dir=env.ssl, public=public, device_ca=env.etc / DEVICE_CA.name)
+    if plan.certs != "letsencrypt":
+        return []
+    warnings = []
+    for slot in hosts:
+        host = plan.ui_host if slot == "admin" else plan.checkin_host
+        try:
+            tlscfg.letsencrypt(slot, host, plan.acme_email, run=lambda *c: env.run(*c, check=False),
+                               ssl_dir=env.ssl, public=public, live=env.le_live)
+        except (tlscfg.TlsError, OSError) as e:
+            log.warning("Let's Encrypt %s: %s", host, e)
+            warnings.append(f"Let's Encrypt pro {host} se nepodařil – běží certifikát od CA controlleru "
+                            "(prohlížeč ho bez importu CA označí za nedůvěryhodný). Nastav ho později "
+                            "v administraci: Systém → Certifikát HTTPS.")
+    return warnings
 
 
 def kit(plan, passphrase: str, admin: str = "", restored: dict | None = None) -> dict:
@@ -401,20 +435,21 @@ def kit_text(k: dict) -> str:
 def _install(req: dict, env: Env, sd: Path) -> None:
     plan = SetupPlan.model_validate(req.get("plan") or {})
     _status(sd, "applying", "Certifikáty a konfigurace", step=1)
-    crt, key = _certs(plan, env)
+    warn = " ".join(_certs(plan, env))
     _owned(env.etc / "config.toml", render_config(plan, env.etc / DEVICE_CA.name), 0o640, "root")
     _owned(env.etc / "setup-plan.json", plan.model_dump_json(indent=1), 0o640, "root")
     passphrase = sysbackup.new_passphrase()
     _write(env.etc / "backup.key", passphrase + "\n", 0o600)
-    _finish_common(plan, env, sd, crt, key)
+    _finish_common(plan, env, sd)
     if env.backup:
         _status(sd, "applying", "První záloha", step=4)
         try:
             env.backup()
         except Exception as e:  # noqa: BLE001 – instalace kvůli záloze neselže
             log.warning("první záloha selhala: %s", e)
-    _owned(sd / "kit.json", json.dumps(kit(plan, passphrase, str(req.get("admin") or ""))), 0o640, "root")
-    _status(sd, "ready", "Hotovo – ulož si záchranné údaje", step=5)
+    _owned(sd / "kit.json", json.dumps(kit(plan, passphrase, str(req.get("admin") or "")) | {"warning": warn}),
+           0o640, "root")
+    _status(sd, "ready", "Hotovo – ulož si záchranné údaje", step=5, warning=warn)
 
 
 def _restore(req: dict, env: Env, sd: Path) -> None:
@@ -431,31 +466,31 @@ def _restore(req: dict, env: Env, sd: Path) -> None:
         upload.unlink(missing_ok=True)
     plan = _plan_from_config(env.etc, req.get("form") or {})
     _status(sd, "applying", "Certifikáty", step=2)
-    crt, key = _certs(plan, env)
+    cert_warn = _certs(plan, env)
     _owned(env.etc / "setup-plan.json", plan.model_dump_json(indent=1), 0o640, "root")
     _write(env.etc / "backup.key", passphrase + "\n", 0o600)
-    _finish_common(plan, env, sd, crt, key)
+    _finish_common(plan, env, sd)
     man = res.get("manifest") or {}
     restored = {"from": man.get("created_at"), "version": man.get("app_version"), "host": man.get("hostname"),
                 "migrated": res.get("migrated") or []}
     here = env.current_ip()
-    warn = ""
+    warn = " ".join(cert_warn)
     if here and here != plan.controller_ip:
-        warn = (f"Záloha počítá s adresou controlleru {plan.controller_ip}, server má teď {here}. "
+        warn += (" " if warn else "") + (f"Záloha počítá s adresou controlleru {plan.controller_ip}, server má teď {here}. "
                 "Zařízení se hlásí na původní adresu – nastav serveru původní IP.")
     _owned(sd / "kit.json", json.dumps(kit(plan, passphrase, restored=restored) | {"warning": warn}), 0o640, "root")
     _status(sd, "ready", "Obnoveno – zkontroluj záchranné údaje", step=5, warning=warn)
 
 
-def _finish_common(plan: SetupPlan, env: Env, sd: Path, crt: Path, key: Path) -> None:
+def _finish_common(plan: SetupPlan, env: Env, sd: Path) -> None:
     """nginx připravit (zapne se až při finish), časová zóna serveru, služby controlleru."""
     _status(sd, "applying", "Webový server a služby", step=3)
     avail = env.nginx / "sites-available"
     avail.mkdir(parents=True, exist_ok=True)
-    _write(avail / "mtcontroller.conf", render_nginx(plan, str(crt), str(key), env.share), 0o644)
+    _write(avail / "mtcontroller.conf", render_nginx(plan, env.ssl, env.share), 0o644)
     env.run("timedatectl", "set-timezone", plan.timezone, check=False)
     env.run("systemctl", "enable", "--now", "mtc-web", "mtc-worker", "mtc-syslog", "mtc-backup.timer",
-            "mtc-backup.path")
+            "mtc-backup.path", "mtc-tls.path")
 
 
 def _finish(env: Env, sd: Path) -> None:
@@ -483,6 +518,28 @@ def _finish(env: Env, sd: Path) -> None:
     _status(sd, "done", "Přepnuto na controller", url=url)
     env.run("systemctl", "reload", "nginx")
     env.run("systemctl", "disable", "--now", "mtc-setup.service", "mtc-setup-apply.path", check=False)
+
+
+def upgrade_nginx(env: Env | None = None) -> bool:
+    """Aktualizace balíčku: nginx ze starší verze průvodce (certifikát mimo sloty) přegenerovat
+    na sloty /etc/ssl/mtc/{admin,checkin}. Při chybě nginx -t vrátí původní. Vrací, zda změnil."""
+    from . import tlscfg
+
+    env = env or Env()
+    conf = env.nginx / "sites-available" / "mtcontroller.conf"
+    saved = env.etc / "setup-plan.json"
+    if not conf.is_file() or not saved.is_file():
+        return False
+    old = conf.read_text()
+    if str(tlscfg.slot_paths("admin", env.ssl)[0]) in old:
+        return False
+    plan = SetupPlan.model_validate_json(saved.read_text())
+    _write(conf, render_nginx(plan, env.ssl, env.share), 0o644)
+    if env.run("nginx", "-t", check=False).returncode != 0:
+        _write(conf, old, 0o644)
+        return False
+    env.run("systemctl", "reload", "nginx", check=False)
+    return True
 
 
 def apply_request(env: Env | None = None) -> int:

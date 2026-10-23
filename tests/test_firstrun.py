@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from helpers import AsgiClient, drop_db, fresh_db, make_settings
 from test_routeros import _balanced
 
-from mtcontroller import firstrun, routeros, sysbackup
+from mtcontroller import firstrun, routeros, sysbackup, tlscfg
 from mtcontroller.config import load_settings
 from mtcontroller.db import operator_scope
 
@@ -56,7 +56,7 @@ def test_config_is_valid_for_both_modes(tmp_path):
          "controller_ip": "10.10.0.10", "certs": "letsencrypt", "acme_email": "it@firma.cz"}))
     (tmp_path / "r.toml").write_text(rem)
     s = load_settings(tmp_path / "r.toml", environ={})
-    assert not s.tunnel.local and s.security.device_ca_file is None and s.tunnel.controller_ip == "10.10.0.10"
+    assert not s.tunnel.local and s.security.device_ca_file is not None and s.tunnel.controller_ip == "10.10.0.10"
 
 
 def test_own_ca_chain_and_fingerprint(tmp_path):
@@ -114,13 +114,15 @@ def test_device_scripts_trust_own_ca(tmp_path):
 def test_nginx_local(tmp_path):
     share = _share(tmp_path)
     plan = firstrun.SetupPlan.model_validate(LOCAL | {"admin_nets": ["192.168.88.0/24", "10.8.0.0/24"]})
-    out = firstrun.render_nginx(plan, "/c.crt", "/c.key", share)
+    out = firstrun.render_nginx(plan, Path("/s"), share)
+    assert "ssl_certificate     /s/admin.crt;" in out and "/s/admin.key;" in out
     assert "__" not in out and "example" not in out
     assert "allow 192.168.88.0/24;\n    allow 10.8.0.0/24;" in out
     assert "proxy_set_header Host 192.168.88.10;" in out
     assert "alias /etc/ssl/mtc-public/ca.crt;" in out
     rem = firstrun.render_nginx(firstrun.SetupPlan.model_validate(
-        {**LOCAL, "mode": "remote", "ui_host": "a.firma.cz", "checkin_host": "c.firma.cz"}), "/c.crt", "/c.key", share)
+        {**LOCAL, "mode": "remote", "ui_host": "a.firma.cz", "checkin_host": "c.firma.cz"}), Path("/s"), share)
+    assert "/s/checkin.crt;" in rem and "/s/admin.crt;" in rem
     assert "server_name a.firma.cz;" in rem and "server_name c.firma.cz;" in rem and "__" not in rem
     assert "allow 192.168.88.0/24;  # mtc-admin-net" in rem
 
@@ -145,7 +147,7 @@ def _env(tmp: Path, **kw) -> firstrun.Env:
         calls.append(cmd)
         return _R()
 
-    env = firstrun.Env(etc=etc, data=data, share=_share(tmp), ssl=tmp / "ssl", nginx=ngx, run=run,
+    env = firstrun.Env(etc=etc, data=data, share=_share(tmp), ssl=tmp / "ssl", nginx=ngx, run=run, le_live=tmp / "le",
                        current_ip=lambda: "192.168.88.10", **kw)
     env.calls = calls
     return env
@@ -357,3 +359,60 @@ def test_setup_upload_and_restore_request(tmp_path):
 
 def test_new_code_format():
     assert re.fullmatch(r"[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}", firstrun.new_code())
+
+
+def _le_files(live: Path, slot: str, host: str) -> bytes:
+    """Podvržený výsledek certbotu (jiná CA než controlleru)."""
+    from cryptography.hazmat.primitives import serialization
+
+    ca_key, ca = firstrun.make_ca("Fake LE")
+    key, cert = firstrun.make_server_cert(ca_key, ca, [host])
+    d = live / f"mtc-{slot}"
+    d.mkdir(parents=True, exist_ok=True)
+    pem = cert.public_bytes(serialization.Encoding.PEM)
+    (d / "fullchain.pem").write_bytes(pem)
+    (d / "privkey.pem").write_bytes(firstrun._pem_key(key))
+    return pem
+
+
+REMOTE_LE = {**LOCAL, "mode": "remote", "ui_host": "a.firma.cz", "checkin_host": "c.firma.cz",
+             "certs": "letsencrypt", "acme_email": "it@firma.cz"}
+
+
+def test_install_letsencrypt_fails_falls_back_to_own_ca(tmp_path):
+    """Certbot selže (DNS, port 80) – instalace doběhne s certifikátem od CA controlleru a varováním."""
+    env = _env(tmp_path)
+
+    class Bad:
+        returncode, stdout, stderr = 1, "", "Challenge failed"
+
+    calls = env.calls
+    env.run = lambda *c, check=True: (calls.append(c), Bad() if c[0] == "certbot" else _R())[1]
+    assert _req(env, {"action": "install", "plan": REMOTE_LE}) == 0
+    st = _st(env)
+    assert st["state"] == "ready" and "a.firma.cz" in st["warning"] and "Certifikát HTTPS" in st["warning"]
+    assert sum(c[0] == "certbot" for c in calls) == 2
+    for slot in ("admin", "checkin"):
+        info = tlscfg.inspect((env.ssl / f"{slot}.crt").read_bytes())
+        assert info["issuer"].startswith("mtc controller CA") and (env.ssl / f"{slot}.key").stat().st_mode & 0o077 == 0
+        assert tlscfg.marker(env.ssl.parent / "mtc-public")[slot]["kind"] == "own_ca"
+    assert tlscfg.covers(tlscfg.inspect((env.ssl / "checkin.crt").read_bytes()), "c.firma.cz")
+    # CA pro zařízení je v konfiguraci vždy
+    s = load_settings(env.etc / "config.toml", environ={})
+    assert s.security.device_ca_file == env.etc / "device-ca.crt" and (env.etc / "device-ca.crt").exists()
+    kit = json.loads((firstrun.setup_dir(env.data) / "kit.json").read_text())
+    assert "POZOR" in firstrun.kit_text(kit)
+    conf = (env.nginx / "sites-available" / "mtcontroller.conf").read_text()
+    assert f"{env.ssl}/admin.crt;" in conf and f"{env.ssl}/checkin.key;" in conf
+
+
+def test_install_letsencrypt_ok(tmp_path):
+    env = _env(tmp_path)
+    pem = {s: _le_files(env.le_live, s, h) for s, h in (("admin", "a.firma.cz"), ("checkin", "c.firma.cz"))}
+    assert _req(env, {"action": "install", "plan": REMOTE_LE}) == 0
+    assert not _st(env).get("warning")
+    certbot = [c for c in env.calls if c[0] == "certbot"]
+    assert len(certbot) == 2 and "--webroot" in certbot[0] and "mtc-admin" in certbot[0]
+    for slot in ("admin", "checkin"):
+        assert (env.ssl / f"{slot}.crt").read_bytes() == pem[slot]
+        assert tlscfg.marker(env.ssl.parent / "mtc-public")[slot]["kind"] == "letsencrypt"

@@ -19,6 +19,10 @@
   backup                        šifrovaná záloha controlleru (root; timer mtc-backup a žádost z UI)
   restore SOUBOR [--force]      obnova controlleru ze zálohy .mtcbak (root; zastaví služby)
   recovery-kit                  vypíše záchranné údaje (heslo záloh, DB, cesty) (root)
+  tls [status|own|letsencrypt EMAIL|custom CERT KEY|bootstrap] [--slot admin|checkin]
+                                certifikát HTTPS pro nginx (root; jinak Systém → Certifikát HTTPS)
+  tls-apply                     provede žádost o certifikát z UI (root; spouští mtc-tls.path)
+  tls-sync                      deploy hook certbotu: obnovený Let's Encrypt do nginx (root)
 """
 
 from __future__ import annotations
@@ -355,6 +359,72 @@ def cmd_recovery_kit(a) -> int:
     return 0
 
 
+def _tls_log() -> None:
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+
+def cmd_tls(a) -> int:
+    from pathlib import Path
+
+    from . import tlscfg
+    s = get_settings()
+    if a.action == "status":
+        st = tlscfg.status()
+        if not st:
+            print("certifikáty slotů nejsou (spusť jako root: mtc-admin tls own)")
+        for slot, i in st.items():
+            if "error" in i:
+                print(f"{slot}: {i['error']}")
+                continue
+            print(f"{slot}: {i['kind'] or '?'} – {', '.join(i['names'])}; vydal {i['issuer']}; "
+                  f"platí do {i['not_after'][:10]} ({i['days_left']} dní)")
+        return 0
+    _tls_log()
+    if a.action == "bootstrap":
+        for line in tlscfg.bootstrap(s, device_ca=s.security.device_ca_file):
+            print(line)
+        from . import firstrun
+        if firstrun.upgrade_nginx():
+            print("nginx přepnut na certifikáty /etc/ssl/mtc/{admin,checkin}")
+        return 0
+    req: dict = {"action": {"own": "own_ca"}.get(a.action, a.action), "slots": a.slot or list(tlscfg.SLOTS)}
+    if a.action == "letsencrypt":
+        if len(a.args) != 1:
+            raise SystemExit("použití: mtc-admin tls letsencrypt EMAIL [--slot admin]")
+        req["email"] = a.args[0]
+    elif a.action == "custom":
+        if len(a.args) != 2:
+            raise SystemExit("použití: mtc-admin tls custom CERT.pem KEY.pem --slot admin")
+        req["cert"], req["key"] = Path(a.args[0]).read_text(), Path(a.args[1]).read_text()
+    try:
+        res = tlscfg.apply(req, local=s.tunnel.local, hosts=tlscfg.hosts_of(s), ip=s.tunnel.controller_ip,
+                           device_ca=s.security.device_ca_file)
+    except Exception as e:  # noqa: BLE001
+        tlscfg._audit(s, "system.tls_failed", {"error": str(e)[:300], "by": "cli"})
+        raise SystemExit(f"certifikát se nepodařilo nastavit (zůstává předchozí): {e}")
+    tlscfg._audit(s, "system.tls", {"action": res["action"], "slots": res["slots"], "by": "cli"})
+    for w in res["warnings"]:
+        print(f"POZOR: {w}")
+    print(f"hotovo: {', '.join(res['slots'])} → {res['action']}")
+    return 0
+
+
+def cmd_tls_apply(a) -> int:
+    from . import tlscfg
+    _tls_log()
+    return tlscfg.apply_request(get_settings())
+
+
+def cmd_tls_sync(a) -> int:
+    from . import tlscfg
+    _tls_log()
+    done = tlscfg.sync()
+    if done:
+        tlscfg._audit(get_settings(), "system.tls_renewed", {"slots": done})
+    return 0
+
+
 def cmd_doctor(a) -> int:
     from . import doctor
     from .db import PsycopgDatabase
@@ -392,6 +462,12 @@ def main(argv: list[str] | None = None) -> int:
     x = sub.add_parser("restore"); x.add_argument("file"); x.add_argument("--force", action="store_true")
     x.add_argument("--passphrase-file"); x.set_defaults(fn=cmd_restore)
     sub.add_parser("recovery-kit").set_defaults(fn=cmd_recovery_kit)
+    x = sub.add_parser("tls"); x.add_argument("action", nargs="?", default="status",
+                                             choices=["status", "own", "letsencrypt", "custom", "bootstrap"])
+    x.add_argument("args", nargs="*"); x.add_argument("--slot", action="append", choices=["admin", "checkin"])
+    x.set_defaults(fn=cmd_tls)
+    sub.add_parser("tls-apply").set_defaults(fn=cmd_tls_apply)
+    sub.add_parser("tls-sync").set_defaults(fn=cmd_tls_sync)
     x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")
     x.set_defaults(fn=cmd_device_check)
     a = p.parse_args(argv)

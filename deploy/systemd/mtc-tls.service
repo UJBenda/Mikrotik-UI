@@ -1,0 +1,11 @@
+[Unit]
+Description=MikroTik Controller – certifikát HTTPS (Let's Encrypt / vlastní / CA controlleru)
+
+[Service]
+Type=oneshot
+# root: zapisuje klíče do /etc/ssl/mtc, spouští certbot a přenačte nginx
+Environment=MTC_CONFIG=/etc/mtcontroller/config.toml
+Environment=PYTHONPATH=/opt/mtcontroller/app
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m mtcontroller.cli tls-apply
+TimeoutStartSec=15min

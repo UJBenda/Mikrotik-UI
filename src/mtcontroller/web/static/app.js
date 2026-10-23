@@ -228,7 +228,7 @@ async function startApp() {
   $("tenant-form").hidden = !me.superadmin;
   buildNav();
   showView(prefs.view || "overview");
-  if (me.superadmin) { loadSystem(); loadBackups(); }
+  if (me.superadmin) { loadSystem(); loadBackups(); loadTls(); }
   await loadTenants();
 }
 
@@ -1269,6 +1269,74 @@ async function loadBackups() {
 $("backup-now").addEventListener("click", async () => {
   try { await api("POST", "/system/backups", {}); msg("Záloha spuštěna"); } catch (e) { msg(e.message, true); }
   loadBackups();
+});
+
+// --- certifikát HTTPS (superadmin) ---------------------------------------------------------
+
+const TLS_KIND = { own_ca: "CA controlleru", letsencrypt: "Let's Encrypt", custom: "vlastní" };
+const TLS_SLOT = { admin: "administrace", checkin: "check-in" };
+let tlsLocal = false;
+
+async function loadTls() {
+  let t;
+  try { t = await api("GET", "/system/tls"); } catch (e) { return; }
+  $("tls-card").hidden = false;
+  tlsLocal = t.local;
+  $("tls-slots").hidden = t.local;
+  const tb = $("tls-list"); tb.textContent = "";
+  for (const slot of t.local ? ["admin"] : ["admin", "checkin"]) {
+    const i = t.slots[slot];
+    const tr = el("tr");
+    const name = t.local ? "správa i check-in" : TLS_SLOT[slot];
+    if (!i || i.error) {
+      tr.append(el("td", name), el("td", i ? i.error : "chybí", "sev-error"), el("td", ""), el("td", ""), el("td", ""));
+    } else {
+      const exp = el("td", `${new Date(i.not_after).toLocaleDateString("cs-CZ")} (${i.days_left} dní)`, i.days_left < 14 ? "sev-error" : i.days_left < 30 ? "sev-warning" : "");
+      tr.append(el("td", name), el("td", TLS_KIND[i.kind] || (i.self_signed ? "self-signed" : "?")),
+                el("td", i.names.join(", "), "mono"), el("td", i.issuer), exp);
+    }
+    tb.appendChild(tr);
+  }
+  const st = t.status || {};
+  const p = $("tls-summary"); p.textContent = "";
+  const own = Object.values(t.slots).some((i) => i && i.kind === "own_ca");
+  const txt = t.pending ? "Změna certifikátu probíhá…"
+    : st.state === "error" ? `Poslední změna selhala (běží předchozí certifikát): ${st.error || "?"}`
+    : st.state === "done" ? `Naposledy změněno ${fmtTime(st.at)}` + (st.warnings && st.warnings.length ? " – " + st.warnings.join("; ") : "")
+    : own ? "Běží certifikát z CA controlleru – prohlížeč ho bez importu CA označí za nedůvěryhodný. Nastav Let's Encrypt nebo vlastní."
+    : "";
+  p.appendChild(el("span", txt, st.state === "error" ? "sev-error" : ""));
+  $("tls-apply").disabled = !!t.pending;
+  if (t.pending) setTimeout(() => { if (!$("tls-card").hidden) loadTls(); }, 4000);
+}
+
+const TLS_RADIOS = ["tls-a-le", "tls-a-custom", "tls-a-own"];
+function tlsAction() { const r = TLS_RADIOS.find((id) => $(id).checked); return r ? $(r).value : "letsencrypt"; }
+function tlsForm() {
+  const a = tlsAction();
+  $("tls-le").hidden = a !== "letsencrypt";
+  $("tls-custom").hidden = a !== "custom";
+}
+for (const id of TLS_RADIOS) $(id).addEventListener("change", tlsForm);
+for (const [f, t] of [["tls-cert-file", "tls-cert"], ["tls-key-file", "tls-key"]]) {
+  $(f).addEventListener("change", async () => { const x = $(f).files[0]; if (x) $(t).value = await x.text(); });
+}
+$("tls-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const action = tlsAction();
+  const slots = tlsLocal ? ["admin"] : ["admin", "checkin"].filter((s) => $("tls-slot-" + s).checked);
+  const body = { action, slots };
+  if (action === "letsencrypt") body.email = $("tls-email").value.trim();
+  if (action === "custom") { body.cert = $("tls-cert").value; body.key = $("tls-key").value; }
+  if (action !== "own_ca" && (tlsLocal || slots.includes("checkin"))
+      && !confirm("Zařízení se hlásí přes tento certifikát. Bez důvěry ve veřejné CA (RouterOS 7.19+) se přestanou hlásit. Pokračovat?")) return;
+  try {
+    const r = await api("POST", "/system/tls", body);
+    $("tls-warn").textContent = (r.warnings || []).join("; ");
+    $("tls-key").value = ""; $("tls-key-file").value = "";
+    msg("Žádost o certifikát odeslána");
+  } catch (err) { msg(err.message, true); }
+  loadTls();
 });
 
 // --- uživatelé tenanta a vlastní heslo -----------------------------------------------------
