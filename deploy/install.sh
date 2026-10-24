@@ -148,6 +148,7 @@ sed -e "s|mtc-admin.example.cz|$H_ADMIN|g" -e "s|mtc-checkin.example.cz|$H_CHECK
     -e "s|10.10.0.0/24;|$NET;|" \
     -e "s|__ADMIN_CERT__|$NGX_CERT_DIR/admin.crt|" -e "s|__ADMIN_KEY__|$NGX_CERT_DIR/admin.key|" \
     -e "s|__CHECKIN_CERT__|$NGX_CERT_DIR/checkin.crt|" -e "s|__CHECKIN_KEY__|$NGX_CERT_DIR/checkin.key|" \
+    -e "s|__ADMIN_HSTS__|$NGX_CERT_DIR/hsts-admin*.conf|" -e "s|__CHECKIN_HSTS__|$NGX_CERT_DIR/hsts-checkin*.conf|" \
     "$SRC/deploy/nginx/mtcontroller.conf" > "$NGX"
 ln -sfn "$NGX" /etc/nginx/sites-enabled/mtcontroller.conf
 rm -f /etc/nginx/sites-enabled/default

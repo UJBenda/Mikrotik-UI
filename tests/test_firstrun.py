@@ -116,6 +116,7 @@ def test_nginx_local(tmp_path):
     plan = firstrun.SetupPlan.model_validate(LOCAL | {"admin_nets": ["192.168.88.0/24", "10.8.0.0/24"]})
     out = firstrun.render_nginx(plan, Path("/s"), share)
     assert "ssl_certificate     /s/admin.crt;" in out and "/s/admin.key;" in out
+    assert "include /s/hsts-admin*.conf;" in out and "Strict-Transport-Security" not in out
     assert "__" not in out and "example" not in out
     assert "allow 192.168.88.0/24;\n    allow 10.8.0.0/24;" in out
     assert "proxy_set_header Host 192.168.88.10;" in out
@@ -426,12 +427,16 @@ def test_upgrade_nginx_legacy_letsencrypt_paths(tmp_path):
     tpl = (env.share / "nginx" / "mtcontroller.conf").read_text()
     legacy = (tpl.replace("mtc-admin.example.cz", "a.firma.cz").replace("mtc-checkin.example.cz", "c.firma.cz")
               .replace("__ADMIN_CERT__", le_c).replace("__ADMIN_KEY__", le_k)
-              .replace("__CHECKIN_CERT__", le_c).replace("__CHECKIN_KEY__", le_k))
+              .replace("__CHECKIN_CERT__", le_c).replace("__CHECKIN_KEY__", le_k)
+              # starší šablona: pevné HSTS (s CA controlleru prohlížeč nedovolí výjimku)
+              .replace("include __ADMIN_HSTS__;", 'add_header Strict-Transport-Security "max-age=31536000" always;')
+              .replace("    include __CHECKIN_HSTS__;\n", ""))
     (env.nginx / "sites-available" / "mtcontroller.conf").write_text(legacy)
     (env.etc / "config.toml").write_text('[web]\nui_host = "a.firma.cz"\ncheckin_host = "c.firma.cz"\n')
     assert firstrun.upgrade_nginx(env)
     out = (env.nginx / "sites-available" / "mtcontroller.conf").read_text()
     assert "letsencrypt" not in out
+    assert "Strict-Transport-Security" not in out and out.count(f"include {env.ssl}/hsts-admin*.conf;") == 1
     admin = out[out.index("server_name a.firma.cz;"):out.index("server_name c.firma.cz;")]
     checkin = out[out.index("server_name c.firma.cz;"):]
     assert f"ssl_certificate     {env.ssl}/admin.crt;" in admin and f"{env.ssl}/admin.key;" in admin

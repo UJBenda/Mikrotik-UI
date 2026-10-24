@@ -228,6 +228,28 @@ def install(slot: str, cert_pem: bytes, key_pem: bytes, kind: str, *, ssl_dir: P
     public.mkdir(mode=0o755, parents=True, exist_ok=True)
     _write(public / f"{slot}.crt", cert_pem, 0o644)
     _set_marker(public, slot, kind, extra)
+    write_hsts(slot, kind, cert_pem, ssl_dir)
+
+
+def hsts_glob(slot: str, ssl_dir: Path = SSL) -> str:
+    """Cesta pro `include` v nginx – se zástupným znakem, aby chybějící soubor nevadil."""
+    return str(ssl_dir / f"hsts-{slot}*.conf")
+
+
+def write_hsts(slot: str, kind: str, cert_pem: bytes, ssl_dir: Path = SSL) -> None:
+    """HSTS jen u certifikátu, kterému prohlížeče věří: s CA controlleru (nebo self-signed)
+    by HSTS znemožnilo udělit výjimku a do administrace by se nedalo dostat."""
+    p = ssl_dir / f"hsts-{slot}.conf"
+    trusted = kind == "letsencrypt"
+    if kind == "custom":
+        try:
+            trusted = not inspect(cert_pem)["self_signed"]
+        except TlsError:
+            trusted = False
+    if trusted:
+        _write(p, b'add_header Strict-Transport-Security "max-age=31536000" always;\n', 0o644)
+    else:
+        p.unlink(missing_ok=True)
 
 
 def own_ca(slot: str, hosts: list[str], *, ssl_dir: Path = SSL, public: Path = PUBLIC,

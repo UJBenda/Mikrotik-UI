@@ -158,6 +158,9 @@ def test_apply_custom_and_revert_when_nginx_fails(tmp_path):
     run = _runner()
     res = tlscfg.apply(req, local=False, hosts=HOSTS, ip="10.10.0.10", run=run, **d)
     assert res["slots"] == ["admin"] and ("systemctl", "reload", "nginx") in run.calls
+    # HSTS jen s důvěryhodným certifikátem – s CA controlleru by prohlížeč nedovolil výjimku
+    assert "Strict-Transport-Security" in (d["ssl_dir"] / "hsts-admin.conf").read_text()
+    assert not (d["ssl_dir"] / "hsts-checkin.conf").exists()
     assert (d["ssl_dir"] / "admin.crt").read_bytes() == cert and (d["ssl_dir"] / "admin.key").read_bytes() == key
     assert (d["public"] / "admin.crt").read_bytes() == cert and not (d["public"] / "admin.key").exists()
     st = tlscfg.status(d["public"])
@@ -193,6 +196,7 @@ def test_apply_letsencrypt_failure_keeps_previous(tmp_path):
     tlscfg.apply({"action": "own_ca", "slots": ["admin"]}, local=False, hosts=HOSTS, ip="10.10.0.10",
                  run=_runner(), device_ca=tmp_path / "device-ca.crt", **d)
     assert tlscfg.marker(d["public"])["admin"]["kind"] == "own_ca" and (d["public"] / "ca.crt").read_bytes() == ca
+    assert not (d["ssl_dir"] / "hsts-admin.conf").exists()
 
 
 def test_apply_request_from_web(tmp_path):

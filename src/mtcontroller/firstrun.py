@@ -286,13 +286,15 @@ def render_nginx(plan: SetupPlan, ssl_dir: Path = SSL, share: Path = SHARE) -> s
     if plan.mode == "local":
         tpl = (share / "nginx" / "mtcontroller-local.conf").read_text()
         out = tpl.replace("mtc.example.lan", plan.ui_host)
-        out = out.replace("__CERT__", acrt).replace("__KEY__", akey)
+        out = out.replace("__CERT__", acrt).replace("__KEY__", akey).replace("__HSTS__", tlscfg.hsts_glob("admin", ssl_dir))
     else:
         ccrt, ckey = (str(p) for p in tlscfg.slot_paths("checkin", ssl_dir))
         tpl = (share / "nginx" / "mtcontroller.conf").read_text()
         out = (tpl.replace("mtc-admin.example.cz", plan.ui_host).replace("mtc-checkin.example.cz", plan.checkin_host)
                .replace("__ADMIN_CERT__", acrt).replace("__ADMIN_KEY__", akey)
-               .replace("__CHECKIN_CERT__", ccrt).replace("__CHECKIN_KEY__", ckey))
+               .replace("__CHECKIN_CERT__", ccrt).replace("__CHECKIN_KEY__", ckey)
+               .replace("__ADMIN_HSTS__", tlscfg.hsts_glob("admin", ssl_dir))
+               .replace("__CHECKIN_HSTS__", tlscfg.hsts_glob("checkin", ssl_dir)))
     out = re.sub(r"^\s*allow [0-9a-fA-F.:/]+;\s*# mtc-admin-net\s*$", allow + "  # mtc-admin-net", out, count=1,
                  flags=re.M)
     return out
@@ -546,6 +548,10 @@ def repoint_certs(text: str, ssl_dir: Path, ui_host: str, checkin_host: str, loc
         if m:
             names = m.group(1).split()
             slot = "checkin" if not local and checkin_host in names and ui_host not in names else "admin"
+        m = re.match(r"(\s*)add_header\s+Strict-Transport-Security\b.*$", line, re.S)
+        if m:  # pevné HSTS → podle druhu certifikátu (s CA controlleru by nešla výjimka)
+            out.append(f"{m.group(1)}include {tlscfg.hsts_glob(slot, ssl_dir)};\n")
+            continue
         m = re.match(r"(\s*ssl_certificate(_key)?\s+)(\S+);(.*)$", line, re.S)
         if m and m.group(3) != "/etc/ssl/mtc/setup.crt":
             crt, key = tlscfg.slot_paths(slot, ssl_dir)
@@ -568,7 +574,7 @@ def upgrade_nginx(env: Env | None = None) -> bool:
     old = conf.read_text()
     saved = env.etc / "setup-plan.json"
     if saved.is_file():
-        if str(tlscfg.slot_paths("admin", env.ssl)[0]) in old:
+        if str(tlscfg.slot_paths("admin", env.ssl)[0]) in old and "Strict-Transport-Security" not in old:
             return False
         new = render_nginx(SetupPlan.model_validate_json(saved.read_text()), env.ssl, env.share)
     else:
