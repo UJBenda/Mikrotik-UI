@@ -6,8 +6,14 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$SRC/dist}"
 BASE=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/src/mtcontroller/__init__.py")
 REV=$(git -C "$SRC" rev-list --count HEAD 2>/dev/null || echo 0)
-HASH=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo local)
-VERSION="$BASE+$REV.g$HASH"
+HASH=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || true)
+if [ -n "$HASH" ]; then
+  VERSION="$BASE+$REV.g$HASH"
+else
+  # bez gitu (ZIP z GitHubu): čas sestavení, ať je každé další sestavení pro apt novější
+  # (a pořád starší než sestavení z gitu se stejným základem verze)
+  VERSION="$BASE+0.local$(date -u +%Y%m%d%H%M)"
+fi
 ROOT=$(mktemp -d)
 chmod 0755 "$ROOT"
 trap 'rm -rf "$ROOT"' EXIT
