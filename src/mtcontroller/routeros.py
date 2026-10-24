@@ -157,7 +157,8 @@ def adopt_one_liner(base_url: str, token: str, opts: FetchOpts) -> str:
             f"/import file-name=\"mtc-adopt.rsc\"")
     if not opts.ca_url:
         return line
-    return "{ " + _one_line(trust_ca_body(opts)) + " " + line + " }"
+    # příkazy na jednom řádku v bloku musí oddělit `;` (jinak RouterOS: bad parameter /tool)
+    return "{ " + _one_line(trust_ca_body(opts)) + "; " + line + " }"
 
 
 def _one_line(script: str) -> str:

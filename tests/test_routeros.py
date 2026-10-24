@@ -276,3 +276,36 @@ def test_syslog_scripts():
                                   devlog.config_body(level, "10.200.0.1", 5514, "10.200.1.2"), OPTS)
         assert _balanced(s), s
         s.encode("ascii")
+
+
+def _outside_strings(s: str) -> str:
+    out, in_str, esc = [], False, False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            out.append("_")
+            continue
+        if ch == '"':
+            in_str = True
+        out.append(ch)
+    return "".join(out)
+
+
+def test_one_liners_separate_statements():
+    """Jednořádkové příkazy pro terminál: za `}` následovaný dalším příkazem musí být `;`
+    (jinak RouterOS: bad parameter /tool). Ověřeno na zařízení – chyba z praxe."""
+    from mtcontroller import defaults
+
+    for line in (routeros.adopt_one_liner("https://c.example", "T", OPTS_CA),
+                 routeros.adopt_one_liner("https://c.example", "T", OPTS),
+                 defaults.one_liner("https://c.example/enroll/K/default/ap", OPTS_CA),
+                 defaults.one_liner("https://c.example/enroll/K/default/ap", OPTS)):
+        bare = _outside_strings(line)
+        assert "\n" not in line and _balanced(line)
+        assert not re.search(r"\}\s+[/:]", bare), line
+        line.encode("ascii")
