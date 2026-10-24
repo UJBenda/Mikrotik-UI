@@ -535,25 +535,55 @@ def _finish(env: Env, sd: Path) -> None:
     env.run("systemctl", "disable", "--now", "mtc-setup.service", "mtc-setup-apply.path", check=False)
 
 
+def repoint_certs(text: str, ssl_dir: Path, ui_host: str, checkin_host: str, local: bool) -> str:
+    """Konfigurace nginx z instalace skriptem: `ssl_certificate(_key)` přesměrovat na sloty
+    (podle server_name bloku: check-in → checkin, jinak admin). Ostatní řádky beze změny."""
+    from . import tlscfg
+
+    out, slot = [], "admin"
+    for line in text.splitlines(keepends=True):
+        m = re.match(r"\s*server_name\s+([^;]+);", line)
+        if m:
+            names = m.group(1).split()
+            slot = "checkin" if not local and checkin_host in names and ui_host not in names else "admin"
+        m = re.match(r"(\s*ssl_certificate(_key)?\s+)(\S+);(.*)$", line, re.S)
+        if m and m.group(3) != "/etc/ssl/mtc/setup.crt":
+            crt, key = tlscfg.slot_paths(slot, ssl_dir)
+            line = f"{m.group(1)}{key if m.group(2) else crt};{m.group(4)}"
+        out.append(line)
+    return "".join(out)
+
+
 def upgrade_nginx(env: Env | None = None) -> bool:
-    """Aktualizace balíčku: nginx ze starší verze průvodce (certifikát mimo sloty) přegenerovat
-    na sloty /etc/ssl/mtc/{admin,checkin}. Při chybě nginx -t vrátí původní. Vrací, zda změnil."""
+    """Aktualizace / oprava: nginx ze starší verze (certifikát mimo sloty, např. chybějící
+    Let's Encrypt) přepnout na sloty /etc/ssl/mtc/{admin,checkin}. Instalace průvodcem se
+    přegeneruje z uloženého plánu, instalace skriptem jen přesměruje cesty k certifikátům.
+    Při chybě nginx -t vrátí původní. Vrací, zda změnil."""
     from . import tlscfg
 
     env = env or Env()
     conf = env.nginx / "sites-available" / "mtcontroller.conf"
-    saved = env.etc / "setup-plan.json"
-    if not conf.is_file() or not saved.is_file():
+    if not conf.is_file():
         return False
     old = conf.read_text()
-    if str(tlscfg.slot_paths("admin", env.ssl)[0]) in old:
+    saved = env.etc / "setup-plan.json"
+    if saved.is_file():
+        if str(tlscfg.slot_paths("admin", env.ssl)[0]) in old:
+            return False
+        new = render_nginx(SetupPlan.model_validate_json(saved.read_text()), env.ssl, env.share)
+    else:
+        from .config import load_settings
+
+        s = load_settings(env.etc / "config.toml", environ={})
+        new = repoint_certs(old, env.ssl, s.web.ui_host, s.web.checkin_host, s.tunnel.local)
+    if new == old:
         return False
-    plan = SetupPlan.model_validate_json(saved.read_text())
-    _write(conf, render_nginx(plan, env.ssl, env.share), 0o644)
+    _write(conf, new, 0o644)
     if env.run("nginx", "-t", check=False).returncode != 0:
         _write(conf, old, 0o644)
         return False
-    env.run("systemctl", "reload", "nginx", check=False)
+    # nginx mohl kvůli chybějícímu certifikátu stát – reload-or-restart ho i nastartuje
+    env.run("systemctl", "reload-or-restart", "nginx", check=False)
     return True
 
 

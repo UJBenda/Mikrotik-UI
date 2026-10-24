@@ -416,3 +416,34 @@ def test_install_letsencrypt_ok(tmp_path):
     for slot in ("admin", "checkin"):
         assert (env.ssl / f"{slot}.crt").read_bytes() == pem[slot]
         assert tlscfg.marker(env.ssl.parent / "mtc-public")[slot]["kind"] == "letsencrypt"
+
+
+def test_upgrade_nginx_legacy_letsencrypt_paths(tmp_path):
+    """Instalace skriptem s Let's Encrypt, který neexistuje: nginx nenaběhne. Oprava přesměruje
+    certifikáty na sloty (admin blok → admin, check-in blok → checkin)."""
+    env = _env(tmp_path)
+    le_c, le_k = "/etc/letsencrypt/live/mtcontroller/fullchain.pem", "/etc/letsencrypt/live/mtcontroller/privkey.pem"
+    tpl = (env.share / "nginx" / "mtcontroller.conf").read_text()
+    legacy = (tpl.replace("mtc-admin.example.cz", "a.firma.cz").replace("mtc-checkin.example.cz", "c.firma.cz")
+              .replace("__ADMIN_CERT__", le_c).replace("__ADMIN_KEY__", le_k)
+              .replace("__CHECKIN_CERT__", le_c).replace("__CHECKIN_KEY__", le_k))
+    (env.nginx / "sites-available" / "mtcontroller.conf").write_text(legacy)
+    (env.etc / "config.toml").write_text('[web]\nui_host = "a.firma.cz"\ncheckin_host = "c.firma.cz"\n')
+    assert firstrun.upgrade_nginx(env)
+    out = (env.nginx / "sites-available" / "mtcontroller.conf").read_text()
+    assert "letsencrypt" not in out
+    admin = out[out.index("server_name a.firma.cz;"):out.index("server_name c.firma.cz;")]
+    checkin = out[out.index("server_name c.firma.cz;"):]
+    assert f"ssl_certificate     {env.ssl}/admin.crt;" in admin and f"{env.ssl}/admin.key;" in admin
+    assert f"ssl_certificate     {env.ssl}/checkin.crt;" in checkin and f"{env.ssl}/checkin.key;" in checkin
+    assert ("systemctl", "reload-or-restart", "nginx") in env.calls
+    assert not firstrun.upgrade_nginx(env)  # podruhé nic
+    # nginx -t neprojde → zpět původní
+    (env.nginx / "sites-available" / "mtcontroller.conf").write_text(legacy)
+
+    class Bad:
+        returncode, stdout, stderr = 1, "", "emerg"
+
+    env.run = lambda *c, check=True: Bad() if c[:2] == ("nginx", "-t") else _R()
+    assert not firstrun.upgrade_nginx(env)
+    assert (env.nginx / "sites-available" / "mtcontroller.conf").read_text() == legacy
