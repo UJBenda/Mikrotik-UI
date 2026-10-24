@@ -105,7 +105,7 @@ def test_device_scripts_trust_own_ca(tmp_path):
     assert "\n" not in one and _balanced(one) and one.index("mtc-ca.crt") < one.index("mtc-default.rsc")
     # bez vlastní CA beze změny
     plain = routeros.FetchOpts("yes-without-crl")
-    assert routeros.trust_ca_body(plain) == "" and routeros.adopt_one_liner("https://c", "T", plain).startswith("/tool fetch")
+    assert routeros.trust_ca_body(plain) == "" and "mtc-ca.crt" not in routeros.adopt_one_liner("https://c", "T", plain)
     # bez ověřování (lab) se CA nestahuje
     s.security.device_check_certificate = "no"
     assert routeros.fetch_opts(s).ca_url == ""

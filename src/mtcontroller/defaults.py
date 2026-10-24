@@ -22,7 +22,7 @@ sériovém čísle – jeden soubor pro všechny kusy dané role a lokality.
 from __future__ import annotations
 
 from . import fwmatrix, regional
-from .routeros import SCRIPT_POLICY, FetchOpts, _one_line, q, q_source, trust_ca_body
+from .routeros import SCRIPT_POLICY, FetchOpts, _one_line, net_bootstrap_body, q, q_source, trust_ca_body
 
 ROLES = {
     "switch": "switch",
@@ -131,8 +131,10 @@ def script(role: str, enroll_url: str, opts: FetchOpts, *, ntp: list[str] | None
 def one_liner(default_url: str, opts: FetchOpts) -> str:
     """Pro běžící zařízení: stáhnout výchozí konfiguraci a resetovat na ni (smaže stávající konfiguraci)."""
     # starší zařízení mají trvalé soubory jen ve flash/ (jinde jsou v RAM a reset by je smazal)
+    # prázdné zařízení (smazaná konfigurace) nejdřív dostane IP z DHCP, aby skript stáhlo
+    boot = _one_line(net_bootstrap_body()) + "; "
     trust = _one_line(trust_ca_body(opts)) + "; " if opts.ca_url else ""
-    return ('{ ' + trust + ':local p ""; :if ([:len [/file find name="flash" type="directory"]] > 0) do={ :set p "flash/" }; '
+    return ('{ ' + boot + trust + ':local p ""; :if ([:len [/file find name="flash" type="directory"]] > 0) do={ :set p "flash/" }; '
             f'/tool fetch url={q(default_url)} dst-path=($p . "mtc-default.rsc") check-certificate={opts.check_certificate}; '
             ':delay 2s; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no '
             'run-after-reset=($p . "mtc-default.rsc") }')

@@ -69,6 +69,7 @@ def test_all_scripts_are_balanced():
         routeros.checkin_source("https://c.example/api/checkin", "KEY", OPTS),
         "{\n" + routeros.trust_ca_body(OPTS_CA) + "}\n",
         routeros.adopt_one_liner("https://c.example", "T", OPTS_CA),
+        "{\n" + routeros.net_bootstrap_body(["tik.cesnet.cz"]) + "}\n",
     ]
     for s in scripts:
         assert _balanced(s), s
@@ -309,3 +310,15 @@ def test_one_liners_separate_statements():
         assert "\n" not in line and _balanced(line)
         assert not re.search(r"\}\s+[/:]", bare), line
         line.encode("ascii")
+
+
+def test_net_bootstrap_only_for_blank_device():
+    """Prázdný MikroTik (smazaná konfigurace): bridge + všechny ethernety + DHCP klient, čeká na
+    adresu a NTP; zařízení s IP / DHCP klientem se nemění. Pořadí: síť → CA → adopce."""
+    b = routeros.net_bootstrap_body(["tik.cesnet.cz", "x; /system reset"])
+    assert b.startswith(':if ([:len [/ip address find]] = 0 && [:len [/ip dhcp-client find]] = 0) do={')
+    assert 'comment="mtc bootstrap"' in b and "/ip dhcp-client add interface=bridge" in b
+    assert 'status="bound"' in b and ':error "mtc: DHCP' in b
+    assert 'servers="tik.cesnet.cz"' in b and "reset" not in b  # neplatné jméno NTP se zahodí
+    line = routeros.adopt_one_liner("https://c.example", "T", OPTS_CA, ["pool.ntp.org"])
+    assert line.index("dhcp-client add") < line.index("mtc-ca.crt") < line.index("/adopt/T")

@@ -296,6 +296,10 @@
         <p class="muted">Nový kus připrav ještě před montáží: nahraj mu výchozí konfiguraci zvolené role. Po zapojení se
           sám ohlásí controlleru a objeví se v Adopci jako čekající – schvaluješ ručně. Po adopci ho controller řídí
           bez dalšího resetu (sítě a VLAN ze záměru lokality). Klíč lokality je v souborech i příkazech – nesdílej je.</p>
+        <p class="muted">Příkazy (i adopční) fungují i na <strong>prázdném zařízení</strong> se smazanou konfigurací: vlož je přes
+          Winbox (připojení přes MAC) nebo sériovou konzoli. Když zařízení nemá žádnou IP, nejdřív založí bridge se všemi
+          porty a DHCP klienta, počká na adresu a srovná čas (NTP) – pak teprve stáhne skript. Kabel musí vést do sítě
+          s DHCP serverem a cestou ke controlleru.</p>
         <table class="deploy"><thead><tr><th>Role</th><th>Netinstall (vlastní výchozí konfigurace)</th><th>Běžící zařízení (smaže konfiguraci)</th></tr></thead>
         <tbody id="deploy-roles"></tbody></table>
         <p class="muted">Netinstall: <code>netinstall-cli -r -s mtc-default-ROLE.rsc -a 192.168.88.3 routeros-…npk</code> – konfigurace

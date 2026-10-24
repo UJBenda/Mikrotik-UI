@@ -135,6 +135,14 @@ Adopce je jeden řádek vložený do terminálu MikroTiku; zařízení pak ček�
 
 Bezpečnostní detaily: token se po použití zneplatní; bootstrap skript se stahuje přes ověřené HTTPS (`check-certificate=yes` s veřejným certifikátem check-in hostu); odpojení zařízení (unadopt) vše vrací a revokuje certifikát.
 
+### Prázdné zařízení (smazaná konfigurace)
+
+Adopční příkaz i příkaz výchozí konfigurace role začínají `net_bootstrap_body`: když zařízení
+nemá žádnou IP ani DHCP klienta, založí `bridge` se všemi ethernety, DHCP klienta na bridgi
+(komentář `mtc bootstrap`), počká na adresu (60 s, jinak `:error`) a zapne NTP (zařízení bez
+RTC začíná v roce 1970 a ověření certifikátu controlleru by selhalo). Zařízení s IP nemění.
+Příkaz se vkládá přes Winbox (MAC) nebo sériovou konzoli.
+
 ## Sběr dat
 
 Worker (asyncio, omezený počet souběžných spojení) se ptá každého zařízení zvlášť přes REST API nad tunelem. Intervaly jsou odstupňované podle toho, jak rychle se data mění.

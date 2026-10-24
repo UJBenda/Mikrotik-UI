@@ -149,16 +149,50 @@ def trust_ca_body(opts: FetchOpts) -> str:
 # --- adopce ------------------------------------------------------------------
 
 
-def adopt_one_liner(base_url: str, token: str, opts: FetchOpts) -> str:
-    """Řádek, který technik vloží do terminálu MikroTiku."""
+def net_bootstrap_body(ntp: list[str] | None = None) -> str:
+    """Prázdné zařízení (smazaná konfigurace, žádná IP): bridge se všemi ethernety, DHCP klient
+    na bridgi, počká na adresu a srovná čas přes NTP (bez RTC začíná v roce 1970 a ověření
+    certifikátu controlleru by selhalo). Zařízení, které už nějakou IP / DHCP klienta má,
+    nechá být. Vše s komentářem `mtc bootstrap`; jméno bridge jako výchozí konfigurace role."""
+    if ntp is None:
+        from . import regional
+        ntp = regional.ntp_servers()
+    servers = ",".join(h for h in ntp if re.fullmatch(r"[A-Za-z0-9.:-]{1,253}", h)) or "pool.ntp.org"
+    return f""":if ([:len [/ip address find]] = 0 && [:len [/ip dhcp-client find]] = 0) do={{
+  :log warning "mtc: zarizeni nema IP - zakladni nastaveni (bridge + DHCP klient)"
+  :if ([:len [/interface bridge find name="bridge"]] = 0) do={{ /interface bridge add name=bridge comment="mtc bootstrap" }}
+  :foreach p in=[/interface ethernet find] do={{
+    :if ([:len [/interface bridge port find interface=[/interface ethernet get $p name]]] = 0) do={{
+      /interface bridge port add bridge=bridge interface=$p comment="mtc bootstrap"
+    }}
+  }}
+  /ip dhcp-client add interface=bridge use-peer-dns=yes add-default-route=yes comment="mtc bootstrap" disabled=no
+  :local n 0
+  :while ($n < 60 && [:len [/ip dhcp-client find where status="bound"]] = 0) do={{ :delay 1s; :set n ($n + 1) }}
+  :if ([:len [/ip dhcp-client find where status="bound"]] = 0) do={{
+    :log error "mtc: DHCP nepridelil adresu - zkontroluj kabel a DHCP server"
+    :error "mtc: DHCP nepridelil adresu"
+  }}
+  /system ntp client set enabled=yes servers={q(servers)}
+  :set n 0
+  :while ($n < 30 && [/system ntp client get status] != "synchronized") do={{ :delay 1s; :set n ($n + 1) }}
+  :if ([/system ntp client get status] != "synchronized") do={{ :log warning "mtc: NTP zatim nesynchronizovano - pokracuji" }}
+}}
+"""
+
+
+def adopt_one_liner(base_url: str, token: str, opts: FetchOpts, ntp: list[str] | None = None) -> str:
+    """Řádek, který technik vloží do terminálu MikroTiku. Na prázdném zařízení nejdřív
+    základní síť (net_bootstrap_body), pak CA controlleru a adopce."""
     url = f"{base_url}/adopt/{token}"
     line = (f"/tool fetch url={q(url)} dst-path=\"mtc-adopt.rsc\" "
             f"check-certificate={opts.check_certificate}; :delay 2s; "
             f"/import file-name=\"mtc-adopt.rsc\"")
-    if not opts.ca_url:
-        return line
     # příkazy na jednom řádku v bloku musí oddělit `;` (jinak RouterOS: bad parameter /tool)
-    return "{ " + _one_line(trust_ca_body(opts)) + "; " + line + " }"
+    parts = [_one_line(net_bootstrap_body(ntp))]
+    if opts.ca_url:
+        parts.append(_one_line(trust_ca_body(opts)))
+    return "{ " + "; ".join(parts + [line]) + " }"
 
 
 def _one_line(script: str) -> str:
