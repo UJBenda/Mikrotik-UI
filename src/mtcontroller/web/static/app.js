@@ -100,6 +100,11 @@ function moreButton(title, items) {
 }
 if (typeof document.addEventListener === "function") {
   document.addEventListener("click", (e) => { const m = $("ctx"); if (m && !m.hidden && !m.contains(e.target)) ctxHide(); });
+  // Esc zavře panel editoru portu (když není otevřené menu ani dotaz)
+  document.addEventListener("keydown", (e) => {
+    const pe = $("port-edit"), m = $("ctx");
+    if (e.key === "Escape" && pe && !pe.hidden && (!m || m.hidden) && !askDone) pe.hidden = true;
+  });
   document.addEventListener("keydown", (e) => {
     const m = $("ctx");
     if (!m || m.hidden) return;
@@ -1675,7 +1680,7 @@ function segmented(box, options, value, onChange) {
 // --- panel portů s pohledy (linka, native VLAN, VLAN, PoE, chyby) ----------------------------
 
 const PORT_RE = /^(ether|sfp|combo|qsfp)/;
-const PORT_VIEWS = [["link", "Linka"], ["pvid", "Native VLAN"], ["vlan", "VLAN tagování"], ["poe", "PoE"],
+const PORT_VIEWS = [["link", "Přehled"], ["pvid", "Native VLAN"], ["vlan", "VLAN tagování"], ["poe", "PoE"],
   ["err", "Chyby"], ["anom", "Anomálie"]];
 const PORT_OPTS = [["portDev", "Připojená zařízení"], ["portTable", "Tabulka portů"]];
 let portCtx = null;
@@ -1802,7 +1807,8 @@ function tileWrap(i, tileFn) {
   t.type = "button";
   if (/^(sfp|qsfp)/.test(i.name)) { t.className += " sfp"; t.appendChild(el("span", /plus/.test(i.name) ? "SFP+" : "SFP", "tag")); }
   t.appendChild(el("span", String(portNum(i.name)), "num"));
-  t.title = portTooltip(i) + "\nCtrl/Shift + klik = výběr více portů";
+  t.title = portTooltip(i) + "\nCtrl/Shift + klik = výběr více portů · pravé tlačítko = akce";
+  t.addEventListener("contextmenu", (ev) => ctxMenu(ev, portMenuTitle(i), portMenu(i)));
   t.addEventListener("click", (ev) => {
     if (ev.ctrlKey || ev.metaKey || ev.shiftKey || portMulti) { togglePortPick(i.name); return; }
     selectPortTraffic(i.name);
@@ -1869,11 +1875,15 @@ function portTile(i, view) {
   const lc = linkClass(i);
   const t = el("button", null, "port");
   if (view === "link") {
+    // přehled: barva = linka, odznaky v rozích = PoE, uplink, STP, chyby/anomálie
     t.className += " " + lc;
-    if (p.full_duplex === false || p.stp_forwarding === false) t.className += " blk";
-    if (p.loop) t.className += " loop";
-    const poeOn = p.poe && /powered-on|on/.test(p.poe);
-    t.appendChild(el("span", (p.loop ? "↻" : "") + (poeOn ? "⚡" : "") + (isUplink(i) ? "↑" : ""), "ico"));
+    for (const b of portBadges(i)) {
+      const s = el("span", b.text, "pb " + b.pos + " " + b.cls);
+      s.setAttribute("aria-label", b.title);
+      t.appendChild(s);
+    }
+    const lv = portLevel(i);
+    if (lv) t.className += " lv-" + lv;
   } else if (view === "pvid") {
     t.className += " plain" + (lc === "down" || lc === "off" ? " dim" : "");
     t.appendChild(el("span", p.pvid ? String(p.pvid) : "–", "big"));
@@ -1897,6 +1907,41 @@ function portTile(i, view) {
   return t;
 }
 
+// stav portu pro přehled: problémy (STP, smyčka, chyby, anomálie, half-duplex) a informace (PoE, uplink)
+function portIssues(i) {
+  const p = i.port || {}, a = i.anomaly, out = [];
+  const e = (Number(i.rx_error) || 0) + (Number(i.tx_error) || 0);
+  if (p.loop) out.push(["bad", "smyčka – loop protect port vypnul"]);
+  if (p.poe && /fault|overload|short|error/i.test(p.poe)) out.push(["bad", `PoE porucha (${p.poe})`]);
+  if (p.stp_forwarding === false && i.running) out.push(["warn", `STP blokuje (${STP_LABEL[p.stp_role] || p.stp_role || "?"})`]);
+  if (p.full_duplex === false && i.running) out.push(["warn", "half-duplex"]);
+  if (e > 100) out.push(["bad", `${e} chyb RX/TX`]); else if (e > 0) out.push(["warn", `${e} chyb RX/TX`]);
+  if (a && a.score >= 50) out.push(["bad", `anomálie ${a.score}: ${a.reasons.join(", ")}`]);
+  else if (a && a.score >= 20) out.push(["warn", `anomálie ${a.score}: ${a.reasons.join(", ")}`]);
+  if ((Number(i.link_downs) || 0) >= 3) out.push(["warn", `${i.link_downs}× výpadek linky`]);
+  return out;
+}
+
+function portLevel(i) {
+  const is = portIssues(i);
+  return is.some(([l]) => l === "bad") ? "bad" : is.length ? "warn" : "";
+}
+
+function portBadges(i) {
+  const p = i.port || {}, out = [];
+  const w = Number(p.poe_power) || 0;
+  const poeOn = w > 0 || (p.poe && /powered-on/.test(p.poe));
+  if (p.poe && /fault|overload|short|error/i.test(p.poe)) out.push({ pos: "tl", cls: "bad", text: "⚡", title: "PoE porucha" });
+  else if (poeOn) out.push({ pos: "tl", cls: w >= 15 ? "poe3" : "poe", text: "⚡", title: `PoE ${w ? w.toFixed(1) + " W" : "zapnuto"}` });
+  if (isUplink(i)) out.push({ pos: "tr", cls: "up", text: "↑", title: "uplink" });
+  if (p.loop) out.push({ pos: "br", cls: "bad", text: "↻", title: "smyčka" });
+  else if (p.stp_forwarding === false && i.running) out.push({ pos: "br", cls: "stp", text: "⊘", title: "STP blokuje" });
+  const lv = portLevel(i);
+  if (lv && !p.loop) out.push({ pos: "bl2", cls: lv, text: "!", title: portIssues(i).map(([, t]) => t).join(", ") });
+  if (p.full_duplex === false && i.running) out.push({ pos: "mid", cls: "hd", text: "HD", title: "half-duplex" });
+  return out;
+}
+
 function vlanTile(i, vid) {
   const m = vlanMember(i, vid);
   return el("button", null, "port " + (m === "tagged" ? "vt" : m === "native" ? "vn" : "down"));
@@ -1906,6 +1951,7 @@ function portTooltip(i) {
   const p = i.port || {}, n = i.connected, a = i.anomaly;
   return [
     i.name + (i.comment ? ` – ${i.comment}` : ""),
+    ...portIssues(i).map(([l, t]) => (l === "bad" ? "⛔ " : "⚠ ") + t),
     i.disabled ? "vypnutý" : (i.running ? `linka ${p.rate || "ok"}${p.full_duplex === false ? " half-duplex" : ""}` : "bez linky"),
     p.pvid ? `PVID ${p.pvid}` + (p.tagged && p.tagged.length ? `, tagované ${p.tagged.join(",")}` : "") : "",
     p.stp_role ? `STP ${p.stp_role}${p.stp_forwarding === false ? " (blokuje)" : ""}` : "",
@@ -1919,7 +1965,8 @@ function portTooltip(i) {
 }
 
 const LEGENDS = {
-  link: [["gbe", "GbE+"], ["fe", "FE"], ["down", "bez linky"], ["off", "vypnutý"], [null, "⚡ PoE"], [null, "↑ uplink"], ["blk", "blokuje STP / half-duplex"], ["loop", "↻ smyčka"]],
+  link: [["gbe", "GbE+"], ["fe", "FE"], ["down", "bez linky"], ["off", "vypnutý"], [null, "⚡ PoE"], [null, "↑ uplink"],
+    [null, "⊘ STP blokuje"], [null, "↻ smyčka"], ["lv-warn", "! varování"], ["lv-bad", "! problém (chyby, anomálie, PoE porucha)"]],
   pvid: [["plain", "číslo = native VLAN (PVID)"], ["dim", "port bez linky"]],
   vlan: [["vt", "tagovaná"], ["vn", "native (netagovaná)"], ["down", "není členem"]],
   poe: [["poe1", "< 5 W"], ["poe2", "5–15 W"], ["poe3", "≥ 15 W"], ["plain", "PoE bez odběru"], ["down", "bez PoE"]],
@@ -1943,7 +1990,11 @@ function portLegend(view) {
     const worst = portCtx.phys.reduce((a, i) => Math.max(a, i.anomaly ? i.anomaly.score : 0), 0);
     lg.appendChild(el("b", `nejhorší port ${worst}`));
   }
-  lg.appendChild(el("span", "klik na port = graf a nastavení", "muted"));
+  if (view === "link") {
+    const bad = portCtx.phys.filter((i) => portLevel(i)).length;
+    if (bad) lg.appendChild(el("b", `${bad} ${bad === 1 ? "port potřebuje" : "porty potřebují"} pozornost`));
+  }
+  lg.appendChild(el("span", "klik = nastavení a graf · pravé tlačítko = akce", "muted"));
 }
 
 // --- tabulka portů (jako UniFi) ---
@@ -2023,6 +2074,7 @@ function drawPortTable() {
     tr.appendChild(el("td", p.pvid ? vlanTitle(String(p.pvid)) : "–"));
     tr.appendChild(el("td", (p.tagged || []).join(", ") || "–", (p.tagged || []).length ? "" : "muted"));
     tr.addEventListener("click", () => selectPortTraffic(i.name));
+    tr.addEventListener("contextmenu", (ev) => ctxMenu(ev, portMenuTitle(i), portMenu(i)));
     tb.appendChild(tr);
   }
 }
@@ -2115,6 +2167,78 @@ async function drawPortPick() {
     bar.appendChild(lacp);
   }
   box.appendChild(bar);
+}
+
+// --- kontextové menu portu: vše k portu na jednom místě, bez hledání v záložkách -------------
+
+function portMenuTitle(i) {
+  const n = i.connected;
+  return `${i.name}${i.comment ? " – " + i.comment : ""}${n ? " · " + n.name : ""}`;
+}
+
+function portCmd(i, kind, question) {
+  return async () => {
+    if (!(await ask(question))) return;
+    try { await api("POST", `/tenants/${tenantId}/devices/${detailId}/commands`, { kind, port: i.name }); msg("Odesláno zařízení"); }
+    catch (e) { msg(e.message, true); }
+  };
+}
+
+function portDesired(i, desired, what) {
+  return async () => {
+    if (!(await ask(`${what} na ${i.name}? Změna se použije s automatickým návratem.`))) return;
+    try {
+      const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(i.name)}/plan`,
+                          { desired, apply: true });
+      msg(`Odesláno: ${r.summary}`); for (const w of r.warnings || []) msg(w, true); loadPlans();
+    } catch (e) { msg(e.message, true); }
+  };
+}
+
+async function portTool(i, tool, params) {
+  await loadPortEditor(i.name);
+  const out = $("port-edit").querySelector(".tool-out");
+  if (out) runTool(tool, params, out);
+}
+
+function portMenu(i) {
+  const p = i.port || {}, n = i.connected, can = canManage();
+  const uplink = isUplink(i);
+  const poeOn = p.poe && !/off/.test(p.poe);
+  const profs = profCache || [];
+  if (!profCache) api("GET", `/tenants/${tenantId}/port-profiles`).then((r) => { profCache = r; }).catch(() => { profCache = []; });
+  const issues = portIssues(i);
+  return [
+    ...issues.map(([l, t]) => ({ label: (l === "bad" ? "⛔ " : "⚠ ") + t, disabled: true })),
+    issues.length ? { sep: true } : null,
+    { label: "Upravit port…", key: "Enter", act: () => selectPortTraffic(i.name) },
+    { label: "Graf provozu", act: () => { showTraffic(detailId, i.name); const t = $("d-traffic"); if (t && t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" }); } },
+    profs.length ? { head: "Profil" } : null,
+    ...profs.slice(0, 8).map((pf) => ({ label: pf.name, checked: i.profile === pf.name, disabled: !can,
+                                        act: () => bulkPorts([i.name], { profile_id: pf.id }) })),
+    { head: "Port" },
+    i.disabled
+      ? { label: "Zapnout port", disabled: !can, act: portDesired(i, { disabled: false }, "Zapnout port") }
+      : { label: "Vypnout port", disabled: !can, danger: uplink, hint: uplink ? "uplink – zařízení bude nedostupné, změna se vrátí" : "",
+          act: portDesired(i, { disabled: true }, uplink ? "Vypnout UPLINK (zařízení se odpojí, změna se sama vrátí)" : "Vypnout port") },
+    { label: "Restart linky", disabled: !can || i.disabled,
+      act: portCmd(i, "port_bounce", `Restartovat linku ${i.name}? Port se na 5 s vypne.` + (uplink ? " Je to uplink – zařízení bude chvíli nedostupné." : "")) },
+    p.poe != null ? { head: "PoE" } : null,
+    p.poe != null && poeOn ? { label: "Restart PoE (power-cycle)", disabled: !can,
+      act: portCmd(i, "poe_cycle", `Vypnout a zapnout napájení na ${i.name}? Zařízení na portu se restartuje.`) } : null,
+    p.poe != null ? (poeOn ? { label: "Vypnout PoE", disabled: !can, act: portDesired(i, { poe: "off" }, "Vypnout PoE") }
+                           : { label: "Zapnout PoE", disabled: !can, act: portDesired(i, { poe: "auto-on" }, "Zapnout PoE") }) : null,
+    { head: "Diagnostika" },
+    n && n.ip ? { label: `Ping ${n.ip}`, act: () => portTool(i, "ping", { address: n.ip, count: 4 }) } : null,
+    n && n.mac && !n.managed ? { label: "Probudit (Wake-on-LAN)", act: () => portTool(i, "wol", { mac: n.mac }) } : null,
+    { label: "Test kabelu", disabled: !can, act: async () => {
+      if (await ask(`Test kabelu na ${i.name}? Na některých switchích se linka během testu na chvíli přeruší.`)) portTool(i, "cable_test", { port: i.name });
+    } },
+    { label: "Blikat LED (15 s)", act: () => portTool(i, "blink", { port: i.name, seconds: 15 }) },
+    { sep: true },
+    { label: portPick.has(i.name) ? "Odebrat z výběru" : "Přidat do výběru (hromadně, LACP)", act: () => togglePortPick(i.name) },
+    n && n.mac ? { label: "Kopírovat MAC " + n.mac.toLowerCase(), act: () => copyText(n.mac.toLowerCase(), "MAC") } : null,
+  ];
 }
 
 async function bulkPorts(names, body) {
