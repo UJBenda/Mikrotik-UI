@@ -241,7 +241,9 @@ def _write(path: Path, data: bytes | str, mode: int, owner: tuple[str, str] | No
     finally:
         os.close(fd)
     os.chmod(tmp, mode)
-    if owner:
+    # chown jen jako root: průvodce běží jako mtcontroller se seccomp filtrem bez @privileged –
+    # chown tam proces zabije (SIGSYS) a soubor stejně patří jemu
+    if owner and os.geteuid() == 0:
         import shutil
         shutil.chown(tmp, *owner)
     os.replace(tmp, path)

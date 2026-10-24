@@ -452,3 +452,23 @@ def test_upgrade_nginx_legacy_letsencrypt_paths(tmp_path):
     env.run = lambda *c, check=True: Bad() if c[:2] == ("nginx", "-t") else _R()
     assert not firstrun.upgrade_nginx(env)
     assert (env.nginx / "sites-available" / "mtcontroller.conf").read_text() == legacy
+
+
+def test_write_does_not_chown_when_not_root(tmp_path):
+    """Průvodce (mtcontroller, seccomp bez @privileged): chown by proces zabil SIGSYS – HTTP 502."""
+    import os
+    import shutil as sh
+
+    called = []
+    orig_chown, orig_euid = sh.chown, os.geteuid
+    sh.chown = lambda *a, **k: called.append(a)
+    os.geteuid = lambda: 999
+    try:
+        firstrun._write(tmp_path / "a.json", "{}", 0o640, ("mtcontroller", "mtcontroller"))
+        firstrun._status(tmp_path, "queued")
+        assert not called and (tmp_path / "a.json").read_text() == "{}"
+        os.geteuid = lambda: 0
+        firstrun._write(tmp_path / "b.json", "{}", 0o640, ("mtcontroller", "mtcontroller"))
+        assert called  # root vlastníka nastaví
+    finally:
+        sh.chown, os.geteuid = orig_chown, orig_euid
