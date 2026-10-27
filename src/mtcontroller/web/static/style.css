@@ -810,3 +810,47 @@ tr.rogue-row td { color: var(--bad); font-weight: 600; }
 .port.lv-warn { border-color: var(--warn); } .port.lv-bad { border-color: var(--bad); }
 .ports-legend .sw.lv-warn { background: transparent; border: 2px solid var(--warn); }
 .ports-legend .sw.lv-bad { background: transparent; border: 2px solid var(--bad); }
+
+/* seznam zařízení: filtry vlevo, rychlé akce při najetí (jako UniFi) */
+.dev-layout { display: flex; gap: 16px; align-items: flex-start; }
+.dev-facets { width: 200px; flex: none; font-size: 13px; position: sticky; top: 8px; }
+.dev-main { flex: 1; min-width: 0; overflow-x: auto; }
+.facet { margin-bottom: 14px; }
+.facet-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 4px; }
+.facet label.check { display: flex; width: 100%; margin: 3px 0; color: var(--text); }
+.facet-n { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dev-table tr.selected td { background: var(--accent-weak); }
+.dev-table td.gbe { color: var(--ok); } .dev-table td.fe { color: #7a8f1e; }
+.dev-act { white-space: nowrap; text-align: right; }
+.row-hover { visibility: hidden; display: inline-flex; gap: 4px; margin-right: 4px; }
+.dev-table tr:hover .row-hover, .dev-table tr:focus-within .row-hover { visibility: visible; }
+@media (max-width: 900px) {
+  .dev-layout { flex-direction: column; }
+  .dev-facets { width: auto; position: static; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+  .row-hover { display: none; }
+}
+
+/* rychlý náhled zařízení – panel vpravo */
+.side-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 39; width: min(420px, 100vw); overflow-y: auto;
+               background: var(--card); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(0, 0, 0, .16);
+               padding: 14px 18px 24px; }
+.dq-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.dq-head b { font-size: 16px; margin-left: 6px; }
+.dq-head .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dq-head .dot.adopted { background: var(--ok); } .dq-head .dot.offline { background: var(--bad); }
+.dq-head .dot.pending, .dq-head .dot.provisioning { background: var(--warn); }
+.dq-acts { display: flex; gap: 8px; margin: 12px 0; align-items: center; }
+.dq-acts > button:first-child { flex: 1; }
+.dq-ports { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--bg); border: 1px solid var(--line);
+            border-radius: 8px; overflow-x: auto; }
+.dq-prow { display: flex; gap: 5px; flex-wrap: wrap; }
+.dq-ports .port { width: 34px; height: 30px; }
+.dq-ports .port .num { font-size: 10px; left: 4px; bottom: 1px; }
+.dq-ports .port .pb.mid { display: none; }
+.dq-info { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 14px 0; font-size: 13px; }
+.dq-info dt { color: var(--muted); } .dq-info dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.side-drawer h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.dq-list { margin: 0; padding-left: 18px; font-size: 13px; }
+.dq-conn { width: 100%; font-size: 13px; border-collapse: collapse; }
+.dq-conn td { padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.dq-conn .managed { font-weight: 600; }

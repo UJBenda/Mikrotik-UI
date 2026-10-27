@@ -111,3 +111,30 @@ def test_chain_with_mndp_flooding_is_direct():
     assert (n["s1"]["parent"], n["s1"]["parent_port"], n["s1"]["uplink_port"]) == ("gw", "ether3", "ether24")
     assert (n["s2"]["parent"], n["s2"]["parent_port"], n["s2"]["uplink_port"]) == ("s1", "ether1", "ether1")
     assert not any(x.get("kind") == "hub" for x in n.values())
+
+
+def test_uplinks_endpoint_parent_and_rate():
+    """Seznam zařízení: k čemu je zařízení připojené (rodič + port) a rychlost uplinku (jako UniFi)."""
+    from helpers import drop_db
+    from test_flow import _login
+    from test_modules import _adopted, _env
+
+    from mtcontroller import inventory
+    from mtcontroller.web.app import AppState, create_app
+
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = str(_adopted(db, box, tid, sid, "GW1", "10.200.1.1", "core-gw"))
+        sw = str(_adopted(db, box, tid, sid, "SW1", "10.200.1.2", "sw-hala"))
+        inv_gw = {k: INVS[GW][k] for k in ("interfaces", "neighbors", "routes_default", "dhcp_client")}
+        inv_sw = {"interfaces": INVS[SW]["interfaces"], "neighbors": INVS[SW]["neighbors"],
+                  "ethernet_monitor": [{"name": "ether24", "status": "link-ok", "rate": "1Gbps"}]}
+        inventory.store(db, tid, gw, inv_gw, [])
+        inventory.store(db, tid, sw, inv_sw, [])
+        c = _login(create_app(AppState(settings, db, box, [])))
+        u = c.get(f"/api/admin/tenants/{tid}/uplinks").json()
+        assert u[sw] == {"parent_id": gw, "parent_label": "core-gw", "parent_port": "ether3", "uplink_port": "ether24",
+                         "rate": "1Gbps", "wan": False}
+        assert u[gw]["parent_id"] is None and u[gw]["wan"] is True
+    finally:
+        drop_db(name)

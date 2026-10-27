@@ -959,6 +959,52 @@ async def site_infra(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+def tenant_uplinks(tx, tid=None) -> dict[str, dict]:
+    """Ke každému zařízení: k čemu je připojené (rodič a jeho port), přes který svůj port a rychlost
+    linky – jako sloupce „Uplink“ a „Parent Device“ v UniFi. Strom z infra.site_infra po lokalitách."""
+    from .. import infra
+
+    devs = tx.fetchall("""SELECT id, site_id, serial, identity, model, role::text AS role, state::text AS state, ros_version
+                          FROM device WHERE site_id IS NOT NULL AND state IN ('adopted', 'offline', 'provisioning')""")
+    by_site: dict[str, list] = {}
+    for d in devs:
+        by_site.setdefault(str(d["site_id"]), []).append(d)
+    out: dict[str, dict] = {}
+    for site_devs in by_site.values():
+        invs = {str(d["id"]): inventory.load(tx, d["id"], ["interfaces", "neighbors", "ethernet_monitor", "stp_bridges",
+                                                          "bridges", "routes_default", "dhcp_client"])
+                for d in site_devs}
+        tree = infra.site_infra(site_devs, invs)
+        nodes = {n["id"]: n for n in tree["nodes"]}
+        for n in tree["nodes"]:
+            if n.get("kind") == "hub" or n["id"] not in invs:
+                continue
+            par = nodes.get(n["parent"]) if n["parent"] else None
+            rate = None
+            if n["uplink_port"]:
+                mon = next((m for m in invs[n["id"]].get("ethernet_monitor") or []
+                            if isinstance(m, dict) and m.get("name") == n["uplink_port"]), {})
+                rate = mon.get("rate")
+            out[n["id"]] = {
+                "parent_id": par["id"] if par and par.get("kind") != "hub" else None,
+                "parent_label": (par["label"] if par else None),
+                "parent_port": n["parent_port"], "uplink_port": n["uplink_port"], "rate": rate,
+                "wan": bool(n.get("wans")) and not par,
+            }
+    return out
+
+
+@endpoint(READ)
+async def uplinks(request: Request, p: Principal, tid: str) -> Response:
+    st = get_state(request)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return tenant_uplinks(tx)
+
+    return json_response(await run_in_threadpool(q))
+
+
 INFRA_SECTIONS = ["interfaces", "neighbors", "resource", "ethernet_monitor", "poe_monitor", "stp_bridges",
                   "stp_ports", "bridges", "bridge_ports", "routes_default", "dhcp_client", "addresses"]
 
@@ -1603,6 +1649,7 @@ def routes() -> list[Route]:
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),
         Route(s + "/infra", site_infra, methods=["GET"]),
+        Route(T + "/uplinks", uplinks, methods=["GET"]),
         Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/port-profiles", port_profiles, methods=["GET", "POST"]),

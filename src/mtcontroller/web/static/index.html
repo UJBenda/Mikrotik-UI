@@ -87,10 +87,15 @@
           <div id="dev-cols-pop" class="dev-cols-pop" hidden></div>
         </div>
       </div>
-      <table class="dev-table">
-        <thead><tr id="devices-head"></tr></thead>
-        <tbody id="devices"></tbody>
-      </table>
+      <div class="dev-layout">
+        <aside id="dev-facets" class="dev-facets" aria-label="Filtry zařízení"></aside>
+        <div class="dev-main">
+          <table class="dev-table">
+            <thead><tr id="devices-head"></tr></thead>
+            <tbody id="devices"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
       </div>
 
@@ -625,6 +630,8 @@
       </div>
     </div>
   </section>
+  <aside id="dev-quick" class="side-drawer" hidden aria-label="Rychlý náhled zařízení"></aside>
+
   <div id="bt-dlg" class="modal" hidden>
     <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="bt-title">
       <div class="sd-head"><h3 id="bt-title">Cíl záloh</h3><button id="bt-close" type="button" class="icon-btn" title="Zavřít">×</button></div>

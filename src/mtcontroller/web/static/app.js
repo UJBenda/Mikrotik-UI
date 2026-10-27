@@ -4317,6 +4317,8 @@ const DEV_COLS = [
   ["uptime", "Uptime", true, (d) => d.uptime_s ?? -1, (d) => el("td", fmtUptime(d.uptime_s), d.uptime_s != null && d.uptime_s < 3600 ? "warn" : "")],
   ["cpu", "CPU", true, (d) => d.cpu ?? -1, (d) => pctCell(d.cpu)],
   ["mem", "RAM", true, (d) => d.mem_pct ?? -1, (d) => pctCell(d.mem_pct)],
+  ["uplink", "Uplink", true, (d) => rateNum((uplinksCache[d.id] || {}).rate) || -1, devUplinkCell],
+  ["parent", "Připojeno k", true, (d) => ((uplinksCache[d.id] || {}).parent_label || "").toLowerCase(), devParentCell],
   ["clients", "Klienti", true, (d) => Number(d.clients) || 0, (d) => el("td", d.clients ? String(d.clients) : "–", "num")],
   ["alerts", "Alerty", false, (d) => Number(d.alerts) || 0, (d) => el("td", d.alerts ? `⚠ ${d.alerts}` : "–", d.alerts ? "num warn" : "num muted")],
   ["security", "Bezpečnost", false, (d) => Number(d.security_issues) || 0,
@@ -4328,7 +4330,70 @@ const DEV_COLS = [
   ["adopted", "Adoptováno", false, (d) => (d.adopted_at ? new Date(d.adopted_at).getTime() : 0), (d) => el("td", d.adopted_at ? new Date(d.adopted_at).toLocaleDateString("cs-CZ") : "–")],
 ];
 const DEV_STATES = [["all", "Vše"], ["adopted", "Online"], ["offline", "Offline"], ["pending", "Čekající"], ["problem", "S problémem"]];
-const devView = Object.assign({ cols: null, sort: "name", dir: 1, state: "all" }, prefs.devView || {});
+const devView = Object.assign({ cols: null, sort: "name", dir: 1, state: "all", f: {} }, prefs.devView || {});
+let uplinksCache = {};
+// filtry vlevo (jako UniFi): role, model, lokalita s počty
+const DEV_FACETS = [["role", "Typ", (d) => d.role || "unknown"], ["model", "Model", (d) => d.model || "neznámý model"],
+  ["site", "Lokalita", (d) => d.site || "bez lokality"]];
+const ROLE_NAME = { gateway: "Brána", switch: "Switch", ap: "Access point", ptp: "Spoj PtP", unknown: "Nezařazené" };
+function devFacetOk(d, skip) {
+  for (const [k, , fn] of DEV_FACETS) {
+    const sel = (devView.f || {})[k];
+    if (k !== skip && sel && sel.length && !sel.includes(fn(d))) return false;
+  }
+  return true;
+}
+function renderDevFacets() {
+  const box = $("dev-facets"); if (!box) return;
+  box.textContent = "";
+  devView.f = devView.f || {};
+  let any = false;
+  for (const [k, label, fn] of DEV_FACETS) {
+    const counts = new Map();
+    for (const d of devicesCache) if (devMatchesState(d, devView.state) && devFacetOk(d, k)) counts.set(fn(d), (counts.get(fn(d)) || 0) + 1);
+    const sel = devView.f[k] || [];
+    for (const v of sel) if (!counts.has(v)) counts.set(v, 0);
+    if (counts.size < 2 && !sel.length) continue;
+    const sec = el("div", null, "facet");
+    sec.appendChild(el("div", label, "facet-h"));
+    for (const [v, n] of [...counts].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), "cs"))) {
+      const l = el("label", null, "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = sel.includes(v);
+      cb.addEventListener("change", () => {
+        const cur = new Set(devView.f[k] || []);
+        if (cb.checked) cur.add(v); else cur.delete(v);
+        devView.f[k] = [...cur]; saveDevView(); renderDevices();
+      });
+      l.append(cb, document.createTextNode(` ${k === "role" ? ROLE_NAME[v] || v : v}`), el("span", String(n), "facet-n"));
+      sec.appendChild(l);
+      if (sel.includes(v)) any = true;
+    }
+    box.appendChild(sec);
+  }
+  if (any) {
+    const r = el("button", "Zrušit filtry", "small secondary"); r.type = "button";
+    r.addEventListener("click", () => { devView.f = {}; saveDevView(); renderDevices(); });
+    box.appendChild(r);
+  }
+  box.hidden = !box.children.length;
+}
+function devUplinkCell(d) {
+  const u = uplinksCache[d.id];
+  if (!u || (!u.rate && !u.uplink_port)) return el("td", u && u.wan ? "WAN" : "–", "muted");
+  const td = el("td", u.rate ? u.rate.replace("bps", "") : "", rateNum(u.rate) >= 1000 ? "gbe" : u.rate ? "fe" : "");
+  if (u.uplink_port) td.appendChild(el("span", ` ${u.uplink_port}`, "muted small"));
+  return td;
+}
+function devParentCell(d) {
+  const u = uplinksCache[d.id];
+  if (!u || !u.parent_label) return el("td", u && u.wan ? "internet (WAN)" : "–", "muted");
+  const td = el("td");
+  const a = el("a", u.parent_label + (u.parent_port ? ` · port ${portNum(u.parent_port)}` : ""));
+  a.href = "#"; a.title = u.parent_port ? `${u.parent_label}, ${u.parent_port}` : u.parent_label;
+  a.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation && ev.stopPropagation();
+    const par = devicesCache.find((x) => x.id === u.parent_id); if (par) openQuick(par); });
+  td.appendChild(a);
+  return td;
+}
 const visibleCols = () => DEV_COLS.filter(([k, , def]) => (devView.cols ? devView.cols.includes(k) : def));
 function saveDevView() { prefs.devView = devView; savePrefs(); }
 
@@ -4381,6 +4446,8 @@ async function loadDevices() {
   devicesCache = list;
   setBadge("overview", list.filter((d) => d.state === "pending").length, "warn");
   renderDevices();
+  // uplinky (strom lokalit) dopočítat na pozadí – seznam se ukáže hned
+  api("GET", `/tenants/${tenantId}/uplinks`).then((u) => { uplinksCache = u || {}; renderDevices(); }).catch(() => {});
   if (ovDrill) renderOverview();  // otevřený proklik z přehledu ukazuje aktuální stav
 }
 
@@ -4401,7 +4468,8 @@ function renderDevices() {
   // filtr a třídění
   const q = ($("dev-q").value || "").trim().toLowerCase();
   const col = DEV_COLS.find((c) => c[0] === devView.sort) || DEV_COLS[1];
-  const list = devicesCache.filter((d) => devMatchesState(d, devView.state) && (!q ||
+  renderDevFacets();
+  const list = devicesCache.filter((d) => devMatchesState(d, devView.state) && devFacetOk(d) && (!q ||
       [d.identity, d.serial, d.note, d.model, d.site, d.tunnel_ip, d.ros_version, d.role, d.identity_pending]
         .some((v) => v && String(v).toLowerCase().includes(q))))
     .sort((a, b) => { const x = col[3](a), y = col[3](b); return (x < y ? -1 : x > y ? 1 : 0) * devView.dir; });
@@ -4411,7 +4479,10 @@ function renderDevices() {
     const tr = el("tr");
     if (d.state !== "pending") {
       tr.className = "clickable";
-      tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON" && ev.target.tagName !== "SELECT" && ev.target.tagName !== "INPUT") openDetail(d.id); });
+      // klik = rychlý náhled vpravo (jako UniFi), dvojklik / Enter = celý detail
+      tr.addEventListener("click", (ev) => { if (!["BUTTON", "SELECT", "INPUT", "A"].includes(ev.target.tagName)) openQuick(d); });
+      tr.addEventListener("dblclick", (ev) => { if (!["BUTTON", "SELECT", "INPUT", "A"].includes(ev.target.tagName)) openDetail(d.id); });
+      if (quickId === d.id) tr.className += " selected";
       tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
     }
     withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
@@ -4425,7 +4496,15 @@ function renderDevices() {
         b.onclick = () => upgradeDevice(d);
         act.append(b, " ");
       }
-      act.appendChild(moreButton(d.identity || d.serial, () => deviceMenu(d)));
+      // rychlé akce při najetí na řádek (jako Locate / Restart v UniFi)
+      const hov = el("span", null, "row-hover");
+      const det = el("button", "Detail", "small secondary"); det.type = "button"; det.onclick = () => openDetail(d.id);
+      hov.appendChild(det);
+      if (d.state === "adopted" && canOperate()) {
+        const rb = el("button", "Restart", "small secondary"); rb.type = "button"; rb.onclick = () => sendCommand(d, "reboot", "Restart");
+        hov.appendChild(rb);
+      }
+      act.append(hov, moreButton(d.identity || d.serial, () => deviceMenu(d)));
     }
     tr.appendChild(act);
     tb.appendChild(tr);
@@ -4435,6 +4514,104 @@ function renderDevices() {
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
+// --- rychlý náhled zařízení (panel vpravo) -------------------------------------------------------
+let quickId = null;
+
+function closeQuick() { const q = $("dev-quick"); if (q) q.hidden = true; quickId = null; renderDevices(); }
+
+async function openQuick(d) {
+  quickId = d.id;
+  renderDevices();
+  const box = $("dev-quick");
+  box.hidden = false; box.textContent = "";
+  const head = el("div", null, "dq-head");
+  const t = el("div");
+  t.append(el("span", null, "dot " + d.state), el("b", d.identity || d.serial), el("div", [d.model, d.ros_version].filter(Boolean).join(" · "), "muted small"));
+  const x = el("button", "×", "icon-btn"); x.type = "button"; x.title = "Zavřít (Esc)"; x.onclick = closeQuick;
+  head.append(t, x);
+  box.appendChild(head);
+  const acts = el("div", null, "dq-acts");
+  const pm = el("button", "Správce portů a detail", ""); pm.type = "button"; pm.onclick = () => { box.hidden = true; openDetail(d.id); };
+  acts.appendChild(pm);
+  if (d.update_available && d.state === "adopted") {
+    const up = el("button", `↑ ${d.latest_version}`, "secondary"); up.type = "button"; up.onclick = () => upgradeDevice(d);
+    acts.appendChild(up);
+  }
+  acts.appendChild(moreButton(d.identity || d.serial, () => deviceMenu(d)));
+  box.appendChild(acts);
+  const body = el("div", null, "dq-body"); body.appendChild(el("p", "Načítám…", "muted"));
+  box.appendChild(body);
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/devices/${d.id}`); } catch (e) { body.textContent = e.message; return; }
+  if (quickId !== d.id) return;
+  body.textContent = "";
+  // porty: stejný přehled jako v detailu, klik otevře port v Správci portů
+  const phys = (r.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
+  if (phys.length) {
+    const cu = phys.filter((i) => !/^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
+    const sfp = phys.filter((i) => /^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
+    const strip = el("div", null, "dq-ports");
+    const tile = (i) => {
+      const tl = portTile(i, "link"); tl.type = "button";
+      tl.appendChild(el("span", String(portNum(i.name)), "num"));
+      tl.title = portTooltip(i);
+      tl.addEventListener("click", async () => { box.hidden = true; await openDetail(d.id); showDetailTab("ports"); selectPortTraffic(i.name); });
+      return tl;
+    };
+    for (const g of [cu, sfp]) if (g.length) { const row = el("div", null, "dq-prow"); for (const i of g) row.appendChild(tile(i)); strip.appendChild(row); }
+    body.appendChild(strip);
+    const bad = phys.filter((i) => portLevel(i));
+    const w = phys.reduce((a, i) => a + (Number((i.port || {}).poe_power) || 0), 0);
+    body.appendChild(el("p", [`${phys.filter((i) => i.running).length}/${phys.length} portů s linkou`, w ? `PoE ${w.toFixed(1)} W` : "",
+      bad.length ? `⚠ ${bad.length} ${bad.length === 1 ? "port potřebuje" : "porty potřebují"} pozornost` : ""].filter(Boolean).join(" · "),
+      bad.length ? "small sev-warning" : "small muted"));
+  }
+  const u = uplinksCache[d.id] || {};
+  const info = el("dl", null, "dq-info");
+  const row = (k, v) => { if (v == null || v === "") return; info.append(el("dt", k)); const dd = el("dd"); if (v instanceof Node) dd.appendChild(v); else dd.textContent = v; info.appendChild(dd); };
+  if (u.parent_label) {
+    const a = el("a", u.parent_label + (u.parent_port ? ` · port ${portNum(u.parent_port)}` : "")); a.href = "#";
+    a.addEventListener("click", (ev) => { ev.preventDefault(); const par = devicesCache.find((x) => x.id === u.parent_id); if (par) openQuick(par); });
+    row("Připojeno k", a);
+  } else if (u.wan) row("Připojeno k", "internet (WAN)");
+  if (u.uplink_port) row("Přes port", `${u.uplink_port}${u.rate ? " · " + u.rate : ""} (uplink)`);
+  row(isLocal() ? "IP správy" : "IP v tunelu", d.tunnel_ip);
+  row("Lokalita", d.site);
+  row("Role", ROLE_NAME[d.role] || d.role);
+  row("RouterOS", d.ros_version + (d.update_available ? ` (dostupná ${d.latest_version})` : ""));
+  row("Uptime", fmtUptime(d.uptime_s));
+  if (d.cpu != null) row("CPU / RAM", `${d.cpu} % / ${d.mem_pct ?? "?"} %`);
+  row("Check-in", fmtTime(d.last_checkin_at));
+  row("Poznámka", d.note);
+  body.appendChild(info);
+  const al = r.alerts || [];
+  if (al.length) {
+    body.appendChild(el("h4", `Alerty (${al.length})`));
+    const ul = el("ul", null, "dq-list");
+    for (const a of al) ul.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : "warning")));
+    body.appendChild(ul);
+  }
+  const conn = phys.filter((i) => i.connected).sort((a, b) => portNum(a.name) - portNum(b.name));
+  if (conn.length) {
+    body.appendChild(el("h4", "Na portech"));
+    const t2 = el("table", null, "dq-conn");
+    for (const i of conn) {
+      const n = i.connected, tr = el("tr");
+      const nm = el("td"); nm.append(devIcon(n.kind, "sm"), el("span", " " + n.name, n.managed ? "managed" : ""));
+      tr.append(nm, el("td", n.ip || (n.count > 1 ? `${n.count} MAC` : ""), "muted"), el("td", String(portNum(i.name)), "num"));
+      t2.appendChild(tr);
+    }
+    body.appendChild(t2);
+  }
+}
+
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("keydown", (e) => {
+    const q = $("dev-quick"), m = $("ctx");
+    if (e.key === "Escape" && q && !q.hidden && (!m || m.hidden) && !askDone) closeQuick();
+  });
+}
+
 function devMatchesState(d, st) {
   if (st === "all") return true;
   if (st === "problem") return d.state === "offline" || Number(d.alerts) > 0 || d.update_available || Number(d.security_issues) > 0 ||
