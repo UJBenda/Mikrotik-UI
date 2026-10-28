@@ -104,3 +104,43 @@ def test_remove_bond():
     with pytest.raises(portcfg.PortError):
         bondcfg.remove_plan(dict(inv, bonds=[{"name": "bond-mtc1", "slaves": "ether5", "comment": ""}]), "bond-mtc1")
     assert bondcfg.summarize_bonds(inv)[0]["slaves"] == ["ether5", "ether6"]
+
+
+def test_lacp_trunk_on_non_adjacent_ports_with_vlans():
+    """Porty nemusí být vedle sebe (ether2 + ether7 + sfp1); bond rovnou jako trunk:
+    porty z bridge → bonding 802.3ad → bond do bridge → VLAN na bondu. Návrat v opačném pořadí."""
+    p = bondcfg.lacp_plan(INV, ["sfp1", "ether7", "ether2"], vlan={"pvid": 99, "tagged": ["20", "30", "50"]})
+    a = p["apply"].splitlines()
+    i_rm = max(i for i, x in enumerate(a) if x.startswith("/interface bridge port remove"))
+    i_bond = next(i for i, x in enumerate(a) if x.startswith("/interface bonding add"))
+    i_bp = next(i for i, x in enumerate(a) if 'interface bridge port add bridge="bridge" interface="bond-mtc1"' in x)
+    i_vlan = next(i for i, x in enumerate(a) if "pvid=99" in x)
+    assert i_rm < i_bond < i_bp < i_vlan
+    assert 'slaves="ether2,ether7,sfp1" mode=802.3ad' in a[i_bond]
+    # VLAN 30 měl sfp1 → přešla na bond; 20 a 50 se přidají; 50 je nová řádka
+    assert '/interface bridge vlan set [find bridge="bridge" vlan-ids=20 dynamic=no] tagged="ether1,ether5,ether6,bond-mtc1"' in a
+    assert '/interface bridge vlan add bridge="bridge" vlan-ids=50 tagged="bond-mtc1" comment="mtc"' in a
+    r = p["revert"].splitlines()
+    assert r[0].startswith('/interface bridge vlan remove [find bridge="bridge" vlan-ids=50')
+    assert r.index('/interface bonding remove [find name="bond-mtc1" comment="mtc"]') > r.index(
+        next(x for x in r if "pvid=1" in x and "bond-mtc1" in x))
+    assert "PVID" in p["summary"] and _balanced(p["apply"]) and p["apply"].isascii()
+
+
+def test_bond_edited_like_port():
+    """Existující bond: PVID / tagované VLAN / vypnutí jako u portu; PoE a popis ne."""
+    inv = dict(INV)
+    inv["interfaces"] = INV["interfaces"] + [{"name": "bond-mtc1", "type": "bond"}]
+    inv["bonds"] = [{"name": "bond-mtc1", "slaves": "ether3,ether4", "comment": "mtc", "mode": "802.3ad"}]
+    inv["bridge_ports"] = [b for b in INV["bridge_ports"] if b["interface"] not in ("ether3", "ether4")] + [
+        {"bridge": "bridge", "interface": "bond-mtc1", "pvid": "1"}]
+    st = portcfg.port_state(inv, "bond-mtc1")
+    assert st["is_bond"] and st["slaves"] == ["ether3", "ether4"] and st["poe"] is None
+    p = portcfg.plan(inv, "bond-mtc1", {"pvid": 10, "tagged": ["20"], "disabled": True})
+    assert '/interface bonding set [find name="bond-mtc1"] disabled=yes' in p["apply"]
+    assert '/interface bridge port set [find interface="bond-mtc1" dynamic=no] pvid=10' in p["apply"]
+    assert 'tagged="ether1,ether5,ether6,bond-mtc1"' in p["apply"]
+    with pytest.raises(portcfg.PortError):
+        portcfg.plan(inv, "bond-mtc1", {"poe": "off"})
+    with pytest.raises(portcfg.PortError):
+        portcfg.plan(inv, "bond-mtc1", {"comment": "jine"})

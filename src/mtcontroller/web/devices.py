@@ -107,6 +107,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             "warnings": [{"severity": i.severity, "text": i.text, "source": i.source}
                          for i in ros_versions.issues_for(d.get("ros_version") or "")],
             "interfaces": ifaces,
+            "bonds": _bonds(inv),
             "addresses": inv.get("addresses") or [],
             "vlan_names": portview.vlan_names(inv),
             "neighbors": inv.get("neighbors") or [],
@@ -141,6 +142,12 @@ def _uplinks(tx, inv: dict) -> set[str]:
         if isinstance(n, dict) and n.get("identity") in managed:
             out.add(_port_of(n.get("interface")))
     return out
+
+
+def _bonds(inv: dict) -> list[dict]:
+    from .. import bondcfg
+
+    return bondcfg.summarize_bonds(inv) if inv else []
 
 
 @endpoint(READ)

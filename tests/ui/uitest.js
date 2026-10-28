@@ -527,8 +527,10 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const dev = lbl && lbl.children.find((c) => /^dev/.test(c.className || ""));
     if (!dev || !/camera/.test(dev.children[0].attrs.class || "") || !lbl.title.includes("192.168.10.50"))
       errors.push("panel portů: chybí ikona připojeného zařízení");
-    // tabulka portů: 2 fyzické porty, řazení podle anomálie, profil, jméno VLAN
-    if (byId["d-ptable-wrap"].hidden || byId["d-ptable-b"].children.length !== 2) errors.push("tabulka portů");
+    // tabulka portů: 4 fyzické porty (2 v LACP bondu), řazení podle anomálie, profil, jméno VLAN
+    if (byId["d-ptable-wrap"].hidden || byId["d-ptable-b"].children.length !== 4) errors.push("tabulka portů");
+    // LACP bond pod panelem portů (porty 5 a 7 – ne vedle sebe)
+    if (!byId["d-ports"].textContent.includes("bond-mtc1") || !byId["d-ports"].textContent.includes("5, 7")) errors.push("chybí LACP bond pod porty");
     const ptxt = byId["d-ptable-b"].textContent;
     if (!ptxt.includes("AP trunk") || !ptxt.includes("vlan10-lan (10)") || !ptxt.includes("GW-centrala")) errors.push("tabulka portů: obsah " + ptxt);
     await byId["d-ptable-h"].children[2].fire("click");

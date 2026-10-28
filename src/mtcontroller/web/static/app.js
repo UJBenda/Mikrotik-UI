@@ -1707,7 +1707,11 @@ function renderPorts(devId, d) {
   const phys = (d.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
   const bySfp = (sfp) => phys.filter((i) => /^(sfp|qsfp)/.test(i.name) === sfp).sort((a, b) => portNum(a.name) - portNum(b.name));
   if (!portCtx || portCtx.devId !== devId) { portPick.clear(); portMulti = false; profCache = null; $("port-sel").hidden = true; }
-  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), vnames: d.vlan_names || {} };
+  const bonds = d.bonds || [];
+  const bondOf = {};
+  for (const b of bonds) for (const m of b.slaves) bondOf[m] = b.name;
+  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), vnames: d.vlan_names || {}, bonds, bondOf,
+              bondIfaces: (d.interfaces || []).filter((i) => i.type === "bond") };
   drawPorts();
 }
 
@@ -1743,6 +1747,52 @@ function drawPorts() {
   const two = c.cu.length > 8;
   for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => portTile(i, view), labels, two));
   box.appendChild(row);
+  drawBonds(box);
+}
+
+// --- LACP bondy: řádek pod porty, klik = nastavení VLAN na bondu, pravé tlačítko = akce --------
+function drawBonds(box) {
+  const c = portCtx;
+  if (!c.bonds.length) return;
+  if (!profCache) api("GET", `/tenants/${tenantId}/port-profiles`).then((r) => { profCache = r; }).catch(() => { profCache = []; });
+  const wrap = el("div", null, "bond-row");
+  wrap.appendChild(el("span", "LACP", "bond-h"));
+  for (const b of c.bonds) {
+    const iface = c.bondIfaces.find((i) => i.name === b.name) || { name: b.name };
+    const chip = el("button", null, "bond-chip " + (b.running ? "up" : "down") + (trafficState.iface === b.name ? " selected" : ""));
+    chip.type = "button";
+    chip.append(el("b", b.name), el("span", ` · ${b.slaves.map((m) => portNum(m)).join(", ")}`, "muted"));
+    if (b.mlag_id) chip.appendChild(el("span", ` · MLAG ${b.mlag_id}`, "muted"));
+    chip.title = `${b.name} (802.3ad) – porty ${b.slaves.join(", ")}${b.running ? "" : " – NEBĚŽÍ (protistrana bez LACP?)"}\nklik = VLAN a profil bondu · pravé tlačítko = akce`;
+    chip.addEventListener("click", () => selectPortTraffic(b.name));
+    chip.addEventListener("contextmenu", (ev) => ctxMenu(ev, `${b.name} · ${b.slaves.join(", ")}`, bondMenu(b, iface)));
+    wrap.appendChild(chip);
+  }
+  box.appendChild(wrap);
+}
+
+function bondMenu(b, iface) {
+  const can = canManage();
+  const profs = profCache || [];
+  if (!profCache) api("GET", `/tenants/${tenantId}/port-profiles`).then((r) => { profCache = r; }).catch(() => { profCache = []; });
+  return [
+    !b.running ? { label: "⚠ bond neběží – protistrana musí mít LACP (802.3ad)", disabled: true } : null,
+    { label: "VLAN a nastavení bondu…", key: "Enter", act: () => selectPortTraffic(b.name) },
+    { label: "Graf provozu", act: () => showTraffic(detailId, b.name) },
+    profs.length ? { head: "Profil (VLAN)" } : null,
+    ...profs.slice(0, 8).map((pf) => ({ label: pf.name, disabled: !can, act: () => bulkPorts([b.name], { profile_id: pf.id }) })),
+    { sep: true },
+    b.mtc ? { label: "Zrušit bond (porty zpět do bridge)", danger: true, disabled: !can, act: () => removeBond(b) }
+          : { label: "Bond nevytvořil controller – ruší se v RouterOS", disabled: true },
+  ];
+}
+
+async function removeBond(b) {
+  if (!(await ask(`Zrušit bond ${b.name}? Porty ${b.slaves.join(", ")} se vrátí do bridge s VLAN bondu. Vypni LACP i na protistraně.`))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, { kind: "bond_remove", name: b.name, apply: true });
+    msg(`Odesláno: ${r.summary}`); loadPlans();
+  } catch (e) { msg(e.message, true); }
 }
 
 function vlanTitle(vid) {
@@ -1934,6 +1984,7 @@ function portBadges(i) {
   if (p.poe && /fault|overload|short|error/i.test(p.poe)) out.push({ pos: "tl", cls: "bad", text: "⚡", title: "PoE porucha" });
   else if (poeOn) out.push({ pos: "tl", cls: w >= 15 ? "poe3" : "poe", text: "⚡", title: `PoE ${w ? w.toFixed(1) + " W" : "zapnuto"}` });
   if (isUplink(i)) out.push({ pos: "tr", cls: "up", text: "↑", title: "uplink" });
+  else if (portCtx && portCtx.bondOf && portCtx.bondOf[i.name]) out.push({ pos: "tr", cls: "bond", text: "⛓", title: `v bondu ${portCtx.bondOf[i.name]}` });
   if (p.loop) out.push({ pos: "br", cls: "bad", text: "↻", title: "smyčka" });
   else if (p.stp_forwarding === false && i.running) out.push({ pos: "br", cls: "stp", text: "⊘", title: "STP blokuje" });
   const lv = portLevel(i);
@@ -2155,15 +2206,7 @@ async function drawPortPick() {
   act("Porty vypnout", { disabled: true }); act("Porty zapnout", { disabled: false });
   if (names.length >= 2) {
     const lacp = el("button", "LACP z vybraných", "small"); lacp.type = "button";
-    lacp.onclick = async () => {
-      if (!(await ask(`Spojit ${names.join(", ")} do LACP bondu (802.3ad)? VLAN a PVID se přenesou z ${names[0]}. ` +
-                      "Protistrana musí mít LACP taky; když se zařízení do 5 minut neozve, změna se vrátí."))) return;
-      try {
-        const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, { kind: "lacp", ports: names, apply: true });
-        msg(`Odesláno: ${r.summary}`); for (const w of r.warnings || []) msg(w, true);
-        clearPortPick(); loadPlans();
-      } catch (e) { msg(e.message, true); }
-    };
+    lacp.onclick = () => openLacp(names);
     bar.appendChild(lacp);
   }
   box.appendChild(bar);
@@ -2241,6 +2284,45 @@ function portMenu(i) {
   ];
 }
 
+// --- dialog LACP: porty libovolně (nemusí být vedle sebe), jen 802.3ad, VLAN rovnou na bondu ----
+let lacpNames = [];
+async function openLacp(names) {
+  lacpNames = names;
+  if (!profCache) { try { profCache = await api("GET", `/tenants/${tenantId}/port-profiles`); } catch (_e) { profCache = []; } }
+  $("lacp-ports").textContent = names.join(", ");
+  const sel = $("lacp-prof"); sel.textContent = "";
+  for (const pf of profCache || []) { const o = el("option", pf.name); o.value = String(pf.id); sel.appendChild(o); }
+  $("lacp-v-prof").disabled = !(profCache || []).length;
+  $("lacp-v-copy").checked = true;
+  $("lacp-copy-from").textContent = names[0];
+  $("lacp-pvid").value = ""; $("lacp-tagged").value = "";
+  lacpUi();
+  $("lacp-dlg").hidden = false;
+}
+function lacpUi() {
+  $("lacp-prof").disabled = !$("lacp-v-prof").checked;
+  $("lacp-manual").hidden = !$("lacp-v-man").checked;
+}
+for (const id of ["lacp-v-copy", "lacp-v-prof", "lacp-v-man"]) $(id).addEventListener("change", lacpUi);
+$("lacp-cancel").addEventListener("click", () => { $("lacp-dlg").hidden = true; });
+$("lacp-ok").addEventListener("click", async () => {
+  const body = { kind: "lacp", ports: lacpNames, apply: true, hash: $("lacp-hash").value, lacp_rate: $("lacp-rate").value };
+  if ($("lacp-v-prof").checked) body.profile_id = Number($("lacp-prof").value);
+  if ($("lacp-v-man").checked) {
+    const tagged = $("lacp-tagged").value.split(/[ ,;]+/).filter(Boolean);
+    body.vlan = { tagged };
+    if ($("lacp-pvid").value) body.vlan.pvid = Number($("lacp-pvid").value);
+  }
+  if (!(await ask(`Spojit ${lacpNames.join(", ")} do LACP bondu (802.3ad)? Protistrana musí mít LACP taky; ` +
+                  "když se zařízení do 5 minut neozve, změna se sama vrátí."))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, body);
+    $("lacp-dlg").hidden = true;
+    msg(`Odesláno: ${r.summary}`); for (const w of r.warnings || []) msg(w, true);
+    clearPortPick(); loadPlans();
+  } catch (e) { msg(e.message, true); }
+});
+
 async function bulkPorts(names, body) {
   const what = body.profile_id ? `profil „${(profCache.find((p) => p.id === body.profile_id) || {}).name}“` : "změnu";
   if (!(await ask(`Použít ${what} na ${nPorts(names.length)}? ` +
@@ -2316,7 +2398,10 @@ async function loadPortEditor(port) {
   const enabled = el("input"); enabled.type = "checkbox"; enabled.checked = !st.disabled;
   field("Zapnutý", enabled);
   const comment = el("input"); comment.maxLength = 80; comment.value = st.comment || ""; comment.placeholder = "např. kamera vjezd";
-  field("Popis", comment);
+  if (st.is_bond) {
+    comment.disabled = true;
+    f.appendChild(el("p", `LACP bond (802.3ad) z portů ${st.slaves.join(", ")}. VLAN, PVID a profil se nastavují tady na bondu.`, "muted"));
+  } else field("Popis", comment);
   let poe = null;
   if (st.poe !== null) {
     poe = el("select");
@@ -2422,7 +2507,8 @@ async function loadPortEditor(port) {
     return b;
   }
   const desired = () => {
-    const d = { disabled: !enabled.checked, comment: comment.value };
+    const d = { disabled: !enabled.checked };
+    if (!st.is_bond) d.comment = comment.value;
     if (poe) d.poe = poe.value;
     if (loop) d.loop_protect = loop.value;
     if (pvid) d.pvid = Number(pvid.value);
@@ -2487,7 +2573,13 @@ async function loadPortEditor(port) {
   const blink = el("button", "Blikat LED", "small secondary"); blink.type = "button";
   blink.title = "Port 15 s bliká – najdeš ho v racku";
   blink.onclick = () => runTool("blink", { port, seconds: 15 }, toolOut);
-  acts.append(bounce, cable, blink);
+  if (st.is_bond) {
+    const b = (portCtx && portCtx.bonds || []).find((x) => x.name === port);
+    if (b && b.mtc) {
+      const rm = el("button", "Zrušit bond", "small secondary danger"); rm.type = "button"; rm.onclick = () => removeBond(b);
+      acts.appendChild(rm);
+    }
+  } else acts.append(bounce, cable, blink);
   box.appendChild(acts);
   box.appendChild(toolOut);
   if ((st.history || []).length) {
@@ -3719,6 +3811,8 @@ function kv(tbody, rows) {
 
 async function openDetail(id) {
   detailId = id;
+  const dq = $("dev-quick"); if (dq) dq.hidden = true;
+  quickId = null;
   let d;
   try { d = await api("GET", `/tenants/${tenantId}/devices/${id}`); } catch (e) { return msg(e.message, true); }
   show("detail");

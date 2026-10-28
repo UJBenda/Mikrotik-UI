@@ -159,6 +159,13 @@ def test_lacp_and_mlag_api():
         r = c.post(f"{T}/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether2", "ether4"]})
         assert r.status_code == 201, r.text
         assert "LACP bond-mtc1" in r.json()["summary"]
+        # trunk rovnou z profilu (PVID + tagované VLAN na bondu)
+        pid = c.post(T + "/port-profiles", json_body={"name": "Trunk", "pvid": 99, "tagged": ["50", "60"]}).json()["id"]
+        r = c.post(f"{T}/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether2", "ether4"], "profile_id": pid})
+        assert r.status_code == 201, r.text
+        with operator_scope(db) as tx:
+            sc = tx.fetchone("SELECT script FROM config_plan WHERE id = %(i)s", {"i": r.json()["plan_id"]})["script"]
+        assert sc.index("/interface bonding add") < sc.index('interface="bond-mtc1"') < sc.index("pvid=99")
         assert c.post(f"{T}/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether1", "ether2"]}).status_code == 400
         body = {"a": {"device_id": sw, "peer_port": "ether1", "members": [{"ports": ["ether2"], "mlag_id": 10}]},
                 "b": {"device_id": sw2, "peer_port": "ether1", "members": [{"ports": ["ether2"], "mlag_id": 10}]}}

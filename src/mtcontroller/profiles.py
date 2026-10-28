@@ -153,7 +153,7 @@ def matching(profiles: list[dict], state: dict) -> dict | None:
             continue
         if p["tagged"] is not None and sorted(p["tagged"], key=int) != sorted(state.get("tagged") or [], key=int):
             continue
-        if p["poe"] is not None and p["poe"] != state.get("poe"):
+        if p["poe"] is not None and p["poe"] != state.get("poe") and not state.get("is_bond"):
             continue
         if p["edge"] is not None and p["edge"] != state.get("edge"):
             continue

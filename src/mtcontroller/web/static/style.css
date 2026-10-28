@@ -854,3 +854,14 @@ tr.rogue-row td { color: var(--bad); font-weight: 600; }
 .dq-conn { width: 100%; font-size: 13px; border-collapse: collapse; }
 .dq-conn td { padding: 4px 2px; border-bottom: 1px solid var(--line); }
 .dq-conn .managed { font-weight: 600; }
+
+/* LACP bondy pod panelem portů */
+.bond-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%; padding-top: 8px; border-top: 1px dashed var(--line); }
+.bond-h { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
+.bond-chip { display: inline-flex; gap: 2px; align-items: center; padding: 5px 10px; border-radius: 8px; font-size: 12.5px;
+             border: 2px solid var(--port-down); background: var(--card); color: var(--text); }
+.bond-chip.up { border-color: var(--port-gbe); } .bond-chip.down { border-color: var(--bad); }
+.bond-chip.selected { box-shadow: 0 0 0 3px var(--accent-weak); }
+.port .pb.bond { color: inherit; font-size: 10px; }
+.lacp-manual { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0 0 24px; }
+#lacp-dlg .sd-sec label.check { display: flex; margin: 4px 0; gap: 6px; color: var(--text); }

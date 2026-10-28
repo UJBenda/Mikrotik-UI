@@ -84,9 +84,11 @@ def config_basis(inv: dict) -> str:
 
 def port_state(inv: dict, port: str) -> dict:
     """Aktuální nastavení portu tak, jak ho edituje UI."""
-    iface = next((i for i in _rows(inv, "interfaces") if i.get("name") == port and i.get("type") == "ether"), None)
+    # fyzický port nebo LACP bond (bond se v bridgi nastavuje stejně: PVID, tagované VLAN, edge)
+    iface = next((i for i in _rows(inv, "interfaces") if i.get("name") == port and i.get("type") in ("ether", "bond")), None)
     if not iface:
         raise PortError(f"port {port} na zařízení není")
+    is_bond = iface.get("type") == "bond"
     eth = next((e for e in _rows(inv, "ethernet") if e.get("name") == port), {})
     bp = next((b for b in _rows(inv, "bridge_ports") if b.get("interface") == port and not _true(b.get("dynamic"))), None)
     tagged, multi = [], []
@@ -116,6 +118,8 @@ def port_state(inv: dict, port: str) -> dict:
         "edge": bp.get("edge") if bp else None, "tagged": sorted(tagged, key=int), "tagged_locked": multi,
         "vlan_filtering": _true(br.get("vlan-filtering")),
         "poe_watchdog": watchdog, "learn": (bp.get("learn") or "auto") if bp else None, "lock": lock, "bond": bond,
+        "is_bond": is_bond,
+        "slaves": next((_members(b.get("slaves")) for b in _rows(inv, "bonds") if b.get("name") == port), []) if is_bond else [],
     }
 
 
@@ -167,6 +171,13 @@ def plan(inv: dict, port: str, desired: dict, uplinks: set[str] | None = None) -
     cur = port_state(inv, port)
     qp = q(port)
     changes, apply, revert, warn = [], [], [], []
+    menu = "bonding" if cur["is_bond"] else "ethernet"
+    if cur["is_bond"]:
+        if "comment" in desired and str(desired["comment"] or "") != cur["comment"]:
+            raise PortError("popis bondu se nemění (komentář mtc označuje bond controlleru)")
+        for f in ("poe", "loop_protect", "poe_watchdog", "lock"):
+            if desired.get(f) not in (None, ""):
+                raise PortError(f"bond {port}: {f} se nastavuje na členských portech")
 
     def change(field: str, before: Any, after: Any) -> None:
         changes.append({"field": field, "before": before, "after": after})
@@ -174,8 +185,8 @@ def plan(inv: dict, port: str, desired: dict, uplinks: set[str] | None = None) -
     if "disabled" in desired and bool(desired["disabled"]) != cur["disabled"]:
         new = bool(desired["disabled"])
         change("disabled", cur["disabled"], new)
-        apply.append(f"/interface ethernet set [find name={qp}] disabled={'yes' if new else 'no'}")
-        revert.append(f"/interface ethernet set [find name={qp}] disabled={'yes' if cur['disabled'] else 'no'}")
+        apply.append(f"/interface {menu} set [find name={qp}] disabled={'yes' if new else 'no'}")
+        revert.append(f"/interface {menu} set [find name={qp}] disabled={'yes' if cur['disabled'] else 'no'}")
     if "comment" in desired and str(desired["comment"]) != cur["comment"]:
         c = str(desired["comment"])
         if not _COMMENT.match(c):

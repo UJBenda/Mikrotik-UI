@@ -2,8 +2,12 @@
 
 Vše jako běžný plán portů (commit-confirm): když se zařízení po změně neozve, vrátí ji samo.
 
-LACP: porty se z bridge vyjmou, vznikne bonding `bond-mtcN` (802.3ad) a ten se do bridge vloží
-s nastavením prvního portu (PVID, edge…); členství ve VLAN se přenese z portů na bond.
+LACP (jen 802.3ad, porty libovolné – nemusí být vedle sebe, jen ve stejném bridgi): podle dokumentace
+MikroTiku (CRS3xx VLANs with Bonds) – porty se z bridge vyjmou (člen bondu nesmí být port bridge),
+vznikne bonding `bond-mtcN`, ten se do bridge vloží jako port a VLAN se nastaví na bondu. Bez zadání
+převezme bond nastavení prvního portu (PVID, edge…) a členství ve VLAN z portů; s `vlan` (PVID,
+tagované VLAN, edge – ručně nebo z profilu) se rovnou nastaví jako trunk. Bond se pak upravuje
+stejně jako port (portcfg: PVID, tagované VLAN, edge, profil).
 
 MLAG (dva switche, každý se svým plánem): peer port musí být tagovaný ve všech VLAN bridge,
 bondy ke klientům mají na obou switchích stejné `mlag-id`. RouterOS 7.22+ nastavuje MLAG
@@ -157,19 +161,33 @@ def _lacp_into(work: dict, sc: _Script, ports: list[str], *, name: str, mlag_id:
 
 
 def lacp_plan(inv: dict, ports: list[str], *, name: str | None = None, lacp_rate: str = "30secs",
-              hash_policy: str = "layer-2-and-3", uplinks: set[str] | None = None) -> dict:
-    """LACP bond z vybraných portů jednoho switche."""
+              hash_policy: str = "layer-2-and-3", uplinks: set[str] | None = None, vlan: dict | None = None) -> dict:
+    """LACP bond z vybraných portů jednoho switche; `vlan` = {pvid, tagged, edge} pro bond (trunk)."""
     ports = sorted({str(p) for p in ports}, key=_port_key)
     work, sc, warn = copy.deepcopy(inv), _Script(), []
     name = name or free_name(inv)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", name):
         raise PortError("neplatné jméno bondu")
     res = _lacp_into(work, sc, ports, name=name, mlag_id=None, lacp_rate=lacp_rate, hash_policy=hash_policy, warn=warn)
+    vsum = ""
+    if vlan:
+        from . import portcfg
+
+        want = {k: vlan[k] for k in ("pvid", "tagged", "edge") if vlan.get(k) not in (None, "")}
+        if "tagged" in vlan and vlan["tagged"] is not None:
+            want["tagged"] = list(vlan["tagged"])
+        vp = portcfg.plan(work, name, want)
+        if vp["changes"]:
+            # VLAN na bondu až po jeho vložení do bridge; návrat nejdřív VLAN, pak bond
+            sc.apply += [ln for ln in vp["apply"].splitlines() if ln]
+            sc.revert = [ln for ln in vp["revert"].splitlines() if ln] + sc.revert
+            warn += [w for w in vp["warnings"] if w not in warn]
+            vsum = "; " + vp["summary"].split(": ", 1)[-1]
     if uplinks and set(ports) & uplinks:
         warn.append("v bondu je uplink (cesta ke správě) – protistrana musí mít LACP taky, jinak se zařízení "
                     "odpojí a změna se za 5 min sama vrátí")
     warn.append("protistrana (switch, server) musí mít na těchto portech LACP (802.3ad)")
-    summary = f"LACP {name}: {', '.join(ports)} (bridge {res['bridge']})"
+    summary = f"LACP {name}: {', '.join(ports)} (bridge {res['bridge']}){vsum}"
     return _result(sc, warn, summary, [{"field": "bond", "before": None, "after": {"name": name, "ports": ports}}])
 
 

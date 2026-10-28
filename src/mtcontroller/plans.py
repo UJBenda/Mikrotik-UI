@@ -338,9 +338,16 @@ def create_bond_plan(db: Database, tenant_id: Any, device_id: Any, kind: str, pa
         inv = _ports_ready(tx, device_id)
         try:
             if kind == "lacp":
+                vlan = params.get("vlan") if isinstance(params.get("vlan"), dict) else None
+                if params.get("profile_id") not in (None, ""):
+                    from . import profiles
+
+                    prof = profiles.get(tx, int(params["profile_id"]))
+                    vlan = {k: prof.get(k) for k in ("pvid", "tagged", "edge") if prof.get(k) is not None}
                 p = bondcfg.lacp_plan(inv, [str(x) for x in params.get("ports") or []],
                                       lacp_rate=str(params.get("lacp_rate") or "30secs"),
-                                      hash_policy=str(params.get("hash") or "layer-2-and-3"), uplinks=uplinks)
+                                      hash_policy=str(params.get("hash") or "layer-2-and-3"), uplinks=uplinks,
+                                      vlan=vlan)
             elif kind == "bond_remove":
                 p = bondcfg.remove_plan(inv, str(params.get("name") or ""))
             elif kind == "mlag":

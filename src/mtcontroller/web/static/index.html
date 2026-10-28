@@ -632,6 +632,36 @@
   </section>
   <aside id="dev-quick" class="side-drawer" hidden aria-label="Rychlý náhled zařízení"></aside>
 
+  <div id="lacp-dlg" class="modal" hidden>
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="lacp-title">
+      <div class="sd-head"><h3 id="lacp-title">LACP bond (802.3ad)</h3></div>
+      <p>Porty: <b id="lacp-ports"></b> <span class="muted small">– nemusí být vedle sebe, jen ve stejném bridgi</span></p>
+      <p class="muted small">Postup na zařízení: porty z bridge → bonding 802.3ad → bond do bridge → VLAN na bondu.
+        Vše jako jeden plán s automatickým návratem.</p>
+      <div class="sd-sec"><span class="sd-label">VLAN na bondu</span>
+        <label class="check"><input type="radio" name="lacp-v" id="lacp-v-copy" checked> převzít z portu <b id="lacp-copy-from"></b></label>
+        <label class="check"><input type="radio" name="lacp-v" id="lacp-v-prof"> profil <select id="lacp-prof"></select></label>
+        <label class="check"><input type="radio" name="lacp-v" id="lacp-v-man"> ručně (trunk)</label>
+        <div id="lacp-manual" class="lacp-manual" hidden>
+          <label class="pe-field"><span>Native VLAN (PVID)</span><input id="lacp-pvid" type="number" min="1" max="4094" placeholder="1"></label>
+          <label class="pe-field"><span>Tagované VLAN</span><input id="lacp-tagged" placeholder="např. 10,20,30"></label>
+        </div>
+      </div>
+      <div class="sd-grid">
+        <label class="pe-field"><span>Rozložení provozu (hash)</span><select id="lacp-hash">
+          <option value="layer-2-and-3">layer-2-and-3 (doporučeno, HW offload CRS3xx)</option>
+          <option value="layer-3-and-4">layer-3-and-4 (víc toků mezi dvěma servery)</option>
+          <option value="layer-2">layer-2</option></select></label>
+        <label class="pe-field"><span>LACP rate</span><select id="lacp-rate">
+          <option value="30secs">30 s (výchozí)</option><option value="1sec">1 s (rychlejší detekce výpadku)</option></select></label>
+      </div>
+      <div class="modal-acts">
+        <button id="lacp-cancel" type="button" class="secondary">Zrušit</button>
+        <button id="lacp-ok" type="button">Vytvořit bond</button>
+      </div>
+    </div>
+  </div>
+
   <div id="bt-dlg" class="modal" hidden>
     <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="bt-title">
       <div class="sd-head"><h3 id="bt-title">Cíl záloh</h3><button id="bt-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
