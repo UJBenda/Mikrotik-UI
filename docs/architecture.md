@@ -1023,3 +1023,29 @@ a `checkin.{crt,key}` (lokální režim jen `admin`); obsah slotů se mění bez
 - **Zařízení:** check-in ověřují; veřejnou CA jen s RouterOS 7.19+ a vestavěnými CA pro fetch (`/certificate/settings builtin-trust-store`).
   UI proto u check-inu varuje a doporučuje LE jen pro administraci.
 - `mtc-admin doctor` hlásí chybějící slot, nepokryté jméno a expiraci < 14 dní.
+
+## Rozhraní jako v UniFi (etapa 1 zjednodušení)
+
+Navigace je vázaná na lokalitu (výběr nahoře v levém panelu) a má pět sekcí:
+
+| Sekce | Obsah |
+|---|---|
+| Přehled a topologie | dlaždice stavu lokality (proklik s opravou), mapa infrastruktury, topologie, STP |
+| Zařízení | tabulka zařízení lokality (čekající bez lokality ve všech); „Porty všech switchů“ |
+| Klienti | drátoví i Wi-Fi klienti; panel klienta |
+| Nastavení lokality | Sítě (VLAN, DHCP, leases, DHCP snooping) · Wi-Fi (SSID, skupiny AP, pokročilé nastavení rádií sbalené, roaming, rádia) · Profily portů · Systém a nasazení (adopce, NTP, postupná aktualizace, výchozí konfigurace) |
+| Aktivita a audit | alerty, změny (plány – žurnál a schvalování), audit |
+
+Pod čarou: Všechny lokality (seznam, hledání klienta v tenantovi), Uživatelé, Systém (superadmin).
+
+- **Žádná podstránka detailu**: klik na zařízení (tabulka, mapa, topologie) otevře panel vpravo se
+  záložkami Přehled (porty, připojení, akce, souhrn, sbalené Řízení zařízení s pokročilými moduly a
+  Zálohy a historie), Porty (správce portů, provoz, Time Machine), Wi-Fi (jen AP: rádia, SSID,
+  skupina) a Diagnostika a logy (bezpečnost a firewall, VLAN a rozhraní, nástroje a test
+  rychlosti, logy). Esc panel zavře.
+- **Panel klienta** nahradil dialogy: popisek, ikona, logo, **pevná IP na jeden klik** (rezervace
+  aktuální adresy na DHCP serveru, který klienta obsluhuje – plán dhcp s automatickým návratem;
+  bez práva správce se uloží ke schválení) a Wi-Fi časová osa jako záložka.
+- Podzáložky si prohlížeč pamatuje (`prefs.sub`); po změně lokality se otevřená sekce načte znovu.
+- Etapa 2 (backend) přinese automatické nasazení změn záměru a řetězec adopce; potom zmizí
+  tlačítka „Připravit VLAN lokality“, „Sladit řízená zařízení“ a moduly observe/manage z panelu.

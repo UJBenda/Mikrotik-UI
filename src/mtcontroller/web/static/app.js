@@ -145,9 +145,11 @@ async function api(method, path, body) {
 }
 
 function show(which) {
-  for (const s of ["login", "mfa", "app", "detail"]) $(s).hidden = s !== which;
-  $("nav").hidden = !(which === "app" || which === "detail");
-  // v detailu zůstává navigace: klik na sekci se vrátí do aplikace
+  // detail zařízení je panel vpravo nad aplikací (jako v UniFi) – aplikace zůstává vidět
+  if (which === "detail") { $("detail").hidden = false; return; }
+  for (const s of ["login", "mfa", "app"]) $(s).hidden = s !== which;
+  $("detail").hidden = true;
+  $("nav").hidden = which !== "app";
   for (const [k] of VIEWS) { const b = $("nav-" + k); if (b) b.className = "navbtn" + (which === "app" && k === prefs.view ? " active" : ""); }
 }
 
@@ -232,7 +234,7 @@ async function startApp() {
   $("hdr-tenant").hidden = false;
   $("tenant-form").hidden = !me.superadmin;
   buildNav();
-  showView(prefs.view || "overview");
+  showView(prefs.view || "dash");
   if (me.superadmin) { loadSystem(); loadBackups(); loadTls(); }
   await loadTenants();
 }
@@ -279,21 +281,31 @@ let ovDrill = null;          // klíč otevřené dlaždice
 let securityCache = null;    // nálezy všech zařízení (načtou se při otevření dlaždice)
 const OV_TILES = [
   // klíč, popis, výběr zařízení / problémů, třída podle počtu
-  ["online", "Online", () => devicesCache.filter((d) => d.state === "adopted"), ""],
-  ["offline", "Offline", () => devicesCache.filter((d) => d.state === "offline"), "bad"],
-  ["pending", "Čeká na schválení", () => devicesCache.filter((d) => d.state === "pending"), "warn"],
-  ["provisioning", "Provisioning", () => devicesCache.filter((d) => d.state === "provisioning"), ""],
-  ["critical", "Kritické alerty", () => alertsCache.filter((a) => a.severity === "critical"), "bad"],
-  ["warning", "Varování", () => alertsCache.filter((a) => a.severity === "warning"), "warn"],
-  ["updates", "Dostupná aktualizace", () => devicesCache.filter((d) => d.update_available), ""],
-  ["ros", "Známé problémy verzí", () => devicesCache.filter((d) => (d.warnings || []).some((w) => w.severity === "critical")), "bad"],
+  ["online", "Online", () => siteDevices().filter((d) => d.state === "adopted"), ""],
+  ["offline", "Offline", () => siteDevices().filter((d) => d.state === "offline"), "bad"],
+  ["pending", "Čeká na schválení", () => siteDevices().filter((d) => d.state === "pending"), "warn"],
+  ["provisioning", "Provisioning", () => siteDevices().filter((d) => d.state === "provisioning"), ""],
+  ["critical", "Kritické alerty", () => siteAlerts().filter((a) => a.severity === "critical"), "bad"],
+  ["warning", "Varování", () => siteAlerts().filter((a) => a.severity === "warning"), "warn"],
+  ["updates", "Dostupná aktualizace", () => siteDevices().filter((d) => d.update_available), ""],
+  ["ros", "Známé problémy verzí", () => siteDevices().filter((d) => (d.warnings || []).some((w) => w.severity === "critical")), "bad"],
   ["security", "Bezpečnostní nálezy", null, "warn"],
 ];
+
+// zařízení vybrané lokality; čekající na adopci bez lokality patří ke všem
+function siteDevices() {
+  const sid = siteId();
+  return devicesCache.filter((d) => !sid || d.site_id === sid || (d.state === "pending" && !d.site_id));
+}
+function siteAlerts() {
+  const ids = new Set(siteDevices().map((d) => d.id));
+  return alertsCache.filter((a) => !a.device_id || ids.has(a.device_id));
+}
 
 function renderOverview() {
   const box = $("overview"); box.textContent = "";
   for (const [key, label, pick, cls] of OV_TILES) {
-    const n = pick ? pick().length : devicesCache.reduce((s, d) => s + (Number(d.security_issues) || 0), 0);
+    const n = pick ? pick().length : siteDevices().reduce((s, d) => s + (Number(d.security_issues) || 0), 0);
     if (key === "provisioning" && !n) continue;
     const t = el("button", null, "tile" + (n && cls ? " " + cls : "") + (ovDrill === key ? " open" : ""));
     t.type = "button"; t.title = n ? "Klikni pro seznam" : "";
@@ -365,17 +377,17 @@ function alertReactions(a) {
     rest_unreachable: ["Controller se k zařízení nedostane přes REST – obnov provisioning.", [cmd("provision", "Znovu provisioning")]],
     rest_pin_mismatch: ["Certifikát REST se změnil – obnov provisioning (nový otisk).", [cmd("provision", "Znovu provisioning")]],
     cert_changed: ["Certifikát zařízení se změnil – pokud jsi ho neměnil, prověř to.", [cmd("provision", "Znovu provisioning")]],
-    change_unconfirmed: ["Změna čeká na potvrzení.", [actBtn("Plány změn", () => showView("plans"), "small")]],
-    change_rolled_back: ["Zařízení změnu samo vrátilo (nepotvrdila se).", [actBtn("Plány změn", () => showView("plans"), "small")]],
-    rogue_dhcp: ["Na síti odpovídá cizí DHCP server – Lokalita → Sítě a DHCP.", []],
+    change_unconfirmed: ["Změna čeká na potvrzení.", [actBtn("Změny", () => openSub("activity", "plans"), "small")]],
+    change_rolled_back: ["Zařízení změnu samo vrátilo (nepotvrdila se).", [actBtn("Změny", () => openSub("activity", "plans"), "small")]],
+    rogue_dhcp: ["Na síti odpovídá cizí DHCP server – Nastavení lokality → Sítě.", []],
     port_loop: ["Smyčka na portu – v detailu port vypni nebo zapni STP.", []],
     port_flapping: ["Port často padá – zkontroluj kabel a protějšek.", []],
     port_errors: ["Chyby na portu – kabel, konektor nebo duplex.", []],
     port_half_duplex: ["Port jede v half-duplexu – zkontroluj autonegociaci.", []],
     cpu_high: ["Vysoké vytížení CPU.", []], memory_high: ["Málo volné paměti.", []],
-    ntp_unsynced: ["Čas není synchronizovaný – Lokalita → NTP.", []],
+    ntp_unsynced: ["Čas není synchronizovaný – Nastavení lokality → Systém a nasazení.", []],
     dhcp_pool_full: ["DHCP pool je skoro plný – zvětši rozsah nebo zkrať lease.", []],
-    config_drift: ["Konfigurace se liší od záměru – Lokalita → Sítě → Sladit řízená zařízení.", []],
+    config_drift: ["Konfigurace se liší od záměru – Nastavení lokality → Sítě → Sladit řízená zařízení.", []],
   }[a.kind] || ["", []];
   return [R[0], [...R[1], ack]];
 }
@@ -423,7 +435,7 @@ async function renderDrill() {
         crit.length ? crit.map((w) => w.text).join(" · ") : "Před aktualizací se udělá záloha; zařízení se restartuje.",
         [actBtn(`Aktualizovat → ${d.latest_version}`, () => upgradeDevice(d), "small")])]));
     }
-    if (devs.length > 1) list.appendChild(el("p", "Víc zařízení na lokalitě? Lokalita → Aktualizace postupuje od konce sítě k bráně.", "muted small"));
+    if (devs.length > 1) list.appendChild(el("p", "Víc zařízení na lokalitě? Nastavení lokality → Systém a nasazení postupuje od konce sítě k bráně.", "muted small"));
     if (!devs.length) empty("Všechna zařízení jsou aktuální.");
   } else if (key === "ros") {
     const devs = tile[2]();
@@ -445,7 +457,7 @@ async function renderDrill() {
       ]));
       if (fix.length > 1) lines.push(drillLine(null, `Opravit vše automaticky (${fix.length})`, "Jeden plán s automatickým návratem, když se zařízení neozve.",
         [actBtn("Opravit vše", () => hardeningFix(d, fix), "small")]));
-      if (d.plan_open) lines.unshift(drillLine("info", "Oprava už čeká v Plánech změn", "", [actBtn("Plány změn", () => showView("plans"), "small")]));
+      if (d.plan_open) lines.unshift(drillLine("info", "Oprava už čeká ve Změnách", "", [actBtn("Změny", () => openSub("activity", "plans"), "small")]));
       list.appendChild(drillDevice(d, lines));
     }
     if (!securityCache.length) empty("Bez nálezů ✓");
@@ -470,7 +482,11 @@ async function loadSites() {
   const ul = $("sites"), ts = $("token-site");
   ul.textContent = ""; ts.textContent = "";
   for (const s of sites) {
-    ul.appendChild(el("li", `${s.name} – ${s.devices} zař.`));
+    // klik = otevřít lokalitu (Přehled a topologie)
+    const li = el("li", null, "clickable");
+    li.append(el("b", s.name), el("span", ` – ${s.devices} zař.`, "muted"));
+    li.addEventListener("click", () => { $("site-sel").value = s.id; showView("dash"); loadSitePanel(); });
+    ul.appendChild(li);
     const o = el("option", s.name); o.value = s.id; ts.appendChild(o);
   }
   const busiestSite = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
@@ -644,11 +660,15 @@ async function loadSitePanel() {
   // výchozí lokalita: ta s nejvíce zařízeními (ne první podle abecedy)
   const busiest = sites.reduce((a, s) => (!a || (s.devices || 0) > (a.devices || 0) ? s : a), null);
   sel.value = prev && sites.some((s) => s.id === prev) ? prev : (busiest ? busiest.id : "");
-  // panely jsou vázané na lokalitu – při změně je zavřít, ať neukazují data jiné lokality
-  for (const [, w] of SITE_TABS) $(w).hidden = true;
   $("ntp-result").textContent = "";
   if (!sites.length) return;
-  openSiteTab(SITE_TABS.some(([k]) => k === prefs.siteTab) ? prefs.siteTab : "infra");
+  // otevřená sekce lokality se načte znovu (data jiné lokality nesmí zůstat vidět)
+  renderOverview(); renderDevices();
+  if (SITE_VIEWS.includes(prefs.view)) { const t = subOf(prefs.view); if (t) { activateSub(prefs.view, t[0]); t[3](); } }
+}
+
+// NTP politika lokality (Nastavení → Systém a nasazení)
+async function loadNtpPolicy() {
   const prim = $("ntp-primary");
   prim.textContent = "";
   const siteDevs = devicesCache.filter((x) => x.site_id === siteId() && x.state !== "pending");
@@ -701,7 +721,7 @@ async function loadPlans() {
   const list = await api("GET", `/tenants/${tenantId}/plans?status=draft`);
   const box = $("plans");
   box.textContent = "";
-  setBadge("plans", list.length, "warn");
+  plansOpen = list.length; activityBadge();
   if (!list.length) { box.appendChild(el("p", "Žádné plány nečekají na schválení.", "muted")); return; }
   for (const p of list) {
     const div = el("div", null, "plan");
@@ -741,10 +761,8 @@ async function loadTopology() {
   try {
     const t = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/topology`);
     drawTopology(t);
-    $("topo-wrap").hidden = false;
   } catch (e) { msg(e.message, true); }
 }
-$("topo-btn").addEventListener("click", loadTopology);
 
 function drawTopology(t) {
   const svg = $("topo");
@@ -799,7 +817,7 @@ async function loadAlerts() {
   tb.textContent = "";
   const crit = list.filter((a) => a.severity === "critical").length;
   $("alerts-count").textContent = list.length ? `${list.length}${crit ? ` (${crit} kritických)` : ""}` : "žádné";
-  setBadge("alerts", list.length, crit ? "bad" : "warn");
+  alertsOpen = [list.length, crit]; activityBadge();
   for (const a of list) {
     const tr = el("tr");
     tr.append(el("td", SEV_LABEL[a.severity] || a.severity, "sev-" + (a.severity === "critical" ? "error" : a.severity)),
@@ -824,11 +842,9 @@ async function loadClients() {
   try {
     const hist = $("clients-history").checked ? "?history=1" : "";
     clientsCache = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients${hist}`);
-    $("clients-wrap").hidden = false;
     renderClients();
   } catch (e) { msg(e.message, true); }
 }
-$("clients-btn").addEventListener("click", () => loadClients());
 $("clients-history").addEventListener("change", () => loadClients());
 
 function isNew(c) {
@@ -942,8 +958,12 @@ function openClient(c) {
   $("cl-logo-vendor").textContent = c.vendor_key ? `Nahrát logo výrobce (${c.vendor.replace(/[,.].*$/, "")})…` : "";
   $("cl-logo-del").hidden = !c.logo;
   $("cl-warn").textContent = "";
-  for (const id of ["cl-save", "cl-logo-client", "cl-logo-vendor", "cl-logo-del", "cl-dhcp"]) $(id).disabled = !canOperate();
+  for (const id of ["cl-save", "cl-logo-client", "cl-logo-vendor", "cl-logo-del", "cl-dhcp", "cl-fix"]) $(id).disabled = !canOperate();
+  $("cl-fix").hidden = !c.ip; $("cl-fix-res").textContent = "";
+  $("cl-fix").textContent = c.ip ? `Pevná IP ${c.ip} (rezervace v DHCP)` : "Pevná IP";
   clIcons();
+  $("clt-jr").hidden = !(c.wifi || c.ssid || c.signal);
+  clTab("edit");
   $("cl-dlg").hidden = false;
   try { $("cl-label").focus(); } catch (_e) { /* fokus není podstatný */ }
 }
@@ -960,6 +980,26 @@ function clIcons() {
   }
 }
 function clClose() { $("cl-dlg").hidden = true; clEdit = null; }
+// panel klienta: nastavení / Wi-Fi časová osa
+function clTab(key) {
+  $("clp-edit").hidden = key !== "edit"; $("clp-jr").hidden = key !== "jr";
+  $("clt-edit").className = key === "edit" ? "active" : ""; $("clt-jr").className = key === "jr" ? "active" : "";
+}
+$("clt-edit").addEventListener("click", () => clTab("edit"));
+$("clt-jr").addEventListener("click", () => { if (clEdit) openJourney(clEdit.c.mac); });
+// pevná IP na jeden klik: rezervace aktuální adresy na DHCP serveru, který klienta obsluhuje
+$("cl-fix").addEventListener("click", async () => {
+  const c = clEdit && clEdit.c; if (!c) return;
+  const res = $("cl-fix-res"); res.className = "muted small"; res.textContent = "Hledám DHCP server…";
+  try {
+    const r = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients/${encodeURIComponent(c.mac)}/dhcp`);
+    const out = await api("POST", `/tenants/${tenantId}/devices/${r.device_id}/dhcp/${encodeURIComponent(r.server)}/lease`,
+                          { mac: c.mac, desired: { address: c.ip }, apply: canManage() });
+    res.textContent = (out.command_id ? `Rezervace ${c.ip} na ${r.device} se nastavuje (automatický návrat do 5 min při ztrátě spojení)`
+                                      : "Rezervace uložena jako změna ke schválení") +
+      (out.warnings && out.warnings.length ? " · " + out.warnings.join(" · ") : "");
+  } catch (e) { res.textContent = e.message; res.className = "sev-error small"; }
+});
 $("cl-close").addEventListener("click", clClose);
 $("cl-cancel").addEventListener("click", clClose);
 $("cl-save").addEventListener("click", async () => {
@@ -1015,8 +1055,8 @@ function shrinkImage(file) {
   });
 }
 function reloadClientViews() {
-  if (!$("clients-wrap").hidden) loadClients();
-  if (!$("infra-wrap").hidden) loadInfra();
+  if (!$("view-clients").hidden) loadClients();
+  if (!$("view-dash").hidden && !$("infra-wrap").hidden) loadInfra();
 }
 
 // statická IP a DHCP options klienta: najít jeho DHCP server a otevřít editor leasu na záložce Sítě
@@ -1024,8 +1064,8 @@ async function clientDhcp(c) {
   let r;
   try { r = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients/${encodeURIComponent(c.mac)}/dhcp`); }
   catch (e) { return msg(e.message, true); }
-  activateSiteTab("net");
-  if (typeof loadNetworks === "function") await loadNetworks();
+  showView("settings"); activateSub("settings", "net");
+  await loadNetworks();
   await loadLeases(r.device_id, r.server);
   if (!leaseCtx) return;
   $("lease-q").value = c.mac;
@@ -1041,7 +1081,6 @@ async function loadWifi() {
   try { renderWifi(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi`)); } catch (e) { msg(e.message, true); }
   loadRoaming();
 }
-$("wifi-btn").addEventListener("click", loadWifi);
 
 // CAPsMAN lokality: kde běží a jak ho nastavit (výběr z řízených zařízení lokality)
 async function renderCapsmanCard() {
@@ -1052,8 +1091,8 @@ async function renderCapsmanCard() {
   const hd = host && v.devices.find((d) => d.id === host);
   const managed = v.devices.filter((d) => d.managed);
   const t = el("div", null, "cm-text");
-  if (hd) t.append(el("b", "📡 CAPsMAN lokality: " + hd.name), el("span", " · rádia AP řídí odsud; SSID a nasazení v Sítě a DHCP → Záměr → Wi-Fi", "muted"));
-  else if (!v.intent) t.append(el("b", "CAPsMAN zatím není"), el("span", " – nejdřív nadefinuj sítě lokality (Sítě a DHCP → Záměr lokality).", "muted"));
+  if (hd) t.append(el("b", "📡 CAPsMAN lokality: " + hd.name), el("span", " · rádia AP řídí odsud; SSID a nasazení v Nastavení lokality → Wi-Fi", "muted"));
+  else if (!v.intent) t.append(el("b", "CAPsMAN zatím není"), el("span", " – nejdřív nadefinuj sítě lokality (Nastavení lokality → Sítě).", "muted"));
   else if (!managed.length) t.append(el("b", "CAPsMAN zatím není"), el("span", " – může běžet jen na řízeném zařízení. Převezmi switch do řízení (detail → Řízení) nebo ho nasaď s výchozí konfigurací „switch + CAPsMAN“.", "muted"));
   else t.append(el("b", "CAPsMAN zatím není"), el("span", " – vyber řízené zařízení, nejlépe páteřní switch.", "muted"));
   box.appendChild(t);
@@ -1072,18 +1111,17 @@ async function setCapsmanHost(deviceId, siteOverride) {
   const sid = siteOverride || siteId();
   let v;
   try { v = await api("GET", `/tenants/${tenantId}/sites/${sid}/intent`); } catch (e) { return msg(e.message, true); }
-  if (!v.intent) return msg("Lokalita nemá záměr – nejdřív nadefinuj sítě (Lokalita → Sítě a DHCP → Záměr lokality)", true);
+  if (!v.intent) return msg("Lokalita nemá záměr – nejdřív nadefinuj sítě (Nastavení lokality → Sítě)", true);
   const d = deviceId && v.devices.find((x) => x.id === deviceId);
   if (deviceId && (!d || !d.managed)) return msg("CAPsMAN může běžet jen na řízeném zařízení – nejdřív ho převezmi (detail → Řízení)", true);
   const text = deviceId ? `Nastavit ${d.name} jako CAPsMAN lokality?\n\nRádia všech AP s rolí „AP + switch“ pak řídí tento CAPsMAN. ` +
-    "Na zařízení se nic nezmění, dokud v Sítě a DHCP → Wi-Fi nedáš „Nasadit Wi-Fi“." : "Vypnout CAPsMAN v záměru lokality?";
+    "Na zařízení se nic nezmění, dokud v Nastavení lokality → Wi-Fi nedáš „Nasadit Wi-Fi“." : "Vypnout CAPsMAN v záměru lokality?";
   if (!(await ask(text, deviceId ? "Nastavit" : "Vypnout"))) return;
   const wifi = { ...(v.intent.wifi || {}), capsman_device_id: deviceId || null };
   try {
     await api("PUT", `/tenants/${tenantId}/sites/${sid}/intent`, { ...v.intent, wifi });
-    msg(deviceId ? `${d.name} je CAPsMAN lokality – dál: SSID a „Nasadit Wi-Fi“ v Sítě a DHCP → Záměr → Wi-Fi` : "CAPsMAN vypnut v záměru");
-    if (!$("wifi-wrap").hidden) renderCapsmanCard();
-    if (!$("net-wrap").hidden) loadIntent();
+    msg(deviceId ? `${d.name} je CAPsMAN lokality – dál: SSID a „Nasadit Wi-Fi“ v Nastavení lokality → Wi-Fi` : "CAPsMAN vypnut v záměru");
+    if (!$("view-settings").hidden && !$("wifiset-wrap").hidden) { renderCapsmanCard(); loadIntent(); }
   } catch (e) { msg(e.message, true); }
 }
 
@@ -1118,7 +1156,7 @@ async function loadRogue(radios) {
   const rogue = list.filter((b) => b.kind === "rogue");
   const neigh = list.filter((b) => b.kind === "neighbor");
   if (!list.length) {
-    box.appendChild(el("p", "Zatím bez skenu. Spusť sken ručně, nebo zapni noční sken v Sítě a DHCP → Záměr → Wi-Fi.", "muted small"));
+    box.appendChild(el("p", "Zatím bez skenu. Spusť sken ručně, nebo zapni noční sken v Nastavení lokality → Wi-Fi.", "muted small"));
     return;
   }
   box.appendChild(el("p", `${rogue.filter((b) => !b.acknowledged).length} podvržených (cizí AP s naším SSID) · ${neigh.length} sousedních sítí` +
@@ -1148,7 +1186,6 @@ async function loadRogue(radios) {
 }
 
 function renderWifi(w) {
-  $("wifi-wrap").hidden = false;
   renderCapsmanCard();
   loadRogue(w.radios);
   const sm = w.summary;
@@ -1609,60 +1646,97 @@ function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(pre
 
 // --- navigace: levý panel se sekcemi, záložky lokality a detailu -----------------------------
 
-const VIEWS = [["overview", "Přehled"], ["site", "Lokalita"], ["plans", "Plány změn"],
-  ["alerts", "Alerty"], ["users", "Uživatelé"], ["audit", "Audit"], ["system", "Systém"]];
+// lokalita: pět sekcí jako v UniFi; dole celý tenant (lokality, uživatelé, systém)
+const VIEWS = [["dash", "Přehled a topologie"], ["devices", "Zařízení"], ["clients", "Klienti"], ["settings", "Nastavení lokality"],
+  ["activity", "Aktivita a audit"], ["tenant", "Všechny lokality"], ["users", "Uživatelé"], ["system", "Systém"]];
+const SITE_VIEWS = ["dash", "devices", "clients", "settings", "activity"];
 const navBadges = {};
 
 function buildNav() {
-  const nav = $("nav"); nav.textContent = "";
+  const nav = $("nav-items"); nav.textContent = "";
   for (const [key, label] of VIEWS) {
     if (key === "system" && !(me && me.superadmin)) continue;
+    if (key === "tenant") nav.appendChild(el("div", null, "nav-sep"));
     const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key;
     b.appendChild(el("span", label));
     const badge = el("span", "", "nbadge"); badge.hidden = true;
     b.appendChild(badge); navBadges[key] = badge;
-    b.addEventListener("click", () => { if ($("app").hidden) { show("app"); loadDevices(); } showView(key); });
+    b.addEventListener("click", () => { if ($("app").hidden) { show("app"); loadDevices(); } showView(key, true); });
     nav.appendChild(b);
   }
 }
 
-function showView(key) {
-  if (!VIEWS.some(([k]) => k === key) || (key === "system" && !(me && me.superadmin))) key = "overview";
+// podzáložky sekcí: [klíč, tlačítko, panel, loader]; loadery jsou definované níž (vyhodnotí se při volání)
+const SUBTABS = {
+  dash: [["infra", "infra-btn", "infra-wrap", () => loadInfra()], ["topo", "topo-btn", "topo-wrap", () => loadTopology()],
+         ["stp", "stp-btn", "stp-wrap", () => loadStp()]],
+  devices: [["list", "devlist-btn", "devlist-wrap", () => loadDevices()], ["sports", "sports-btn", "sports-wrap", () => loadSitePorts()]],
+  clients: [["clients", null, null, () => loadClients()]],
+  settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
+             ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
+             ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
+  activity: [["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
+             ["audit", "audit-btn", "audit-wrap", () => loadAudit()]],
+};
+function subOf(view) {
+  const tabs = SUBTABS[view]; if (!tabs) return null;
+  const want = (prefs.sub || {})[view];
+  return tabs.find((t) => t[0] === want) || tabs[0];
+}
+function activateSub(view, key) {
+  prefs.sub = { ...(prefs.sub || {}), [view]: key }; savePrefs();
+  for (const [k, btn, pane] of SUBTABS[view]) {
+    if (pane) $(pane).hidden = k !== key;
+    if (btn) $(btn).className = k === key ? "active" : "";
+  }
+}
+function openSub(view, key) {
+  if (prefs.view !== view) showView(view);
+  activateSub(view, key);
+  const t = SUBTABS[view].find((x) => x[0] === key);
+  if (t && tenantId && (siteId() || !SITE_VIEWS.includes(view))) t[3]();
+}
+for (const [view, tabs] of Object.entries(SUBTABS)) for (const [k, btn] of tabs) if (btn) $(btn).addEventListener("click", () => openSub(view, k));
+
+function showView(key, load) {
+  if (!VIEWS.some(([k]) => k === key) || (key === "system" && !(me && me.superadmin))) key = "dash";
   prefs.view = key; savePrefs();
   for (const [k] of VIEWS) {
     const v = $("view-" + k); if (v) v.hidden = k !== key;
     const b = $("nav-" + k); if (b) b.className = "navbtn" + (k === key ? " active" : "");
   }
+  $("nav-site").hidden = !SITE_VIEWS.includes(key);
+  const t = subOf(key);
+  if (t) { activateSub(key, t[0]); if (load && tenantId && siteId()) t[3](); }
+  if (key === "dash") renderOverview();
 }
+
+let plansOpen = 0, alertsOpen = [0, 0];
+function activityBadge() { setBadge("activity", plansOpen + alertsOpen[0], alertsOpen[1] ? "bad" : "warn"); }
 
 function setBadge(key, n, cls) {
   const b = navBadges[key]; if (!b) return;
   b.textContent = n ? String(n) : ""; b.hidden = !n; b.className = "nbadge" + (cls ? " nb-" + cls : "");
 }
 
-const SITE_TABS = [["infra", "infra-wrap"], ["topo", "topo-wrap"], ["sports", "sports-wrap"], ["clients", "clients-wrap"], ["wifi", "wifi-wrap"],
-  ["net", "net-wrap"], ["stp", "stp-wrap"], ["ntp", "ntp-wrap"], ["upg", "upg-wrap"], ["deploy", "deploy-wrap"]];
-
-function activateSiteTab(key) {
-  prefs.siteTab = key; savePrefs();
-  for (const [k, w] of SITE_TABS) { $(w).hidden = k !== key; $(k + "-btn").className = k === key ? "active" : ""; }
-}
-
-// loadery záložek jsou definované níž; mapa se vyhodnotí až při volání
-function openSiteTab(key) {
-  activateSiteTab(key);
-  const loaders = { infra: loadInfra, topo: loadTopology, sports: loadSitePorts, clients: loadClients, wifi: loadWifi, net: loadNetworks,
-    stp: loadStp, upg: loadUpgrade, deploy: loadDeploy };
-  if (loaders[key]) loaders[key]();
-}
-
-const DETAIL_TABS = ["ports", "sec", "vlan", "hist", "ctl", "logs", "bw"];
-const DETAIL_LOADERS = { ctl: (id) => loadControl(id), logs: (id) => loadLogs(id), bw: (id) => loadBw(id) };
+// panel zařízení: Přehled · Porty · Wi-Fi · Diagnostika a logy (ta má vlastní podzáložky)
+const DETAIL_TABS = ["over", "ports", "wifi", "diag"];
+const DIAG_TABS = ["sec", "vlan", "tools", "logs"];
+const DETAIL_LOADERS = { over: (id) => loadControl(id), wifi: (id) => loadDevWifi(id), logs: (id) => loadLogs(id), tools: (id) => loadBw(id) };
 function showDetailTab(key) {
+  if (DIAG_TABS.includes(key)) { prefs.diagTab = key; key = "diag"; }
+  if (!DETAIL_TABS.includes(key) || $("dt-" + key).hidden) key = "over";
   prefs.detailTab = key; savePrefs();
   for (const k of DETAIL_TABS) { $("dp-" + k).hidden = k !== key; $("dt-" + k).className = k === key ? "active" : ""; }
+  const dk = DIAG_TABS.includes(prefs.diagTab) ? prefs.diagTab : "sec";
+  for (const k of DIAG_TABS) { $("dp-" + k).hidden = k !== dk; $("dt-" + k).className = k === dk ? "active" : ""; }
+  return key === "diag" ? dk : key;
 }
-for (const k of DETAIL_TABS) $("dt-" + k).addEventListener("click", () => { showDetailTab(k); if (DETAIL_LOADERS[k]) DETAIL_LOADERS[k](detailId); });
+function openDetailTab(key) {
+  const shown = showDetailTab(key);
+  if (DETAIL_LOADERS[shown] && detailId) DETAIL_LOADERS[shown](detailId);
+}
+for (const k of [...DETAIL_TABS, ...DIAG_TABS]) $("dt-" + k).addEventListener("click", () => openDetailTab(k));
 
 // přepínač ve stylu segmented control: options = [[hodnota, popisek], …]
 function segmented(box, options, value, onChange) {
@@ -2553,7 +2627,7 @@ async function loadPortEditor(port) {
     try {
       const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(port)}/plan`, { desired: desired(), apply });
       msg(apply ? `Odesláno: ${r.summary}. Zařízení změnu provede do minuty; když se do 5 min neozve, samo ji vrátí.`
-                : `Plán uložen: ${r.summary} (čeká na schválení v Plánech změn)`);
+                : `Plán uložen: ${r.summary} (čeká na schválení v Aktivitě → Změny)`);
       for (const w of r.warnings || []) msg(w, true);
       loadPlans();
     } catch (e) { msg(e.message, true); }
@@ -2790,7 +2864,6 @@ let upgAuto = [];
 async function loadUpgrade() {
   let u;
   try { u = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/upgrade`); } catch (e) { return msg(e.message, true); }
-  $("upg-wrap").hidden = false;
   upgAuto = u.candidates.map((c) => c.device_id);
   upgList = u.candidates.map((c) => ({ c, on: true }));
   renderUpgCands();
@@ -2852,7 +2925,6 @@ function renderUpgCands() {
   $("upg-mode").textContent = upgList.length ? (upgManual() ? "ruční pořadí / výběr" : "automaticky od konce sítě") : "";
 }
 
-$("upg-btn").addEventListener("click", () => loadUpgrade());
 $("upg-auto").addEventListener("click", () => {
   const by = Object.fromEntries(upgList.map((x) => [x.c.device_id, x.c]));
   upgList = upgAuto.map((id) => ({ c: by[id], on: true }));
@@ -2880,12 +2952,16 @@ let infraData = null;
 let spData = null;
 const spPick = new Set();  // "deviceId|port"
 
+async function loadProfiles() {
+  try { profCache = await api("GET", `/tenants/${tenantId}/port-profiles`); } catch (e) { return msg(e.message, true); }
+  drawProfiles();
+}
+
 async function loadSitePorts() {
   try { spData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/ports`); } catch (e) { return msg(e.message, true); }
   profCache = spData.profiles;
   spPick.clear();
   drawSitePorts();
-  drawProfiles();
   drawMlag();
 }
 
@@ -3006,7 +3082,7 @@ function drawProfiles() {
     const d = el("button", "Smazat", "small secondary"); d.type = "button";
     d.onclick = async () => {
       if (!(await ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`))) return;
-      try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadSitePorts(); } catch (er) { msg(er.message, true); }
+      try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadProfiles(); } catch (er) { msg(er.message, true); }
     };
     if (pf.builtin) td.appendChild(el("span", "vestavěný", "muted small"));
     else td.append(e, d);
@@ -3046,7 +3122,7 @@ function profileForm(pf) {
     try {
       if (pf) await api("PUT", `/tenants/${tenantId}/port-profiles/${pf.id}`, body);
       else await api("POST", `/tenants/${tenantId}/port-profiles`, body);
-      msg("Profil uložen"); loadSitePorts();
+      msg("Profil uložen"); loadProfiles();
     } catch (er) { msg(er.message, true); }
   });
   box.appendChild(f);
@@ -3078,7 +3154,7 @@ function drawMlag() {
   const sw = ((spData && spData.devices) || []).filter((d) => d.ports.length);
   if (sw.length < 2) return;
   box.appendChild(el("h4", "MLAG mezi dvěma switchi"));
-  box.appendChild(el("p", "Klient (server, switch) připojený do obou switchů jedním LACP bondem. Peer port = přímé propojení switchů. Vytvoří dva plány (A primární); aplikuj je v Plánech změn. Ověř v labu.", "muted small"));
+  box.appendChild(el("p", "Klient (server, switch) připojený do obou switchů jedním LACP bondem. Peer port = přímé propojení switchů. Vytvoří dva plány (A primární); aplikuj je v Aktivitě → Změny. Ověř v labu.", "muted small"));
   const f = el("form", null, "pe-grid");
   const side = (label) => {
     const wrap = el("div", null, "mlag-side");
@@ -3109,7 +3185,7 @@ function drawMlag() {
     };
     try {
       const r = await api("POST", `/tenants/${tenantId}/mlag`, body);
-      msg(`Plány MLAG připravené (${r.plans.length}) – schval je v Plánech změn, nejdřív A, pak B`);
+      msg(`Plány MLAG připravené (${r.plans.length}) – schval je v Aktivitě → Změny, nejdřív A, pak B`);
       for (const p of r.plans) for (const w of p.warnings || []) msg(w, true);
       loadPlans();
     } catch (e) { msg(e.message, true); }
@@ -3117,14 +3193,11 @@ function drawMlag() {
   box.appendChild(f);
 }
 
-$("sports-btn").addEventListener("click", loadSitePorts);
 
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
-  $("infra-wrap").hidden = false;
   renderInfra();
 }
-$("infra-btn").addEventListener("click", loadInfra);
 $("infra-ext").addEventListener("change", () => { if (infraData) renderInfra(); });
 $("infra-clients").addEventListener("change", () => {
   try { localStorage.setItem("mtc.infraClients", $("infra-clients").checked ? "1" : ""); } catch (_e) { /* jen pohodlí */ }
@@ -3297,7 +3370,7 @@ function drawInfra() {
       const pill = g("ext more");
       pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH, rx: 8 }));
       pill.appendChild(svgEl("text", { x, y: top + 25, class: "t1" }, `+ ${n.more} dalších klientů`));
-      pill.addEventListener("click", () => { activateSiteTab("clients"); $("clients-filter").value = n.dev.label || ""; loadClients(); });
+      pill.addEventListener("click", () => { showView("clients"); $("clients-filter").value = n.dev.label || ""; loadClients(); });
       nodes.appendChild(pill);
       continue;
     }
@@ -3355,12 +3428,10 @@ async function loadNetworks() {
   loadIntent();
 }
 
-$("net-btn").addEventListener("click", loadNetworks);
 
 const yesNo = (v) => el("td", v ? "✓" : "–", v ? "ok" : "muted");
 
 function renderNetworks(n) {
-  $("net-wrap").hidden = false;
   const ul = $("net-warn"); ul.textContent = "";
   for (const w of n.warnings) ul.appendChild(el("li", w, "sev-warning"));
   const tb = $("net-rows"); tb.textContent = "";
@@ -3798,7 +3869,7 @@ $("dg-generate").addEventListener("click", async () => {
   try {
     const r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/plans/dhcp_snooping`);
     const n = (r.devices || []).filter((d) => d.plan_id).length;
-    $("dg-result").textContent = `${n} plánů čeká na schválení v Plánech změn (zařízení musí mít modul DHCP snooping v režimu správy)`;
+    $("dg-result").textContent = `${n} plánů čeká na schválení v Aktivitě → Změny (zařízení musí mít modul DHCP snooping v režimu správy)`;
     loadPlans();
   } catch (e) { msg(e.message, true); }
 });
@@ -3806,10 +3877,8 @@ $("dg-generate").addEventListener("click", async () => {
 async function loadStp() {
   try { renderStp(await api("GET", `/tenants/${tenantId}/sites/${siteId()}/stp`)); } catch (e) { msg(e.message, true); }
 }
-$("stp-btn").addEventListener("click", loadStp);
 
 function renderStp(s) {
-  $("stp-wrap").hidden = false;
   $("stp-roots").textContent = s.roots.length
     ? "Root bridge: " + s.roots.map((r) => (r.device || "nespravované zařízení") + ` (${r.root_id})`).join(", ")
     : "Žádný bridge se zapnutým STP";
@@ -3829,6 +3898,55 @@ function renderStp(s) {
 // --- detail zařízení -----------------------------------------------------------------
 
 let detailId = null;
+let detailData = null;
+
+// zařízení s Wi-Fi rádii (nebo s rolí AP) má v panelu záložku Wi-Fi
+function hasWifi(d) {
+  return (d.interfaces || []).some((i) => /^(wifi|wlan|wireless)/.test(String(i.type || "")) || /^(wifi|wlan)\d/.test(String(i.name || "")))
+    || (d.device && d.device.role === "ap");
+}
+
+// záložka Wi-Fi panelu zařízení: rádia tohoto AP, SSID, kanály, skupina AP
+async function loadDevWifi(id) {
+  const box = $("d-wifi"); box.textContent = "";
+  const dev = detailData && detailData.device;
+  if (!dev || !dev.site_id) { box.appendChild(el("p", "Zařízení není v lokalitě.", "muted")); return; }
+  let w, it;
+  try {
+    [w, it] = await Promise.all([api("GET", `/tenants/${tenantId}/sites/${dev.site_id}/wifi`),
+                                 api("GET", `/tenants/${tenantId}/sites/${dev.site_id}/intent`).catch(() => null)]);
+  } catch (e) { box.appendChild(el("p", e.message, "sev-error")); return; }
+  if (id !== detailId) return;
+  const mine = w.radios.filter((r) => r.device_id === id);
+  const groups = ((it && it.intent && it.intent.wifi) || {}).groups || [];
+  const di = it && (it.devices || []).find((x) => x.id === id);
+  const grp = di && di.ap_group ? (groups.find((g) => g.id === di.ap_group) || {}).name : null;
+  const info = el("dl", null, "dq-info");
+  const row = (k, v) => { info.append(el("dt", k), el("dd", v)); };
+  row("Skupina AP", grp || (groups.length ? "bez skupiny (vysílá SSID pro všechna AP)" : "–"));
+  row("SSID", [...new Set(mine.map((r) => r.ssid).filter(Boolean))].join(", ") || "–");
+  row("Klienti", String(mine.reduce((a, r) => a + (r.clients || 0), 0)));
+  box.appendChild(info);
+  const t = el("table", null, "ptable");
+  const hr = el("tr"); for (const h of ["Rádio", "SSID", "Pásmo", "Kanál", "Šířka", "Výkon", "Klienti", "Signál prům./min"]) hr.appendChild(el("th", h));
+  const th = el("thead"); th.appendChild(hr); t.appendChild(th);
+  const tb = el("tbody");
+  for (const r of mine) {
+    const tr = el("tr", null, r.disabled ? "muted" : "");
+    tr.append(el("td", r.interface + (r.master ? ` (virt. na ${r.master})` : "") + (r.capsman ? " · CAPsMAN" : "") + (r.disabled ? " · vypnuté" : !r.running ? " · neběží" : "")),
+              el("td", r.ssid || ""), el("td", r.band || ""),
+              el("td", r.freq_now ? `${chanNum(r.freq_now)} · ${r.freq_now} MHz` : r.frequency || ""),
+              el("td", r.width_now ? `${r.width_now} MHz` : r.width || ""), el("td", r.tx_power != null ? `${r.tx_power} dBm` : "–"),
+              el("td", String(r.clients)), el("td", r.signal_avg != null ? `${r.signal_avg} / ${r.signal_min} dBm` : ""));
+    tb.appendChild(tr);
+  }
+  if (!mine.length) { const tr = el("tr"); const td = el("td", "Rádia zatím bez dat (inventura běží každých 5 min)", "muted"); td.colSpan = 8; tr.appendChild(td); tb.appendChild(tr); }
+  t.appendChild(tb);
+  box.appendChild(t);
+  const go = el("button", "Nastavení Wi-Fi lokality", "small secondary"); go.type = "button";
+  go.onclick = () => { closeDetail(); openSub("settings", "wifi"); };
+  box.appendChild(go);
+}
 
 function kv(tbody, rows) {
   tbody.textContent = "";
@@ -3840,16 +3958,17 @@ function kv(tbody, rows) {
 
 async function openDetail(id) {
   detailId = id;
-  const dq = $("dev-quick"); if (dq) dq.hidden = true;
-  quickId = null;
   let d;
   try { d = await api("GET", `/tenants/${tenantId}/devices/${id}`); } catch (e) { return msg(e.message, true); }
   show("detail");
-  showDetailTab(DETAIL_TABS.includes(prefs.detailTab) ? prefs.detailTab : "ports");
-  if (DETAIL_LOADERS[prefs.detailTab]) DETAIL_LOADERS[prefs.detailTab](id);
+  detailData = d;
+  $("dt-wifi").hidden = !hasWifi(d);
+  openDetailTab(prefs.detailTab || "over");
+  renderDevices();
   if (!watch || watch.id !== id) { $("d-live").hidden = true; watchDevice(id, null, true); }
   const dev = d.device, sm = d.summary;
-  $("d-title").textContent = `${dev.identity || dev.serial} – ${dev.model || ""} (${dev.state})`;
+  $("d-title").textContent = `${dev.identity || dev.serial} · ${dev.model || ""}`;
+  renderQuickInfo($("d-quick"), devOf(id).id === id && devOf(id).serial ? devOf(id) : { ...dev, id }, d);
   const w = $("d-warn"); w.textContent = "";
   for (const x of d.warnings) w.appendChild(el("p", (x.severity === "critical" ? "⚠ " : "ⓘ ") + x.text, "sev-" + (x.severity === "critical" ? "error" : "warning")));
   if (dev.inventory_error) w.appendChild(el("p", "Inventura: " + dev.inventory_error, "sev-warning"));
@@ -4012,7 +4131,12 @@ async function openDetail(id) {
   for (const [t, what, st] of hist) { const tr = el("tr"); tr.append(el("td", new Date(t).toLocaleString("cs-CZ")), el("td", what), el("td", st)); ht.appendChild(tr); }
 }
 
-$("d-close").addEventListener("click", () => { show("app"); loadDevices(); });
+function closeDetail() {
+  $("detail").hidden = true; $("port-edit").hidden = true; detailId = null; detailData = null;
+  stopWatch();
+  renderDevices();
+}
+$("d-close").addEventListener("click", closeDetail);
 $("d-backup").addEventListener("click", async () => {
   try { const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/backup`); msg(r.detail); } catch (e) { msg(e.message, true); }
 });
@@ -4311,16 +4435,15 @@ async function openJourney(mac, hours) {
   try { j = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/journey?mac=${encodeURIComponent(mac)}&hours=${jrState.hours}`); }
   catch (e) { return msg(e.message, true); }
   jrState.data = j;
+  // časová osa je záložka panelu klienta
+  if ($("cl-dlg").hidden || !clEdit || clEdit.c.mac !== mac) openClient({ ...j.client, mac });
+  $("clt-jr").hidden = false;
+  clTab("jr");
   renderJourney();
-  $("jr-dlg").hidden = false;
 }
-$("jr-close").addEventListener("click", () => { $("jr-dlg").hidden = true; });
 
 function renderJourney() {
   const j = jrState.data, c = j.client;
-  $("jr-title").textContent = clientName(c);
-  $("jr-sub").textContent = `${c.mac}${c.vendor ? " · " + c.vendor : ""}${c.ip ? " · " + c.ip : ""}`;
-  $("jr-avatar").textContent = ""; $("jr-avatar").appendChild(clientAvatar(c, "big"));
   segmented($("jr-range"), RANGES, jrState.hours, (h) => openJourney(jrState.mac, h));
   const ul = $("jr-findings"); ul.textContent = "";
   for (const f of j.findings) {
@@ -4473,7 +4596,7 @@ function renderDevFacets() {
   let any = false;
   for (const [k, label, fn] of DEV_FACETS) {
     const counts = new Map();
-    for (const d of devicesCache) if (devMatchesState(d, devView.state) && devFacetOk(d, k)) counts.set(fn(d), (counts.get(fn(d)) || 0) + 1);
+    for (const d of siteDevices()) if (devMatchesState(d, devView.state) && devFacetOk(d, k)) counts.set(fn(d), (counts.get(fn(d)) || 0) + 1);
     const sel = devView.f[k] || [];
     for (const v of sel) if (!counts.has(v)) counts.set(v, 0);
     if (counts.size < 2 && !sel.length) continue;
@@ -4567,7 +4690,7 @@ function devVersionCell(d) {
 async function loadDevices() {
   const list = await api("GET", `/tenants/${tenantId}/devices`);
   devicesCache = list;
-  setBadge("overview", list.filter((d) => d.state === "pending").length, "warn");
+  setBadge("devices", list.filter((d) => d.state === "pending").length, "warn");
   renderDevices();
   // uplinky (strom lokalit) dopočítat na pozadí – seznam se ukáže hned
   api("GET", `/tenants/${tenantId}/uplinks`).then((u) => { uplinksCache = u || {}; renderDevices(); }).catch(() => {});
@@ -4592,20 +4715,20 @@ function renderDevices() {
   const q = ($("dev-q").value || "").trim().toLowerCase();
   const col = DEV_COLS.find((c) => c[0] === devView.sort) || DEV_COLS[1];
   renderDevFacets();
-  const list = devicesCache.filter((d) => devMatchesState(d, devView.state) && devFacetOk(d) && (!q ||
+  const base = siteDevices();
+  const list = base.filter((d) => devMatchesState(d, devView.state) && devFacetOk(d) && (!q ||
       [d.identity, d.serial, d.note, d.model, d.site, d.tunnel_ip, d.ros_version, d.role, d.identity_pending]
         .some((v) => v && String(v).toLowerCase().includes(q))))
     .sort((a, b) => { const x = col[3](a), y = col[3](b); return (x < y ? -1 : x > y ? 1 : 0) * devView.dir; });
-  $("dev-count").textContent = list.length === devicesCache.length ? `${list.length} zařízení` : `${list.length} z ${devicesCache.length}`;
+  $("dev-count").textContent = list.length === base.length ? `${list.length} zařízení` : `${list.length} z ${base.length}`;
   const tb = $("devices"); tb.textContent = "";
   for (const d of list) {
     const tr = el("tr");
     if (d.state !== "pending") {
       tr.className = "clickable";
-      // klik = rychlý náhled vpravo (jako UniFi), dvojklik / Enter = celý detail
-      tr.addEventListener("click", (ev) => { if (!["BUTTON", "SELECT", "INPUT", "A"].includes(ev.target.tagName)) openQuick(d); });
-      tr.addEventListener("dblclick", (ev) => { if (!["BUTTON", "SELECT", "INPUT", "A"].includes(ev.target.tagName)) openDetail(d.id); });
-      if (quickId === d.id) tr.className += " selected";
+      // klik = panel zařízení vpravo (jako UniFi)
+      tr.addEventListener("click", (ev) => { if (!["BUTTON", "SELECT", "INPUT", "A"].includes(ev.target.tagName)) openDetail(d.id); });
+      if (detailId === d.id && !$("detail").hidden) tr.className += " selected";
       tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
     }
     withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
@@ -4621,8 +4744,6 @@ function renderDevices() {
       }
       // rychlé akce při najetí na řádek (jako Locate / Restart v UniFi)
       const hov = el("span", null, "row-hover");
-      const det = el("button", "Detail", "small secondary"); det.type = "button"; det.onclick = () => openDetail(d.id);
-      hov.appendChild(det);
       if (d.state === "adopted" && canOperate()) {
         const rb = el("button", "Restart", "small secondary"); rb.type = "button"; rb.onclick = () => sendCommand(d, "reboot", "Restart");
         hov.appendChild(rb);
@@ -4633,42 +4754,17 @@ function renderDevices() {
     tb.appendChild(tr);
   }
   if (!list.length) {
-    const tr = el("tr"); const td = el("td", devicesCache.length ? "Filtru nic neodpovídá" : "Žádná zařízení", "muted"); td.colSpan = cols.length + 1;
+    const tr = el("tr"); const td = el("td", base.length ? "Filtru nic neodpovídá" : "Žádná zařízení v lokalitě", "muted"); td.colSpan = cols.length + 1;
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
-// --- rychlý náhled zařízení (panel vpravo) -------------------------------------------------------
-let quickId = null;
+// --- přehled zařízení (záložka Přehled v panelu zařízení): porty, připojení, stav ------------
+// klik na zařízení kdekoli (topologie, mapa, rodič) otevře panel zařízení
+function openQuick(d) { openDetail(d.id); }
 
-function closeQuick() { const q = $("dev-quick"); if (q) q.hidden = true; quickId = null; renderDevices(); }
-
-async function openQuick(d) {
-  quickId = d.id;
-  renderDevices();
-  const box = $("dev-quick");
-  box.hidden = false; box.textContent = "";
-  const head = el("div", null, "dq-head");
-  const t = el("div");
-  t.append(el("span", null, "dot " + d.state), el("b", d.identity || d.serial), el("div", [d.model, d.ros_version].filter(Boolean).join(" · "), "muted small"));
-  const x = el("button", "×", "icon-btn"); x.type = "button"; x.title = "Zavřít (Esc)"; x.onclick = closeQuick;
-  head.append(t, x);
-  box.appendChild(head);
-  const acts = el("div", null, "dq-acts");
-  const pm = el("button", "Správce portů a detail", ""); pm.type = "button"; pm.onclick = () => { box.hidden = true; openDetail(d.id); };
-  acts.appendChild(pm);
-  if (d.update_available && d.state === "adopted") {
-    const up = el("button", `↑ ${d.latest_version}`, "secondary"); up.type = "button"; up.onclick = () => upgradeDevice(d);
-    acts.appendChild(up);
-  }
-  acts.appendChild(moreButton(d.identity || d.serial, () => deviceMenu(d)));
-  box.appendChild(acts);
-  const body = el("div", null, "dq-body"); body.appendChild(el("p", "Načítám…", "muted"));
-  box.appendChild(body);
-  let r;
-  try { r = await api("GET", `/tenants/${tenantId}/devices/${d.id}`); } catch (e) { body.textContent = e.message; return; }
-  if (quickId !== d.id) return;
+function renderQuickInfo(body, d, r) {
   body.textContent = "";
-  // porty: stejný přehled jako v detailu, klik otevře port v Správci portů
+  // porty: stejný přehled jako na záložce Porty, klik otevře port
   const phys = (r.interfaces || []).filter((i) => i.type === "ether" && PORT_RE.test(i.name));
   if (phys.length) {
     const cu = phys.filter((i) => !/^(sfp|qsfp)/.test(i.name)).sort((a, b) => portNum(a.name) - portNum(b.name));
@@ -4678,7 +4774,7 @@ async function openQuick(d) {
       const tl = portTile(i, "link"); tl.type = "button";
       tl.appendChild(el("span", String(portNum(i.name)), "num"));
       tl.title = portTooltip(i);
-      tl.addEventListener("click", async () => { box.hidden = true; await openDetail(d.id); showDetailTab("ports"); selectPortTraffic(i.name); });
+      tl.addEventListener("click", () => { openDetailTab("ports"); selectPortTraffic(i.name); });
       return tl;
     };
     for (const g of [cu, sfp]) if (g.length) { const row = el("div", null, "dq-prow"); for (const i of g) row.appendChild(tile(i)); strip.appendChild(row); }
@@ -4689,9 +4785,21 @@ async function openQuick(d) {
       bad.length ? `⚠ ${bad.length} ${bad.length === 1 ? "port potřebuje" : "porty potřebují"} pozornost` : ""].filter(Boolean).join(" · "),
       bad.length ? "small sev-warning" : "small muted"));
   }
+  const acts = el("div", null, "dq-acts");
+  if (d.state === "adopted" && canOperate()) {
+    const rb = el("button", "Restart", "small secondary"); rb.type = "button"; rb.onclick = () => sendCommand(d, "reboot", "Restart");
+    const tl = el("button", "Nástroje (ping, test rychlosti)", "small secondary"); tl.type = "button"; tl.onclick = () => openDetailTab("tools");
+    acts.append(rb, tl);
+  }
+  acts.appendChild(moreButton(d.identity || d.serial, () => deviceMenu(d)));
+  body.appendChild(acts);
+  const grid = el("div", null, "dq-grid");
+  body.appendChild(grid);
+  const left = el("div"), right = el("div");
+  grid.append(left, right);
   const u = uplinksCache[d.id] || {};
   const info = el("dl", null, "dq-info");
-  const row = (k, v) => { if (v == null || v === "") return; info.append(el("dt", k)); const dd = el("dd"); if (v instanceof Node) dd.appendChild(v); else dd.textContent = v; info.appendChild(dd); };
+  const row = (k, v) => { if (v == null || v === "") return; info.append(el("dt", k)); const dd = el("dd"); if (typeof v === "object") dd.appendChild(v); else dd.textContent = v; info.appendChild(dd); };
   if (u.parent_label) {
     const a = el("a", u.parent_label + (u.parent_port ? ` · port ${portNum(u.parent_port)}` : "")); a.href = "#";
     a.addEventListener("click", (ev) => { ev.preventDefault(); const par = devicesCache.find((x) => x.id === u.parent_id); if (par) openQuick(par); });
@@ -4706,17 +4814,10 @@ async function openQuick(d) {
   if (d.cpu != null) row("CPU / RAM", `${d.cpu} % / ${d.mem_pct ?? "?"} %`);
   row("Check-in", fmtTime(d.last_checkin_at));
   row("Poznámka", d.note);
-  body.appendChild(info);
-  const al = r.alerts || [];
-  if (al.length) {
-    body.appendChild(el("h4", `Alerty (${al.length})`));
-    const ul = el("ul", null, "dq-list");
-    for (const a of al) ul.appendChild(el("li", a.message, "sev-" + (a.severity === "critical" ? "error" : "warning")));
-    body.appendChild(ul);
-  }
+  left.appendChild(info);
   const conn = phys.filter((i) => i.connected).sort((a, b) => portNum(a.name) - portNum(b.name));
   if (conn.length) {
-    body.appendChild(el("h4", "Na portech"));
+    right.appendChild(el("h4", "Na portech"));
     const t2 = el("table", null, "dq-conn");
     for (const i of conn) {
       const n = i.connected, tr = el("tr");
@@ -4724,14 +4825,17 @@ async function openQuick(d) {
       tr.append(nm, el("td", n.ip || (n.count > 1 ? `${n.count} MAC` : ""), "muted"), el("td", String(portNum(i.name)), "num"));
       t2.appendChild(tr);
     }
-    body.appendChild(t2);
+    right.appendChild(t2);
   }
 }
 
 if (typeof document.addEventListener === "function") {
   document.addEventListener("keydown", (e) => {
-    const q = $("dev-quick"), m = $("ctx");
-    if (e.key === "Escape" && q && !q.hidden && (!m || m.hidden) && !askDone) closeQuick();
+    const m = $("ctx");
+    if (e.key !== "Escape" || (m && !m.hidden) || askDone || !$("ask").hidden) return;
+    if (!$("port-edit").hidden) return;  // editor portu má vlastní zavírání
+    if (!$("cl-dlg").hidden) clClose();
+    else if (!$("detail").hidden) closeDetail();
   });
 }
 
@@ -4741,7 +4845,7 @@ function devMatchesState(d, st) {
     (d.warnings || []).some((w) => w.severity === "critical");
   return d.state === st;
 }
-function devCount(st) { return devicesCache.filter((d) => devMatchesState(d, st)).length; }
+function devCount(st) { return siteDevices().filter((d) => devMatchesState(d, st)).length; }
 
 $("dev-q").addEventListener("input", () => renderDevices());
 $("dev-cols").addEventListener("click", (ev) => {
@@ -4916,8 +5020,6 @@ async function loadPortHistory(id) {
   }
 }
 
-// přepínání záložek lokality – registrováno po loaderech, aby se po načtení skryly ostatní panely
-for (const [k] of SITE_TABS) $(k + "-btn").addEventListener("click", () => activateSiteTab(k));
 
 
 // --- řízený režim: záměr lokality ----------------------------------------------------------------
@@ -5342,7 +5444,7 @@ $("wifi-deploy").addEventListener("click", async () => {
   if (!(await ask(`${w.summary}\n\nVytvořit plán pro CAPsMAN? Po schválení se Wi-Fi na AP krátce přenastaví (klienti se znovu připojí).`, "Vytvořit plán"))) return;
   try {
     const r = await api("POST", `${sitePath()}/wifi/plan`, {});
-    msg(`Plán Wi-Fi #${r.plan_id} čeká na schválení v Plánech změn.`); loadPlans();
+    msg(`Plán Wi-Fi #${r.plan_id} čeká na schválení v Aktivitě → Změny.`); loadPlans();
   } catch (e) { msg(e.message, true); }
 });
 
@@ -5501,7 +5603,7 @@ function renderControl() {
   };
   const why = $("ctl-role-why"); why.textContent = "";
   why.textContent = c.wifi === false ? "rádia jen se starým balíkem wireless – AP nejde řídit"
-    : role.value === "capsman" ? "tady běží CAPsMAN lokality – SSID a nasazení v Sítě a DHCP → Záměr → Wi-Fi"
+    : role.value === "capsman" ? "tady běží CAPsMAN lokality – SSID a nasazení v Nastavení lokality → Wi-Fi"
     : !c.managed ? "CAPsMAN lze nastavit po převzetí do řízení"
     : c.wifi == null ? "zařízení nemá Wi-Fi – může být jen CAPsMAN, ne AP"
     : !c.capsman ? "AP (CAP) jde vybrat, až lokalita má CAPsMAN – nastav ho tady (switch + CAPsMAN) nebo na jiném řízeném zařízení"
@@ -5571,7 +5673,7 @@ $("ctl-go").addEventListener("click", async () => {
                   (n ? `\n\nZanikne: ${n} položek současné konfigurace.` : ""), "Vytvořit plán"))) return;
   try {
     const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/takeover`, { confirm_custom: custom && $("ctl-custom").checked });
-    msg(`Plán převzetí #${r.plan_id} čeká na schválení v Plánech změn.`);
+    msg(`Plán převzetí #${r.plan_id} čeká na schválení v Aktivitě → Změny.`);
     loadPlans();
     loadControl(detailId);
   } catch (e) { msg(e.message, true); }
@@ -5669,7 +5771,6 @@ function renderDeploy(d) {
   }
 }
 
-$("deploy-btn").addEventListener("click", () => loadDeploy());
 $("deploy-rotate").addEventListener("click", async () => {
   if (!(await ask("Vyměnit klíč lokality? Všechny dříve stažené výchozí konfigurace a příkazy přestanou fungovat " +
                   "(zařízení, která se ještě neohlásila, se neohlásí). Adoptovaných zařízení se to netýká.", "Vyměnit"))) return;

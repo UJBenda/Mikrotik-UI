@@ -118,13 +118,21 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       else { byId["ask-input"].value = "GW-praha"; byId["ask-ok"].onclick(); await pr; for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
       if (!requests.slice(n1).some((r) => r.startsWith("POST") && r.endsWith("/identity"))) errors.push("přehled: odeslání jména");
     }
-    // levá navigace: sekce, odznaky, přepínání
-    if (byId["nav"].children.length !== 7) errors.push("navigace: čekáno 7 sekcí, je " + byId["nav"].children.length);
-    if (byId["view-overview"].hidden || !byId["view-alerts"].hidden) errors.push("navigace: výchozí pohled");
-    await byId["nav-alerts"].fire("click");
-    if (byId["view-alerts"].hidden || !byId["view-overview"].hidden || byId["nav-alerts"].className !== "navbtn active") errors.push("navigace: přepnutí na alerty");
-    if (byId["nav-alerts"].children[1].textContent !== "4" || byId["nav-plans"].children[1].textContent !== "2") errors.push("navigace: odznaky " + byId["nav-alerts"].children[1].textContent);
-    await byId["nav-site"].fire("click");
+    // levá navigace: 5 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
+    const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");
+    if (navBtns.length !== 8 || navBtns[0].textContent !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    if (byId["view-dash"].hidden || !byId["view-activity"].hidden) errors.push("navigace: výchozí pohled");
+    await byId["nav-activity"].fire("click");
+    if (byId["view-activity"].hidden || !byId["view-dash"].hidden || byId["nav-activity"].className !== "navbtn active") errors.push("navigace: přepnutí na aktivitu");
+    if (byId["nav-activity"].children[1].textContent !== "6") errors.push("navigace: odznak aktivity " + byId["nav-activity"].children[1].textContent);
+    if (byId["alerts-wrap"].hidden || !byId["plans-wrap"].hidden) errors.push("aktivita: výchozí podzáložka");
+    await byId["plans-btn"].fire("click");
+    if (byId["plans-wrap"].hidden || !byId["alerts-wrap"].hidden) errors.push("aktivita: přepnutí na změny");
+    await byId["alerts-btn"].fire("click");
+    if (byId["nav-site"].hidden) errors.push("navigace: výběr lokality u sekce lokality");
+    await byId["nav-tenant"].fire("click");
+    if (!byId["nav-site"].hidden || byId["view-tenant"].hidden) errors.push("navigace: celý tenant bez výběru lokality");
+    await byId["nav-dash"].fire("click");
     if (byId["system-card"].hidden || byId["system-steps"].children.length !== 3) errors.push("stav systému");
     if (byId["users-card"].hidden || byId["users"].children.length !== 2) errors.push("uživatelé: čekány 2 řádky");
     const tiles = byId["overview"].children.length;
@@ -156,8 +164,12 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const plansN = byId["plans"].children.length;
     // lokalita: topologie a klienti
     await byId["topo-btn"].fire("click");
-    await byId["clients-btn"].fire("click");
+    if (byId["topo-wrap"].hidden || !byId["infra-wrap"].hidden) errors.push("přehled: podzáložka topologie");
+    await byId["nav-clients"].fire("click");
+    if (byId["view-clients"].hidden) errors.push("klienti: sekce");
+    await byId["nav-settings"].fire("click");
     await byId["wifi-btn"].fire("click");
+    if (byId["wifiset-wrap"].hidden || !byId["net-wrap"].hidden) errors.push("nastavení: podzáložka Wi-Fi");
     // Wi-Fi: roaming lokality a časová osa klienta
     {
       const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
@@ -178,16 +190,21 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         errors.push("roaming: matice " + byId["roam-matrix"].textContent.slice(0, 120));
       if (!find(byId["roam-banner"], (n) => n.tagName === "BUTTON" && n.textContent.includes("Zapnout Wi-Fi události"))) errors.push("roaming: zapnutí událostí");
       await rows[0].fire("click"); await tick();
-      if (byId["jr-dlg"].hidden || byId["jr-title"].textContent !== "ntb-novak") errors.push("časová osa: dialog");
+      if (byId["cl-dlg"].hidden || byId["clp-jr"].hidden || byId["cl-title"].textContent !== "ntb-novak") errors.push("časová osa: panel klienta " + byId["cl-title"].textContent);
       if (byId["jr-findings"].children.length < 3) errors.push("časová osa: nálezy " + byId["jr-findings"].textContent.slice(0, 120));
       const segs = []; find(byId["jr-svg"], (n) => { if (n.attrs && /^jr-seg/.test(n.attrs.class || "")) segs.push(n); return false; });
       if (segs.length < 4 || !find(byId["jr-svg"], (n) => n.attrs && /jr-roam mk-ft/.test(n.attrs.class || "")) ||
           !find(byId["jr-svg"], (n) => n.attrs && /mk-dis/.test(n.attrs.class || ""))) errors.push("časová osa: graf " + segs.length);
       if (byId["jr-events"].children.length < 5) errors.push("časová osa: události");
-      byId["jr-dlg"].hidden = true;
+      await byId["clt-edit"].fire("click");
+      if (byId["clp-edit"].hidden || !byId["clp-jr"].hidden) errors.push("panel klienta: záložka nastavení");
+      byId["cl-dlg"].hidden = true;
     }
+    await byId["nav-dash"].fire("click");
     await byId["stp-btn"].fire("click");
+    if (byId["stp-wrap"].hidden) errors.push("přehled: podzáložka STP");
     // sítě a DHCP snooping
+    await byId["nav-settings"].fire("click");
     await byId["net-btn"].fire("click");
     if (byId["net-wrap"].hidden || byId["net-rows"].children.length !== 3) errors.push("sítě: tabulka");
     if (!byId["net-rows"].textContent.includes("Relay → 192.168.30.10") || !byId["net-rows"].textContent.includes("1 / 100"))
@@ -326,7 +343,8 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // nasazení: výchozí konfigurace podle role, výchozí hesla
     {
       const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
-      await byId["deploy-btn"].fire("click"); await tick();
+      await byId["sys-btn"].fire("click"); await tick();
+      if (byId["sys-wrap"].hidden) errors.push("nastavení: Systém a nasazení");
       if (byId["deploy-wrap"].hidden || byId["deploy-roles"].children.length !== 5) errors.push("nasazení: role " + byId["deploy-roles"].children.length);
       if (!byId["deploy-roles"].textContent.includes("reset-configuration no-defaults=yes")) errors.push("nasazení: příkaz");
       if (byId["fpw-rows"].children.length !== 2 || !byId["fpw-rows"].textContent.includes("zatím neadoptované")) errors.push("nasazení: hesla");
@@ -337,11 +355,11 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/factory-passwords/import"))) errors.push("nasazení: import");
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/reveal"))) errors.push("nasazení: zobrazení hesla");
     }
-    await byId["upg-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
-    if (byId["upg-wrap"].hidden || byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");
+    if (byId["upg-jobs"].children.length !== 2) errors.push("aktualizace lokality: úlohy");
     if (!byId["upg-start"].hidden) errors.push("aktualizace lokality: spuštění musí být skryté, když úloha běží");
     if (!byId["net-wrap"].hidden) errors.push("záložky lokality: po přepnutí má být předchozí panel skrytý");
+    await byId["nav-dash"].fire("click");
     await byId["infra-btn"].fire("click");
     for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
     if (byId["infra-list"].children.length !== 4) errors.push("infrastruktura: seznam zařízení " + byId["infra-list"].children.length);
@@ -371,7 +389,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     {
       const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
-      await byId["clients-btn"].fire("click"); await tick();
+      await byId["nav-clients"].fire("click"); await tick();
       const rows = byId["clients"].children;
       if (rows.length !== 2 || rows[0].children[0].children[0].textContent !== "🗄️" || !rows[1].textContent.includes("TP-LINK"))
         errors.push("klienti: avatar " + rows.length + " " + (rows[0] && rows[0].children[0].textContent));
@@ -410,12 +428,20 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
+    // panel zařízení: aplikace zůstává vidět, záložky Přehled · Porty · Wi-Fi · Diagnostika
+    for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+    if (byId["detail"].hidden || byId["app"].hidden) errors.push("panel zařízení: viditelnost");
+    if (byId["dp-over"].hidden || !byId["dp-ports"].hidden) errors.push("panel zařízení: výchozí záložka Přehled");
+    if (!byId["d-quick"].textContent.includes("portů s linkou")) errors.push("panel zařízení: přehled portů " + byId["d-quick"].textContent.slice(0, 100));
+    if (!byId["dt-wifi"].hidden) errors.push("panel zařízení: Wi-Fi záložka u brány bez rádií");
     // detail: logy a test rychlosti
     {
       const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      await byId["dt-diag"].fire("click"); await tick();
+      if (byId["dp-diag"].hidden || byId["dp-sec"].hidden) errors.push("diagnostika: výchozí podzáložka");
       await byId["dt-logs"].fire("click"); await tick();
-      if (byId["dp-logs"].hidden || byId["lg-rows"].children.length !== 2 || !byId["lg-rows"].textContent.includes("login failure"))
+      if (byId["dp-diag"].hidden || byId["dp-logs"].hidden || byId["lg-rows"].children.length !== 2 || !byId["lg-rows"].textContent.includes("login failure"))
         errors.push("logy: tabulka " + byId["lg-rows"].children.length);
       if (!byId["lg-volume"].textContent.includes("5 kB denně") || byId["lg-level"].children.length !== 3) errors.push("logy: objem " + byId["lg-volume"].textContent);
       let n0 = requests.length;
@@ -423,7 +449,8 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["ask"].hidden || !byId["ask-text"].textContent.includes("MB")) errors.push("logy: dialog úrovně");
       else { byId["ask-ok"].onclick(); await pl; await tick(); }
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/syslog"))) errors.push("logy: změna úrovně");
-      await byId["dt-bw"].fire("click"); await tick();
+      await byId["dt-tools"].fire("click"); await tick();
+      if (byId["dp-tools"].hidden || !byId["dp-logs"].hidden) errors.push("diagnostika: nástroje");
       if (byId["bw-to"].children.length !== 1 || byId["bw-addr"].children[0].value !== "192.168.77.2") errors.push("test rychlosti: cíle");
       if (byId["bw-hist"].children.length !== 2 || !byId["bw-hist"].textContent.includes("912 Mb/s") || !byId["bw-hist"].textContent.includes("limitem je CPU"))
         errors.push("test rychlosti: historie " + byId["bw-hist"].textContent.slice(0, 160));
@@ -473,8 +500,8 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // řízení: náhled převzetí, výjimka portu, plán přes vlastní dialog
     {
       const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
-      await byId["dt-ctl"].fire("click"); await tick();
-      if (byId["dp-ctl"].hidden || byId["ctl-ports"].children.length !== 6) errors.push("řízení: porty " + byId["ctl-ports"].children.length);
+      await byId["dt-over"].fire("click"); await tick();
+      if (byId["dp-over"].hidden || byId["ctl-ports"].children.length !== 6) errors.push("řízení: porty " + byId["ctl-ports"].children.length);
       if (!byId["ctl-ports"].textContent.includes("ether5-tiskarna (ether5)") || !byId["ctl-ports"].textContent.includes("uplink"))
         errors.push("řízení: jména/důvody portů");
       if (byId["ctl-vlans"].children.length !== 3 || byId["ctl-badge"].textContent !== "sledované") errors.push("řízení: VLAN/stav");
