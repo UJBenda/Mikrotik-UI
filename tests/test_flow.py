@@ -51,7 +51,30 @@ def _login(app, email="admin@example.cz", password=PASSWORD, box=None, db=None):
 def _device_post(app, path, key=None, body=None):
     d = AsgiClient(app, "checkin.test", client_ip="203.0.113.5")
     headers = {"authorization": f"Bearer {key}"} if key else {}
+    if path == "/api/checkin" and isinstance(body, dict) and "sv" not in body:
+        # aktuální skript check-inu (bez `sv` by controller poslal jeho přeinstalaci)
+        from mtcontroller.routeros import CHECKIN_REV
+        body = {**body, "sv": CHECKIN_REV}
     return d.post(path, json_body=body or {}, headers=headers)
+
+
+def test_old_checkin_script_gets_reinstalled():
+    """Zařízení se starším skriptem check-inu (bez `sv`) dostane jednou jeho přeinstalaci:
+    nový skript při chybě TLS sám dosadí CA controlleru (stejný otisk)."""
+    from test_portcfg import _setup as ports_setup
+
+    db, name, settings, box, app, tid, sw = ports_setup()
+    try:
+        s = _device_post(app, "/api/checkin", "key-SW1", {"sstp": "up", "sv": 0}).text
+        assert 'scheduler add name="mtc-checkin"' in s and "sv" in s
+        cid = int(re.search(r"ack\\\?id=(\d+)", s).group(1))
+        _device_post(app, f"/api/checkin/ack?id={cid}&status=done", "key-SW1")
+        # podruhé už ne (ani se starým skriptem – nejvýš jednou za den)
+        assert "nic k provedeni" in _device_post(app, "/api/checkin", "key-SW1", {"sstp": "up", "sv": 0}).text
+        with operator_scope(db) as tx:
+            assert tx.fetchone("SELECT count(*) AS n FROM audit_log WHERE action = 'device.checkin_update'")["n"] == 1
+    finally:
+        drop_db(name)
 
 
 def test_full_adoption_flow():

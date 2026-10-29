@@ -558,7 +558,8 @@ def _identity_done(tx: Tx, tenant_id: Any, device_id: Any, command_id: int) -> N
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
-                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog", "port_bounce"}
+                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog", "port_bounce",
+                 "checkin_update"}
 USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package", "port_bounce"}
 
 
@@ -665,6 +666,9 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         return routeros.wrap_command(ack_url, key, routeros.switch_concentrator_body(conc.connect_host), opts)
     if kind == "reboot":
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.REBOOT_TAIL)
+    if kind == "checkin_update":
+        url = f"https://{settings.web.checkin_host}/api/checkin"
+        return routeros.wrap_command(ack_url, key, routeros.trust_ca_body(opts) + routeros.checkin_install(url, key, opts), opts)
     if kind == "deprovision":
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.DEPROVISION_TAIL)
     if kind == "upgrade":
@@ -808,6 +812,8 @@ def _parse_status(body: dict) -> dict:
         "fp": fp if _FP.match(fp) else "",
         # 1 = na zařízení běží bootstrap převzetí (čeká na potvrzení)
         "tk": body.get("tk") == 1,
+        # verze skriptu check-inu (starší ji neposílají = 0)
+        "sv": body.get("sv") if isinstance(body.get("sv"), int) and 0 <= body.get("sv") < 1000 else 0,
     }
 
 
@@ -870,6 +876,14 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
                            {"c": nxt, "d": str(dev["id"])})
                 audit(tx, "device.concentrator_failover", tenant_id=device_ref["tenant_id"],
                       target=f"device:{dev['id']}", before={"concentrator": cur}, after={"concentrator": nxt})
+
+        # starší skript check-inu (např. bez samoopravy CA controlleru) → jednou přeinstalovat
+        if st["sv"] < routeros.CHECKIN_REV and new_state == "adopted" and not tx.fetchone(
+                """SELECT 1 FROM device_command WHERE device_id = %(d)s AND kind = 'checkin_update'
+                   AND (status IN ('queued', 'sent') OR created_at > now() - interval '1 day')""", {"d": str(dev["id"])}):
+            enqueue(tx, device_ref["tenant_id"], dev["id"], "checkin_update", {"rev": routeros.CHECKIN_REV})
+            audit(tx, "device.checkin_update", tenant_id=device_ref["tenant_id"], target=f"device:{dev['id']}",
+                  before={"sv": st["sv"]}, after={"sv": routeros.CHECKIN_REV}, ip=ip)
 
         # zařízení se po aplikaci změny ozvalo → cesta ke správě funguje → potvrdit (zrušit návrat)
         from .plans import pending_confirm

@@ -322,3 +322,11 @@ def test_net_bootstrap_only_for_blank_device():
     assert 'servers="tik.cesnet.cz"' in b and "reset" not in b  # neplatné jméno NTP se zahodí
     line = routeros.adopt_one_liner("https://c.example", "T", OPTS_CA, ["pool.ntp.org"])
     assert line.index("dhcp-client add") < line.index("mtc-ca.crt") < line.index("/adopt/T")
+
+
+def test_device_trust_line():
+    """`mtc-admin device-trust`: CA controlleru na jeden řádek pro terminál zařízení."""
+    opts = routeros.FetchOpts("yes-without-crl", "http://192.168.77.80/mtc-ca.crt", "ab" * 32)
+    line = "{ " + routeros._one_line(routeros.trust_ca_body(opts)) + " }"
+    assert "\n" not in line and line.isascii() and _balanced(line)
+    assert f'fingerprint="{"ab" * 32}"' in line and "trusted=yes" in line

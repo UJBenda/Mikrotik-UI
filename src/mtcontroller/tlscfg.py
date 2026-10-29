@@ -38,6 +38,11 @@ SSL = Path("/etc/ssl/mtc")
 PUBLIC = Path("/etc/ssl/mtc-public")
 LE_LIVE = Path("/etc/letsencrypt/live")
 SLOTS = ("admin", "checkin")
+
+
+def device_slot(local: bool) -> str:
+    """Slot, jehož certifikát ověřují zařízení (lokální režim: jedna adresa pro obojí)."""
+    return "admin" if local else "checkin"
 KINDS = ("own_ca", "letsencrypt", "custom")
 _EMAIL = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
 MAX_PEM = 65536
@@ -196,7 +201,7 @@ def check_request(req: dict, *, local: bool, hosts: dict[str, str]) -> dict:
             if _is_ip(hosts[s]):
                 raise TlsError(f"Let's Encrypt potřebuje DNS jméno – {s} běží na IP {hosts[s]}")
         out["email"] = email
-    devices_see = "admin" if local else "checkin"
+    devices_see = device_slot(local)
     if action != "own_ca" and devices_see in out["slots"]:
         out["warnings"] = ["zařízení ověřují check-in: s veřejným certifikátem musí mít RouterOS důvěryhodné "
                            "vestavěné kořenové CA pro fetch (7.19+: /certificate/settings builtin-trust-store), jinak se "

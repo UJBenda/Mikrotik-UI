@@ -269,3 +269,22 @@ def test_tls_endpoint():
     finally:
         tlscfg.PUBLIC = old_public
         drop_db(name)
+
+
+def test_doctor_device_cert_not_from_controller_ca(tmp_path):
+    """Certifikát, který ověřují zařízení, není z CA controlleru → check-in selže
+    („no trusted CA certificate found“) – doctor to hlásí jako chybu a radí návrat."""
+    d, s, _ = _boot(tmp_path)
+    cert, key = _pair(["a.firma.cz"])
+    tlscfg.install("admin", cert, key, "custom", **d)  # administrace zařízení neověřují
+    assert [x.status for x in doctor.check_tls(s, d["public"])] == [doctor.OK, doctor.OK]
+    cert, key = _pair(["c.firma.cz"])
+    tlscfg.install("checkin", cert, key, "custom", **d)
+    c = doctor.check_tls(s, d["public"])[1]
+    assert c.status == doctor.FAIL and "no trusted CA" in c.detail and "--slot checkin" in c.detail
+    # lokální režim: jedna adresa – certifikát administrace vidí i zařízení
+    d2, s2, _ = _boot(tmp_path / "loc", local=True)
+    cert, key = _pair(["192.168.88.10"])
+    tlscfg.install("admin", cert, key, "custom", **d2)
+    one = doctor.check_tls(s2, d2["public"])
+    assert len(one) == 1 and one[0].status == doctor.FAIL and "--slot admin" in one[0].detail

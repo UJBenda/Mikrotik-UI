@@ -200,6 +200,19 @@ def device_check(db, box, tid: str, ref: str, out=print) -> int:
     return 0 if ok else 1
 
 
+def cmd_device_trust(a) -> int:
+    """Příkaz pro terminál zařízení, které přestalo věřit check-inu (nová CA controlleru)."""
+    from . import routeros
+    opts = routeros.fetch_opts(get_settings())
+    body = routeros.trust_ca_body(opts)
+    if not body:
+        raise SystemExit("controller nepoužívá vlastní CA pro zařízení (security.device_ca_file) – není co dosazovat")
+    print("# vlož do terminálu RouterOS (CA se stáhne přes HTTP a ponechá jen při shodě otisku):")
+    print("{ " + routeros._one_line(body) + " }")
+    print(f"# otisk CA: {opts.ca_fp}")
+    return 0
+
+
 def cmd_device_check(a) -> int:
     from .security import get_box
     return device_check(_db(), get_box(), _tenant_id(a.tenant), a.device)
@@ -508,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("nginx-repair").set_defaults(fn=cmd_nginx_repair)
     sub.add_parser("tls-apply").set_defaults(fn=cmd_tls_apply)
     sub.add_parser("tls-sync").set_defaults(fn=cmd_tls_sync)
+    sub.add_parser("device-trust").set_defaults(fn=cmd_device_trust)
     x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")
     x.set_defaults(fn=cmd_device_check)
     a = p.parse_args(argv)

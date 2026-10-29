@@ -122,7 +122,8 @@ def fetch_opts(settings) -> FetchOpts:
 
 def trust_ca_body(opts: FetchOpts) -> str:
     """Doinstaluje CA controlleru, pokud na zařízení chybí. Stahuje se přes HTTP, proto se
-    ověří otisk; cokoli jiného, co import přidal, se hned smaže."""
+    ověří otisk; cokoli jiného, co import přidal, se hned smaže. Důvěra (`trusted=yes`) se
+    nastaví i CA, která na zařízení je, ale věřit jí přestalo."""
     if not opts.ca_url:
         return ""
     if not re.fullmatch(r"[0-9a-f]{64}", opts.ca_fp):
@@ -141,8 +142,8 @@ def trust_ca_body(opts: FetchOpts) -> str:
       :log error "mtc: stazena CA nesouhlasi s otiskem - odstranena"
     }}
   }}
-  :do {{ /certificate set [find fingerprint={q(opts.ca_fp)}] trusted=yes }} on-error={{}}
 }}
+:do {{ /certificate set [find fingerprint={q(opts.ca_fp)}] trusted=yes }} on-error={{}}
 """
 
 
@@ -237,12 +238,18 @@ def adopt_stage1(register_url: str, opts: FetchOpts, role: str | None = None) ->
 """
 
 
+# verze skriptu mtc-checkin; starší (hlásí nižší `sv`) controller na zařízení jednou přeinstaluje
+CHECKIN_REV = 2
+
+
 def checkin_source(checkin_url: str, key: str, opts: FetchOpts, cmd_file: str = "mtc-cmd.rsc") -> str:
     """Zdroj skriptu mtc-checkin (spouští ho scheduler každou minutu).
     `cmd_file` jiný než výchozí = okamžitý check-in vyvolaný controllerem (nesmí si
     s naplánovaným během mazat soubor s příkazem)."""
     if not re.fullmatch(r"mtc-[a-z]+\.rsc", cmd_file):
         raise ValueError("neplatný soubor příkazu")
+    # chybí-li CA controlleru (smazaná, bez důvěry), dosadí se znovu – jen se stejným otiskem
+    heal = "".join(f"  {ln}\n" for ln in trust_ca_body(opts).splitlines())
     return f""":local url {q(checkin_url)}
 :local hdr {q("Content-Type: application/json,Authorization: Bearer " + key)}
 :local sstp "none"
@@ -255,13 +262,15 @@ def checkin_source(checkin_url: str, key: str, opts: FetchOpts, cmd_file: str = 
 # 1 = bezi prevzeti do rizeni (bootstrap po resetu ceka na potvrzeni)
 :local tk 0
 :if ([:len [/system script find name="mtc-revert" comment="mtc-takeover"]] > 0) do={{ :set tk 1 }}
-:local body ("{{\\"version\\":\\"" . $ver . "\\",\\"uptime\\":\\"" . $up . "\\",\\"cpu\\":" . $cpu . ",\\"sstp\\":\\"" . $sstp . "\\",\\"fp\\":\\"" . $fp . "\\",\\"tk\\":" . $tk . "}}")
+:local body ("{{\\"version\\":\\"" . $ver . "\\",\\"uptime\\":\\"" . $up . "\\",\\"cpu\\":" . $cpu . ",\\"sstp\\":\\"" . $sstp . "\\",\\"fp\\":\\"" . $fp . "\\",\\"tk\\":" . $tk . ",\\"sv\\":{CHECKIN_REV}}}")
 /file remove [find name="{cmd_file}"]
 :do {{
   :local r [/tool fetch url=$url http-method=post http-header-field=$hdr http-data=$body dst-path="{cmd_file}" check-certificate={opts.check_certificate} as-value]
   :delay 1s
   /import file-name="{cmd_file}"
-}} on-error={{ :log warning "mtc: check-in selhal" }}
+}} on-error={{
+  :log warning "mtc: check-in selhal"
+{heal}}}
 /file remove [find name="{cmd_file}"]
 """
 

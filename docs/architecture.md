@@ -67,6 +67,12 @@ Každé zařízení si samo otevře dvě odchozí spojení na 443 a obě musí b
 
 1. **SSTP tunel** (`/interface sstp-client`) na hostname koncentrátoru. Platný certifikát a `verify-server-certificate=yes`. Přes tunel controller mluví s REST/API-SSL/SSH zařízení.
 2. **HTTPS check-in** (scheduler + `/tool fetch`) na `https://<checkin-host>/api/checkin` každé 1–5 min. Posílá heartbeat a stav tunelu, stahuje frontu příkazů, nahrává zálohy. Funguje i bez tunelu, takže přes něj jde tunel opravit.
+   Skript posílá svou verzi (`sv`, `routeros.CHECKIN_REV`); starší controller jednou přeinstaluje
+   (příkaz `checkin_update`). Když fetch selže, skript znovu dosadí CA controlleru – stáhne ji
+   přes HTTP a ponechá jen se shodným otiskem, nastaví `trusted=yes` (smazaná / nedůvěryhodná CA
+   by jinak check-in zastavila natrvalo). Zařízení, které už CA nemá a staré skripty tu opravu
+   neumí: `mtc-admin device-trust` vypíše příkaz pro jeho terminál; `mtc-admin doctor` hlásí,
+   když nginx předkládá zařízením certifikát mimo CA controlleru.
 
 Jeden tunel na každé zařízení, ne jen na gateway lokality. Důvod: zákazníci mají překrývající se LAN (192.168.88.0/24 všude) a s vlastní tunelovou IP má každé zařízení unikátní management adresu bez NATu a bez sahání do LAN zákazníka.
 

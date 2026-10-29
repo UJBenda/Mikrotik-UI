@@ -285,6 +285,7 @@ def check_tls(s: Settings, public: Path | None = None) -> list[Check]:
     st = tlscfg.status(public)
     hosts = tlscfg.hosts_of(s)
     out = []
+    dev = tlscfg.device_slot(s.tunnel.local)
     for slot in ("admin",) if s.tunnel.local else ("admin", "checkin"):
         name = f"certifikát {slot}"
         i = st.get(slot)
@@ -303,6 +304,10 @@ def check_tls(s: Settings, public: Path | None = None) -> list[Check]:
             out.append(Check(WARN, name, detail + hint))
         elif not tlscfg.covers(i, hosts[slot]):
             out.append(Check(WARN, name, f"{detail}, ale neobsahuje {hosts[slot]}"))
+        elif slot == dev and i["kind"] != "own_ca" and s.security.device_ca_file:
+            out.append(Check(FAIL, name, f"{detail} – zařízení ho ověřují a znají jen CA controlleru, check-in "
+                                         "selže („no trusted CA certificate found“); vrať CA controlleru: "
+                                         "sudo mtc-admin tls own --slot " + slot))
         elif i["kind"] == "own_ca" and slot == "admin":
             out.append(Check(OK, name, detail + " (prohlížeč ho hlásí jako nedůvěryhodný; Let's Encrypt: Systém → Certifikát HTTPS)"))
         else:

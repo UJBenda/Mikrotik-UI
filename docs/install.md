@@ -167,6 +167,7 @@ složky v cloudu. Z příkazové řádky: `sudo mtc-admin restore SOUBOR`.
 ```sh
 mtc-admin devices Lab                 # přehled zařízení tenanta
 mtc-admin device-check Lab SERIAL     # REST přes tunel: identita, otisk, porty, aktualizace
+mtc-admin device-trust                # zařízení hlásí „no trusted CA certificate found“: příkaz pro jeho terminál
 mtc-admin token Lab "Stůl"            # adopční příkaz z CLI
 journalctl -u mtc-web -u mtc-worker -f
 systemd-analyze security mtc-web
