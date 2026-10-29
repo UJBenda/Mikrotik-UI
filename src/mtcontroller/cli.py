@@ -21,6 +21,7 @@
   recovery-kit                  vypíše záchranné údaje (heslo záloh, DB, cesty) (root)
   tls [status|own|letsencrypt EMAIL|custom CERT KEY|bootstrap] [--slot admin|checkin]
                                 certifikát HTTPS pro nginx (root; jinak Systém → Certifikát HTTPS)
+  nginx-repair                  konfigurace nginx znovu z plánu průvodce (instalace balíčkem)
   tls-apply                     provede žádost o certifikát z UI (root; spouští mtc-tls.path)
   tls-sync                      deploy hook certbotu: obnovený Let's Encrypt do nginx (root)
 """
@@ -434,6 +435,19 @@ def cmd_tls(a) -> int:
     return 0
 
 
+def cmd_nginx_repair(a) -> int:
+    """Konfigurace nginx znovu z plánu průvodce (s nginx -t a návratem při chybě)."""
+    from . import firstrun
+    _tls_log()
+    if not (firstrun.ETC / "setup-plan.json").is_file():
+        raise SystemExit("chybí /etc/mtcontroller/setup-plan.json – instalace skriptem: spusť znovu deploy/install.sh")
+    if firstrun.upgrade_nginx(force=True):
+        print("nginx přegenerován z plánu průvodce a přenačten")
+        return 0
+    print("beze změny (konfigurace už odpovídá), nebo nginx -t neprošel – viz log výše", file=sys.stderr)
+    return 1
+
+
 def cmd_tls_apply(a) -> int:
     from . import tlscfg
     _tls_log()
@@ -491,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
                                              choices=["status", "own", "letsencrypt", "custom", "bootstrap"])
     x.add_argument("args", nargs="*"); x.add_argument("--slot", action="append", choices=["admin", "checkin"])
     x.set_defaults(fn=cmd_tls)
+    sub.add_parser("nginx-repair").set_defaults(fn=cmd_nginx_repair)
     sub.add_parser("tls-apply").set_defaults(fn=cmd_tls_apply)
     sub.add_parser("tls-sync").set_defaults(fn=cmd_tls_sync)
     x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")

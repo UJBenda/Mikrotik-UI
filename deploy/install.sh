@@ -31,6 +31,16 @@ done
 
 [ "$(id -u)" = 0 ] || { echo "spusť jako root" >&2; exit 1; }
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
+# Controller z balíčku .deb (webový průvodce) se aktualizuje balíčkem – tenhle skript má jinou
+# šablonu nginx (dvě jména), přepsal by systemd jednotky i mtc-admin a rozbil lokální režim.
+if dpkg-query -W -f='${Status}' mtcontroller 2>/dev/null | grep -q "install ok installed" && [ "${MTC_FORCE_SCRIPT:-}" != 1 ]; then
+  cat >&2 <<EOM
+!! Controller je nainstalovaný balíčkem .deb – tenhle skript ho neaktualizuje.
+   Aktualizace:  sh $SRC/packaging/build-deb.sh && cp $SRC/dist/mtcontroller_*.deb /tmp/ && apt install /tmp/mtcontroller_<verze>_all.deb
+   (vynutit skript: MTC_FORCE_SCRIPT=1 $0 …)
+EOM
+  exit 3
+fi
 APP=/opt/mtcontroller/app
 ETC=/etc/mtcontroller
 DATA=/var/lib/mtcontroller

@@ -472,3 +472,21 @@ def test_write_does_not_chown_when_not_root(tmp_path):
         assert called  # root vlastníka nastaví
     finally:
         sh.chown, os.geteuid = orig_chown, orig_euid
+
+
+def test_nginx_repair_after_install_script_on_package_install(tmp_path):
+    """install.sh na instalaci z balíčku zapsal šablonu vzdálené správy (dvě stejná jména) –
+    mtc-admin nginx-repair vrátí konfiguraci z plánu průvodce."""
+    env = _env(tmp_path)
+    assert _req(env, {"action": "install", "plan": LOCAL}) == 0
+    conf = env.nginx / "sites-available" / "mtcontroller.conf"
+    good = conf.read_text()
+    tpl = (env.share / "nginx" / "mtcontroller.conf").read_text()
+    bad = (tpl.replace("mtc-admin.example.cz", "192.168.88.10").replace("mtc-checkin.example.cz", "192.168.88.10")
+           .replace("__ADMIN_CERT__", f"{env.ssl}/admin.crt").replace("__ADMIN_KEY__", f"{env.ssl}/admin.key")
+           .replace("__CHECKIN_CERT__", f"{env.ssl}/checkin.crt").replace("__CHECKIN_KEY__", f"{env.ssl}/checkin.key")
+           .replace("__ADMIN_HSTS__", f"{env.ssl}/hsts-admin*.conf").replace("__CHECKIN_HSTS__", f"{env.ssl}/hsts-checkin*.conf"))
+    conf.write_text(bad)
+    assert not firstrun.upgrade_nginx(env)  # běžná aktualizace nic nepozná
+    assert firstrun.upgrade_nginx(env, force=True)
+    assert conf.read_text() == good and "default_server" in good

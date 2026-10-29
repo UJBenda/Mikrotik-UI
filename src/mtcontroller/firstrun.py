@@ -562,7 +562,7 @@ def repoint_certs(text: str, ssl_dir: Path, ui_host: str, checkin_host: str, loc
     return "".join(out)
 
 
-def upgrade_nginx(env: Env | None = None) -> bool:
+def upgrade_nginx(env: Env | None = None, force: bool = False) -> bool:
     """Aktualizace / oprava: nginx ze starší verze (certifikát mimo sloty, např. chybějící
     Let's Encrypt) přepnout na sloty /etc/ssl/mtc/{admin,checkin}. Instalace průvodcem se
     přegeneruje z uloženého plánu, instalace skriptem jen přesměruje cesty k certifikátům.
@@ -576,7 +576,8 @@ def upgrade_nginx(env: Env | None = None) -> bool:
     old = conf.read_text()
     saved = env.etc / "setup-plan.json"
     if saved.is_file():
-        if str(tlscfg.slot_paths("admin", env.ssl)[0]) in old and "Strict-Transport-Security" not in old:
+        # force: oprava (např. po spuštění install.sh na instalaci z balíčku – jiná šablona)
+        if not force and str(tlscfg.slot_paths("admin", env.ssl)[0]) in old and "Strict-Transport-Security" not in old:
             return False
         new = render_nginx(SetupPlan.model_validate_json(saved.read_text()), env.ssl, env.share)
     else:
