@@ -343,6 +343,16 @@ BEGIN;
 SELECT set_config('app.operator', 'on', true);
 DO $$ BEGIN
   IF (SELECT count(*) FROM port_profile) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant A smazal profil B'; END IF;
+  -- 18b) „*“ = všechny VLAN lokality (vestavěný trunk); jinak jen seznam čísel
+  INSERT INTO port_profile (tenant_id, name, pvid, tagged, builtin)
+    VALUES ('00000000-0000-0000-0000-0000000000b1', 'B vše', 1, '*', true);
+  BEGIN
+    INSERT INTO port_profile (tenant_id, name, tagged) VALUES ('00000000-0000-0000-0000-0000000000b1', 'B zlé', '*,10');
+    RAISE EXCEPTION 'FAIL: tagged „*,10“ prošlo kontrolou';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  DELETE FROM port_profile WHERE name = 'B vše';
+  RAISE NOTICE 'OK 18b trunk profil „všechny VLAN“';
 END $$;
 COMMIT;
 

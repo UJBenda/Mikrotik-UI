@@ -233,6 +233,16 @@ spravovanému zařízení) dostane varování. Změnu smí zadat technik, apliko
 - Porty mají roli trunk / access / hybrid; controller generuje `/interface/bridge/vlan`, `bridge/port` (pvid, frame-types, ingress-filtering) a zapne `vlan-filtering=yes`.
 - Kontrola cesty: VLAN musí být povolená na všech uplinkách od AP/portu až ke gatewayi (z topologie).
 - Management VLAN je chráněná a změny jdou vždy s rollbackem.
+- **Příprava VLAN lokality** (`vlanprep.py`): adoptovaný switch bez převzetí načisto dostane jedním
+  plánem portů (commit-confirm) všechny sítě lokality do `/interface bridge vlan` – na uplinku
+  tagovaně (STP root port, port ke spravovanému sousedovi, port za kterým bridge vidí MAC výchozí
+  brány), bridge sám jen u VLAN s vlastní adresou zařízení – a nakonec `vlan-filtering=yes`.
+  Porty zůstávají v PVID 1. Detail zařízení vrací `site_vlans` (chybějící VLAN), UI ukáže banner
+  „Připravit VLAN lokality“; endpoint `POST …/devices/{id}/bonds` s `kind=site_vlans`.
+- **Vestavěný profil „Trunk – všechny VLAN“**: v `port_profile` s `builtin=true`, PVID 1 netagovaně
+  a `tagged='*'` = všechny sítě lokality zařízení kromě PVID; `*` se rozvine až při použití
+  (`profiles.expand`), takže nová síť lokality se do profilu promítne sama. Založí se
+  tenantovi při prvním výpisu profilů, nejde smazat (migrace 0022).
 
 ### WiFi CAPsMAN
 

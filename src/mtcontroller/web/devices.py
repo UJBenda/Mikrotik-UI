@@ -83,6 +83,11 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             conn = portview.connected(inv, portview.recent_clients(tx, did), portview.managed_roles(tx))
             anomaly = portview.anomalies(tx, did, inv)
             profs = profiles.list_profiles(tx)
+            svids = profiles.site_vlans(tx, did)
+            from .. import takeover, vlanprep
+
+            site_row = tx.fetchone("SELECT site_id FROM device WHERE id = %(d)s", {"d": did})
+            vprep = vlanprep.status(inv, takeover.load_intent(tx, site_row["site_id"]) if site_row and site_row["site_id"] else None)
         ifaces = [{
             "name": i.get("name"), "type": i.get("type"), "running": i.get("running") == "true",
             "disabled": i.get("disabled") == "true", "mac": i.get("mac-address"), "comment": i.get("comment"),
@@ -96,7 +101,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             i["anomaly"] = anomaly.get(name)
             if i["port"] is not None and profs:
                 try:
-                    m = profiles.matching(profs, portcfg.port_state(inv, name))
+                    m = profiles.matching(profs, portcfg.port_state(inv, name), svids)
                 except portcfg.PortError:
                     m = None
                 i["profile"] = m["name"] if m else None
@@ -108,6 +113,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
                          for i in ros_versions.issues_for(d.get("ros_version") or "")],
             "interfaces": ifaces,
             "bonds": _bonds(inv),
+            "site_vlans": vprep,
             "addresses": inv.get("addresses") or [],
             "vlan_names": portview.vlan_names(inv),
             "neighbors": inv.get("neighbors") or [],
@@ -169,11 +175,14 @@ async def port_get(request: Request, p: Principal, tid: str) -> Response:
                             if isinstance(v, dict) and str(v.get("vlan-ids", "")).isdigit()}, key=int)
             mode = plans.module_modes(tx, did).get("ports")
             profs = profiles.list_profiles(tx)
-            match = profiles.matching(profs, state)
+            svids = profiles.site_vlans(tx, did)
+            match = profiles.matching(profs, state, svids)
+            vlans = sorted(set(vlans) | {str(v) for v in svids}, key=int)
             from .. import porttools
 
             sug = porttools.watchdog_target(tx, inv, did, port) if state.get("poe_watchdog") is not None else None
-            return {**state, "known_vlans": vlans, "uplink": port in _uplinks(tx, inv), "module_mode": mode,
+            return {**state, "known_vlans": vlans, "site_vlans": [str(v) for v in svids],
+                    "uplink": port in _uplinks(tx, inv), "module_mode": mode,
                     "watchdog_suggest": sug,
                     "profiles": profs, "profile": match["id"] if match else None,
                     "history": porthistory.history(tx, did, port, days=30, limit=20)}
@@ -463,7 +472,7 @@ async def device_bond(request: Request, p: Principal, tid: str) -> Response:
     did = _uuid(request.path_params["device_id"])
     data = await _json(request)
     kind = str(data.get("kind") or "lacp")
-    if kind not in ("lacp", "bond_remove"):
+    if kind not in ("lacp", "bond_remove", "site_vlans"):
         return _err(400, "neznámý druh")
     ip = client_ip(request)
 

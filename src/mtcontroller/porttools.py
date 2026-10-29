@@ -270,7 +270,7 @@ def bulk(db: Database, settings, tenant_id: Any, targets: list[dict], *, desired
                 for port in ports:
                     if profile_id is not None:
                         tgt = watchdog_target(tx, inv, did, port) if prof.get("poe_watchdog") else None
-                        d, w = profiles.desired(prof, tgt)
+                        d, w = profiles.desired(prof, tgt, profiles.site_vlans(tx, did))
                         if w:
                             warn.append(f"{port}: {w}")
                         # profil s PoE na portu bez PoE: PoE vynechat, zbytek použít
@@ -306,6 +306,7 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
     devs = tx.fetchall("""SELECT id, identity, serial, model, state FROM device WHERE site_id = %(s)s
                           AND state IN ('adopted', 'offline') ORDER BY identity, serial""", {"s": str(site_id)})
     profs = profiles.list_profiles(tx)
+    svids = profiles.site_vlans(tx, devs[0]["id"]) if devs else []
     out = []
     for d in devs:
         inv = inventory.load(tx, d["id"])
@@ -325,7 +326,7 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
                 st = portcfg.port_state(inv, str(i["name"]))
             except portcfg.PortError:
                 continue
-            m = profiles.matching(profs, st)
+            m = profiles.matching(profs, st, svids)
             ports.append({"port": st["port"], "comment": st["comment"], "disabled": st["disabled"], "running": running.get(st["port"]),
                           "poe": st["poe"], "pvid": st["pvid"], "tagged": st["tagged"], "bond": st["bond"],
                           "lock": st["lock"], "watchdog": (st["poe_watchdog"] or {}).get("enabled"),

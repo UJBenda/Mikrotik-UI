@@ -1710,7 +1710,7 @@ function renderPorts(devId, d) {
   const bonds = d.bonds || [];
   const bondOf = {};
   for (const b of bonds) for (const m of b.slaves) bondOf[m] = b.name;
-  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), vnames: d.vlan_names || {}, bonds, bondOf,
+  portCtx = { devId, phys, cu: bySfp(false), sfp: bySfp(true), vnames: d.vlan_names || {}, bonds, bondOf, siteVlans: d.site_vlans,
               bondIfaces: (d.interfaces || []).filter((i) => i.type === "bond") };
   drawPorts();
 }
@@ -1740,6 +1740,7 @@ function drawPorts() {
   $("d-vlan-filter").hidden = view !== "vlan";
   portLegend(view);
   drawPortTable();
+  drawSiteVlans(box);
   if (!c.phys.length) { box.appendChild(el("p", "Žádné fyzické porty v inventuře", "muted")); return; }
   if (view === "vlan") return drawVlanMatrix(box);
   const row = el("div", null, "port-row");
@@ -1748,6 +1749,29 @@ function drawPorts() {
   for (const group of [c.cu, c.sfp]) if (group.length) row.appendChild(portGroup(group, (i) => portTile(i, view), labels, two));
   box.appendChild(row);
   drawBonds(box);
+}
+
+// --- VLAN lokality: po adopci na switchi chybí – jedním plánem je přidat (uplink tagovaně) ---------
+function drawSiteVlans(box) {
+  const sv = portCtx.siteVlans;
+  if (!sv || (!sv.missing.length && sv.vlan_filtering)) return;
+  const b = el("div", null, "banner warn");
+  const parts = [];
+  if (sv.missing.length) parts.push(`na zařízení chybí VLAN ${sv.missing.join(", ")}`);
+  if (!sv.vlan_filtering) parts.push(`bridge ${sv.bridge} nemá zapnuté vlan-filtering`);
+  b.appendChild(el("span", `Lokalita má ${sv.site_vlans.length} sítí – ${parts.join(", ")}. `));
+  const go = el("button", "Připravit VLAN lokality", "small"); go.type = "button";
+  go.disabled = !canManage();
+  go.title = "Přidá všechny sítě lokality do bridge, na uplinku tagovaně, a zapne vlan-filtering. Porty zůstanou ve VLAN 1; když se switch do 5 min neozve, vše se vrátí.";
+  go.onclick = async () => {
+    if (!(await ask(`Přidat VLAN lokality (${sv.site_vlans.join(", ")}) na ${sv.bridge}? Uplink je dostane tagovaně, porty zůstanou ve VLAN 1. Když se switch do 5 min neozve, změna se vrátí.`))) return;
+    try {
+      const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, { kind: "site_vlans", apply: true });
+      msg(`Odesláno: ${r.summary}${(r.warnings || []).length ? " – " + r.warnings.join("; ") : ""}`); loadPlans();
+    } catch (e) { msg(e.message, true); }
+  };
+  b.appendChild(go);
+  box.appendChild(b);
 }
 
 // --- LACP bondy: řádek pod porty, klik = nastavení VLAN na bondu, pravé tlačítko = akce --------
@@ -2476,8 +2500,10 @@ async function loadPortEditor(port) {
       if (edge && pf.edge) edge.value = pf.edge;
       if (poe && pf.poe) poe.value = pf.poe;
       if (tagBox && pf.tagged) {
-        for (const c of tagChecks) c.checked = pf.tagged.includes(c.value);
-        addVlan.value = pf.tagged.filter((v) => !tagChecks.some((c) => c.value === v)).join(",");
+        // „všechny VLAN“: sítě lokality kromě native VLAN
+        const want = pf.all_vlans ? (st.site_vlans || []).filter((v) => String(v) !== String(pvid ? pvid.value : pf.pvid)) : pf.tagged;
+        for (const c of tagChecks) c.checked = want.includes(c.value);
+        addVlan.value = pf.all_vlans ? "" : pf.tagged.filter((v) => !tagChecks.some((c) => c.value === v)).join(",");
       }
       if (wdOn && pf.poe_watchdog != null) { wdOn.checked = pf.poe_watchdog; if (pf.poe_watchdog_timeout) wdTime.value = pf.poe_watchdog_timeout; }
     });
@@ -2489,8 +2515,9 @@ async function loadPortEditor(port) {
       try { await api("PUT", `/tenants/${tenantId}/port-profiles/${pf.id}`, profileBody(pf.name)); msg("Profil uložen"); loadPortEditor(port); }
       catch (e) { msg(e.message, true); }
     };
-    sel.addEventListener("change", () => { upd.hidden = !sel.value; });
-    upd.hidden = !sel.value;
+    const builtin = () => ((st.profiles || []).find((x) => String(x.id) === sel.value) || {}).builtin;
+    sel.addEventListener("change", () => { upd.hidden = !sel.value || builtin(); del.hidden = !sel.value || builtin(); });
+    upd.hidden = !sel.value || builtin(); del.hidden = del.hidden || builtin();
     del.onclick = async () => {
       const pf = (st.profiles || []).find((x) => String(x.id) === sel.value);
       if (!pf || !(await ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`))) return;
@@ -2972,7 +2999,7 @@ function drawProfiles() {
   tbl.appendChild(th);
   for (const pf of profCache || []) {
     const tr = el("tr");
-    tr.append(el("td", pf.name), el("td", pf.pvid ?? "–"), el("td", pf.tagged ? pf.tagged.join(", ") || "žádné" : "–"),
+    tr.append(el("td", pf.name), el("td", pf.pvid ?? "–"), el("td", pf.all_vlans ? "všechny VLAN lokality" : pf.tagged ? pf.tagged.join(", ") || "žádné" : "–"),
               el("td", pf.poe || "–"), el("td", pf.poe_watchdog ? `ano (${pf.poe_watchdog_timeout} s)` : pf.poe_watchdog === false ? "ne" : "–"));
     const td = el("td");
     const e = el("button", "Upravit", "small secondary"); e.type = "button"; e.onclick = () => profileForm(pf);
@@ -2981,7 +3008,9 @@ function drawProfiles() {
       if (!(await ask(`Smazat profil „${pf.name}“? Porty se tím nezmění.`))) return;
       try { await api("DELETE", `/tenants/${tenantId}/port-profiles/${pf.id}`); loadSitePorts(); } catch (er) { msg(er.message, true); }
     };
-    td.append(e, d); tr.appendChild(td); tbl.appendChild(tr);
+    if (pf.builtin) td.appendChild(el("span", "vestavěný", "muted small"));
+    else td.append(e, d);
+    tr.appendChild(td); tbl.appendChild(tr);
   }
   box.appendChild(tbl);
   const n = el("button", "Nový profil", "small"); n.type = "button"; n.onclick = () => profileForm(null);

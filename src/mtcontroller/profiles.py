@@ -12,7 +12,9 @@ from .services import NotFound, ServiceError, audit
 
 EDGE = ("auto", "yes", "no")
 FIELDS = ("pvid", "tagged", "poe", "edge", "poe_watchdog")
-COLS = "id, name, pvid, tagged, poe, edge, poe_watchdog, poe_watchdog_timeout"
+COLS = "id, name, pvid, tagged, poe, edge, poe_watchdog, poe_watchdog_timeout, builtin"
+ALL = "*"  # tagged = všechny VLAN sítí lokality zařízení (rozvine se při použití)
+TRUNK_NAME = "Trunk – všechny VLAN"
 
 
 def _vid(v: Any) -> int:
@@ -33,9 +35,11 @@ def clean(data: dict) -> dict:
                            "poe_watchdog": None, "poe_watchdog_timeout": None}
     if data.get("pvid") not in (None, ""):
         out["pvid"] = _vid(data["pvid"])
-    if data.get("tagged") is not None:
-        t = data["tagged"]
-        items = t if isinstance(t, list) else str(t).replace(";", ",").split(",")
+    t = data.get("tagged")
+    items = [] if t is None else [str(x).strip() for x in (t if isinstance(t, list) else str(t).replace(";", ",").split(","))]
+    if t is not None and [x.lower() for x in items if x] in ([ALL], ["all"], ["vše"]):
+        out["tagged"] = ALL
+    elif t is not None:
         vids = sorted({_vid(x) for x in items if str(x).strip()})
         if len(vids) > 64:
             raise ServiceError("nejvýš 64 tagovaných VLAN")
@@ -70,11 +74,41 @@ def _row(r: dict) -> dict:
     return {"id": r["id"], "name": r["name"], "pvid": r["pvid"],
             "tagged": r["tagged"].split(",") if r["tagged"] else ([] if r["tagged"] == "" else None),
             "poe": r["poe"], "edge": r["edge"], "poe_watchdog": r.get("poe_watchdog"),
-            "poe_watchdog_timeout": r.get("poe_watchdog_timeout")}
+            "poe_watchdog_timeout": r.get("poe_watchdog_timeout"), "builtin": bool(r.get("builtin")),
+            "all_vlans": r["tagged"] == ALL}
+
+
+def _ensure_builtin(tx) -> None:
+    """Vestavěný trunk (VLAN 1 netagovaná, všechny sítě lokality tagovaně) – jednou na tenanta."""
+    if tx.fetchone("SELECT 1 FROM port_profile WHERE builtin"):
+        return
+    t = tx.fetchone("SELECT mtc_current_tenant() AS t")
+    if not t or not t["t"]:
+        return
+    tx.execute("""INSERT INTO port_profile (tenant_id, name, pvid, tagged, builtin) VALUES (%(t)s, %(n)s, 1, %(a)s, true)
+                  ON CONFLICT (tenant_id, name) DO UPDATE SET builtin = true""",
+               {"t": str(t["t"]), "n": TRUNK_NAME, "a": ALL})
 
 
 def list_profiles(tx) -> list[dict]:
-    return [_row(r) for r in tx.fetchall(f"SELECT {COLS} FROM port_profile ORDER BY name")]
+    _ensure_builtin(tx)
+    return [_row(r) for r in tx.fetchall(f"SELECT {COLS} FROM port_profile ORDER BY builtin DESC, name")]
+
+
+def site_vlans(tx, device_id: Any) -> list[int]:
+    """VLAN sítí lokality zařízení (záměr lokality); bez záměru prázdné."""
+    r = tx.fetchone("""SELECT p.data FROM device d JOIN site_policy p ON p.site_id = d.site_id AND p.module = 'intent'
+                       WHERE d.id = %(d)s""", {"d": str(device_id)})
+    nets = ((r or {}).get("data") or {}).get("networks") or []
+    return sorted({int(n["vlan_id"]) for n in nets if str(n.get("vlan_id", "")).isdigit()})
+
+
+def expand(profile: dict, vids: list[int] | None) -> dict:
+    """Profil s „všechny VLAN“ → konkrétní tagované VLAN (bez PVID, ten jde netagovaně)."""
+    if profile.get("tagged") != [ALL]:
+        return profile
+    pvid = profile.get("pvid") or 1
+    return {**profile, "tagged": [str(v) for v in vids or [] if v != pvid]}
 
 
 def get(tx, pid: int) -> dict:
@@ -124,17 +158,23 @@ def update(db: Database, tid: str, pid: int, data: dict, user_id: Any, ip: str |
 
 def delete(db: Database, tid: str, pid: int, user_id: Any, ip: str | None) -> None:
     with tenant_scope(db, tid) as tx:
+        if get(tx, pid)["builtin"]:
+            raise ServiceError("vestavěný trunk nejde smazat (můžeš ho upravit nebo přejmenovat)")
         r = tx.fetchone(f"DELETE FROM port_profile WHERE id = %(i)s RETURNING {COLS}", {"i": pid})
         if not r:
             raise NotFound("profil neexistuje")
         audit(tx, "port_profile.delete", tenant_id=tid, user_id=user_id, target=f"port_profile:{pid}", before=_row(r), ip=ip)
 
 
-def desired(profile: dict, watchdog_target: str | None = None) -> tuple[dict, str | None]:
+def desired(profile: dict, watchdog_target: str | None = None, site_vids: list[int] | None = None) -> tuple[dict, str | None]:
     """Profil → „desired“ pro portcfg.plan (jen vlastnosti, které profil nastavuje).
     PoE hlídač potřebuje cíl (IP/MAC zařízení na portu) – bez něj se vynechá a vrátí se varování."""
+    all_vlans = profile.get("tagged") == [ALL]
+    profile = expand(profile, site_vids)
     out = {k: profile[k] for k in FIELDS if profile.get(k) is not None and k != "poe_watchdog"}
     warn = None
+    if all_vlans and not site_vids:
+        warn = "lokalita nemá sítě – profil „všechny VLAN“ netaguje nic (založ sítě v Lokalita → Sítě a DHCP)"
     if profile.get("poe_watchdog") is True:
         if watchdog_target:
             out["poe_watchdog"] = {"enabled": True, "address": watchdog_target,
@@ -146,9 +186,13 @@ def desired(profile: dict, watchdog_target: str | None = None) -> tuple[dict, st
     return out, warn
 
 
-def matching(profiles: list[dict], state: dict) -> dict | None:
+def matching(profiles: list[dict], state: dict, site_vids: list[int] | None = None) -> dict | None:
     """První profil, kterému port odpovídá (všechny nastavené vlastnosti sedí)."""
     for p in profiles:
+        if p.get("tagged") == [ALL]:
+            if not site_vids:
+                continue
+            p = expand(p, site_vids)
         if p["pvid"] is not None and p["pvid"] != state.get("pvid"):
             continue
         if p["tagged"] is not None and sorted(p["tagged"], key=int) != sorted(state.get("tagged") or [], key=int):
