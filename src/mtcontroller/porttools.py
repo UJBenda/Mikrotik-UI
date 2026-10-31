@@ -241,7 +241,7 @@ def _uplinks(tx: Tx, inv: dict) -> set[str]:
 
 def bulk(db: Database, settings, tenant_id: Any, targets: list[dict], *, desired: dict | None = None,
          profile_id: int | None = None, apply: bool = False, can_manage: bool = False,
-         user_id: Any = None, ip: str | None = None) -> list[dict]:
+         user_id: Any = None, ip: str | None = None, box=None) -> list[dict]:
     """Stejné nastavení nebo profil na vybrané porty víc zařízení: jeden plán na zařízení.
     targets: [{device_id, ports: [...]}]. Vrací výsledek po zařízeních (plán / chyba)."""
     if not targets or not isinstance(targets, list) or len(targets) > 100:
@@ -289,6 +289,31 @@ def bulk(db: Database, settings, tenant_id: Any, targets: list[dict], *, desired
                             else:
                                 d["poe_watchdog"] = {**d["poe_watchdog"], "address": tgt}
                         items[port] = d
+            from . import autoapply
+
+            if autoapply.is_managed(db, tenant_id, did):
+                # řízené zařízení: VLAN do záměru zařízení (sladění), zbytek plánem portů – vždy hned (správce)
+                vl = {p: autoapply.split(d)[0] for p, d in items.items()}
+                rest = {p: r for p, r in ((p, autoapply.split(d)[1]) for p, d in items.items()) if r}
+                ap = autoapply.port_vlans(db, settings, box, tenant_id, did, {p: v for p, v in vl.items() if v}, user_id, ip,
+                                          can_approve=can_manage) if any(vl.values()) else None
+                if ap:
+                    item["apply"] = ap
+                res = None
+                if rest:
+                    try:
+                        res = plans.create_ports_plan(db, tenant_id, did, rest, user_id, ip, ups, warn)
+                    except ServiceError as e:
+                        if str(e) != plans.NO_CHANGE:
+                            raise
+                if res:
+                    item.update(res)
+                    if can_manage:
+                        item["command_id"] = plans.approve_plan(db, settings, tenant_id, res["plan_id"], user_id, ip)
+                elif not ap:
+                    raise ServiceError(plans.NO_CHANGE)
+                out.append(item)
+                continue
             res = plans.create_ports_plan(db, tenant_id, did, items, user_id, ip, ups, warn)
             item.update(res)
             if apply:

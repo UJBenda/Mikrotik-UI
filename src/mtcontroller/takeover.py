@@ -169,13 +169,13 @@ def _device(tx: Tx, device_id: Any) -> dict:
     return d
 
 
-def _model(tx: Tx, d: dict, inv: dict) -> tuple[dict | None, dict]:
+def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None) -> tuple[dict | None, dict]:
     site_intent = load_intent(tx, d["site_id"]) if d["site_id"] else None
     if not site_intent:
         return None, {}
     pol = tx.fetchone("SELECT data FROM site_policy WHERE site_id = %(s)s AND module = 'ntp'", {"s": str(d["site_id"])})
     ntp_pol = (pol or {}).get("data") or {"upstream": regional.ntp_servers(), "timezone": regional.timezone()}
-    dev_intent = load_device_intent(tx, d["id"])
+    dev_intent = dev_intent if dev_intent is not None else load_device_intent(tx, d["id"])
     role = dev_intent.get("role") or (d["role"] if d["role"] in ("switch", "ap") else "switch")
     model = switchcfg.build(inv, site_intent, dev_intent, model_name=d["model"] or "",
                             identity=d["identity"] or d["serial"], ntp=ntp_pol, role=role,
@@ -379,9 +379,9 @@ def rolled_back(tx: Tx, tenant_id: Any, plan_id: int) -> None:
 # --- sladění řízených zařízení ------------------------------------------------------------------------------
 
 def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site_id: Any, user_id: Any = None,
-                          ip: str | None = None, auto: bool = True) -> list[dict]:
-    """Plány sladění pro řízená zařízení lokality. Při auto_trunk v záměru se plány,
-    které jen přidávají tagované VLAN, rovnou schválí (nemohou přerušit provoz)."""
+                          ip: str | None = None, auto: bool = True, only: set[str] | None = None) -> list[dict]:
+    """Plány sladění pro řízená zařízení lokality (`only` = jen tato zařízení). Při auto_trunk v záměru
+    se plány, které jen přidávají tagované VLAN, rovnou schválí (nemohou přerušit provoz)."""
     from .plans import CONFIRM_MINUTES, approve_plan
 
     out: list[dict] = []
@@ -391,7 +391,7 @@ def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site
         if not site_intent:
             raise ServiceError("lokalita nemá záměr")
         for d in _site_devices(tx, site_id):
-            if d["managed_at"] is None:
+            if d["managed_at"] is None or (only is not None and str(d["id"]) not in only):
                 continue
             did = str(d["id"])
             item = {"device_id": did, "device": d["identity"] or d["serial"]}

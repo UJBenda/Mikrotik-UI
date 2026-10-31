@@ -2,7 +2,7 @@
 
 import re
 
-from test_flow import _device_post, _login, _setup
+from test_flow import _device_post, _drain_until, _login, _setup
 
 from helpers import drop_db
 from mtcontroller.db import operator_scope
@@ -71,14 +71,11 @@ def test_rename_capsman_host_keeps_caps():
         assert c.post(base + f"/devices/{host}/identity", json_body={"name": "ap-chodba"}).status_code == 400
         r = c.post(base + f"/devices/{host}/identity", json_body={"name": "SW-hlavni"})
         assert r.status_code == 200 and r.json()["aps"] == [ap]
-        s = _device_post(app, "/api/checkin", "key-AP1", {"sstp": "up"}).text
-        assert f'caps-man-names="{old},SW-hlavni"' in s
+        s = _drain_until(app, "key-AP1", f'caps-man-names="{old},SW-hlavni"')
         _ack(app, "key-AP1", s)
-        s = _device_post(app, "/api/checkin", "key-SW1", {"sstp": "up"}).text
-        assert '/system identity set name="SW-hlavni"' in s
+        s = _drain_until(app, "key-SW1", '/system identity set name="SW-hlavni"')
         _ack(app, "key-SW1", s)
-        s = _device_post(app, "/api/checkin", "key-AP1", {"sstp": "up"}).text
-        assert 'caps-man-names="SW-hlavni"' in s
+        s = _drain_until(app, "key-AP1", 'caps-man-names="SW-hlavni"')
         with operator_scope(db) as tx:
             assert tx.fetchone("SELECT identity FROM device WHERE id = %(h)s", {"h": host})["identity"] == "SW-hlavni"
     finally:

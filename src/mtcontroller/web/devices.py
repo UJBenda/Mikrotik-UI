@@ -87,7 +87,10 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             from .. import takeover, vlanprep
 
             site_row = tx.fetchone("SELECT site_id FROM device WHERE id = %(d)s", {"d": did})
-            vprep = vlanprep.status(inv, takeover.load_intent(tx, site_row["site_id"]) if site_row and site_row["site_id"] else None)
+            managed = tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND managed_at IS NOT NULL", {"d": did})
+            # řízené zařízení dostává VLAN lokality samo (sladění) – banner jen u sledovaných
+            vprep = None if managed else vlanprep.status(
+                inv, takeover.load_intent(tx, site_row["site_id"]) if site_row and site_row["site_id"] else None)
         ifaces = [{
             "name": i.get("name"), "type": i.get("type"), "running": i.get("running") == "true",
             "disabled": i.get("disabled") == "true", "mac": i.get("mac-address"), "comment": i.get("comment"),
@@ -183,6 +186,8 @@ async def port_get(request: Request, p: Principal, tid: str) -> Response:
             sug = porttools.watchdog_target(tx, inv, did, port) if state.get("poe_watchdog") is not None else None
             return {**state, "known_vlans": vlans, "site_vlans": [str(v) for v in svids],
                     "uplink": port in _uplinks(tx, inv), "module_mode": mode,
+                    "managed": tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND managed_at IS NOT NULL",
+                                           {"d": did}) is not None,
                     "watchdog_suggest": sug,
                     "profiles": profs, "profile": match["id"] if match else None,
                     "history": porthistory.history(tx, did, port, days=30, limit=20)}
@@ -201,8 +206,12 @@ async def port_plan(request: Request, p: Principal, tid: str) -> Response:
     ip = client_ip(request)
 
     def run():
+        from .. import autoapply
+
         with tenant_scope(st.db, tid) as tx:
             up = _uplinks(tx, inventory.load(tx, did))
+        if autoapply.is_managed(st.db, tid, did):
+            return _managed_port(st, p, tid, did, {port: desired}, up, ip)
         res = plans.create_port_plan(st.db, tid, did, port, desired, p.user_id, ip, up)
         if data.get("apply"):
             if not p.can(tid, MANAGE):
@@ -211,6 +220,42 @@ async def port_plan(request: Request, p: Principal, tid: str) -> Response:
         return res
 
     return json_response(await run_in_threadpool(run), 201)
+
+
+def _managed_port(st, p: Principal, tid: str, did: str, items: dict[str, dict], up: set[str], ip: str | None) -> dict:
+    """Řízené zařízení: VLAN portů jdou do záměru zařízení (sladění), PoE/popis/edge plánem portu.
+    Obojí se rovnou nasadí (správce) s automatickým návratem."""
+    from .. import autoapply
+    from ..services import kick
+
+    can = p.can(tid, MANAGE)
+    vlan = {k: autoapply.split(d)[0] for k, d in items.items()}
+    rest = {k: autoapply.split(d)[1] for k, d in items.items()}
+    rest = {k: v for k, v in rest.items() if v}
+    out: dict = {"managed": True, "warnings": []}
+    parts = []
+    ap = autoapply.port_vlans(st.db, st.settings, st.box, tid, did, {k: v for k, v in vlan.items() if v}, p.user_id, ip,
+                              can_approve=can) if any(vlan.values()) else None
+    if ap:
+        out["apply"] = ap
+        parts.append("VLAN portu podle sítí lokality")
+    if rest:
+        try:
+            res = plans.create_ports_plan(st.db, tid, did, rest, p.user_id, ip, up)
+        except ServiceError as e:
+            if str(e) != plans.NO_CHANGE:
+                raise
+            res = None
+        if res:
+            out.update({k: res[k] for k in ("plan_id", "warnings") if k in res})
+            parts.append(res["summary"])
+            if can:
+                out["command_id"] = plans.approve_plan(st.db, st.settings, tid, res["plan_id"], p.user_id, ip)
+                kick(st.db, st.settings, st.box, tid, did)
+    if not parts:
+        raise ServiceError(plans.NO_CHANGE)
+    out["summary"] = "; ".join(parts)
+    return out
 
 
 @endpoint(READ)
@@ -445,7 +490,7 @@ async def ports_bulk(request: Request, p: Principal, tid: str) -> Response:
     except (TypeError, ValueError):
         return _err(400, "neplatný profil")
     desired = data.get("desired") if pid is None else None
-    res = await run_in_threadpool(porttools.bulk, st.db, st.settings, tid, data.get("targets") or [],
+    res = await run_in_threadpool(porttools.bulk, st.db, st.settings, tid, data.get("targets") or [], box=st.box,
                                   desired=desired, profile_id=pid, apply=bool(data.get("apply")),
                                   can_manage=p.can(tid, MANAGE), user_id=p.user_id, ip=client_ip(request))
     return json_response({"results": res}, 201)
@@ -808,6 +853,22 @@ async def plan_list(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(READ)
+async def plan_status(request: Request, p: Principal, tid: str) -> Response:
+    """Stav vybraných plánů (ukazatel „Aplikuji změny…“ po uložení)."""
+    st = get_state(request)
+    ids = [int(x) for x in str(request.query_params.get("ids") or "").split(",")[:50] if x.isdigit()]
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return tx.fetchall(
+                """SELECT pl.id, pl.status::text AS status, coalesce(d.identity, d.serial) AS device
+                   FROM config_plan pl JOIN device d ON d.id = pl.device_id WHERE pl.id = ANY(string_to_array(%(i)s, ',')::bigint[])""",
+                {"i": ",".join(map(str, ids))})
+
+    return json_response(await run_in_threadpool(q) if ids else [])
+
+
 @endpoint(MANAGE)
 async def plan_approve(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
@@ -1135,7 +1196,15 @@ async def site_intent_put(request: Request, p: Principal, tid: str) -> Response:
     sid = _uuid(request.path_params["site_id"])
     data = await _json(request)
     new = await run_in_threadpool(takeover.set_site_intent, st.db, tid, sid, data, p.user_id, client_ip(request))
-    return json_response({"ok": True, "intent": new})
+    return json_response({"ok": True, "intent": new, "apply": await _autoapply(st, p, tid, sid, request)})
+
+
+async def _autoapply(st, p: Principal, tid: str, sid: str, request: Request, **kw) -> dict:
+    """Po uložení záměru (sítě, Wi-Fi, skupiny AP, výjimky) rovnou nasadit na řízená zařízení."""
+    from .. import autoapply
+
+    return await run_in_threadpool(lambda: autoapply.site(st.db, st.settings, st.box, tid, sid, p.user_id,
+                                                          client_ip(request), can_approve=p.can(tid, MANAGE), **kw))
 
 
 @endpoint(MANAGE)
@@ -1183,7 +1252,15 @@ async def device_intent_put(request: Request, p: Principal, tid: str) -> Respons
     did = _uuid(request.path_params["device_id"])
     data = await _json(request)
     new = await run_in_threadpool(takeover.set_device_intent, st.db, tid, did, data, p.user_id, client_ip(request))
-    return json_response({"ok": True, "device_intent": new})
+
+    def site_of():
+        with tenant_scope(st.db, tid) as tx:
+            r = tx.fetchone("SELECT site_id, managed_at FROM device WHERE id = %(d)s", {"d": did})
+        return r if r and r["site_id"] and r["managed_at"] else None
+
+    r = await run_in_threadpool(site_of)
+    apply = await _autoapply(st, p, tid, str(r["site_id"]), request, only={did}) if r else None
+    return json_response({"ok": True, "device_intent": new, "apply": apply})
 
 
 @endpoint(MANAGE)
@@ -1194,6 +1271,7 @@ async def site_ssid_create(request: Request, p: Principal, tid: str) -> Response
     sid = _uuid(request.path_params["site_id"])
     data = await _json(request)
     out = await run_in_threadpool(takeover.save_ssid, st.db, st.box, tid, sid, data, None, p.user_id, client_ip(request))
+    out["apply"] = await _autoapply(st, p, tid, sid, request, switches=False)
     return json_response(out, 201)
 
 
@@ -1207,6 +1285,7 @@ async def site_ssid_update(request: Request, p: Principal, tid: str) -> Response
     data = await _json(request)
     out = await run_in_threadpool(takeover.save_ssid, st.db, st.box, tid, sid, data, ssid_id, p.user_id,
                                   client_ip(request))
+    out["apply"] = await _autoapply(st, p, tid, sid, request, switches=False)
     return json_response(out)
 
 
@@ -1215,9 +1294,10 @@ async def site_ssid_delete(request: Request, p: Principal, tid: str) -> Response
     from .. import takeover
 
     st = get_state(request)
-    await run_in_threadpool(takeover.delete_ssid, st.db, tid, _uuid(request.path_params["site_id"]),
+    sid = _uuid(request.path_params["site_id"])
+    await run_in_threadpool(takeover.delete_ssid, st.db, tid, sid,
                             _uuid(request.path_params["ssid_id"]), p.user_id, client_ip(request))
-    return json_response({"ok": True})
+    return json_response({"ok": True, "apply": await _autoapply(st, p, tid, sid, request, switches=False)})
 
 
 @endpoint(READ)
@@ -1289,6 +1369,7 @@ async def site_ap_group(request: Request, p: Principal, tid: str) -> Response:
         raise ServiceError("vyber zařízení")
     out = await run_in_threadpool(takeover.set_ap_group, st.db, tid, sid, [_uuid(str(d)) for d in devs], group,
                                   p.user_id, client_ip(request))
+    out["apply"] = await _autoapply(st, p, tid, sid, request, switches=False)
     return json_response(out)
 
 
@@ -1681,6 +1762,7 @@ def routes() -> list[Route]:
         Route(s + "/ports", site_ports, methods=["GET"]),
         Route(s + "/wifi/rogue", site_rogue, methods=["GET", "POST"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
+        Route(T + "/plans/status", plan_status, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),
         Route(T + "/alerts/{alert_id}/ack", alert_ack, methods=["POST"]),

@@ -58,6 +58,20 @@ def _device_post(app, path, key=None, body=None):
     return d.post(path, json_body=body or {}, headers=headers)
 
 
+def _drain_until(app, key, needle, limit=12):
+    """Check-iny s potvrzením (ack done), dokud zařízení nedostane skript s `needle`.
+    Změny záměru se nasazují hned po uložení, takže ve frontě bývá víc příkazů."""
+    for _ in range(limit):
+        s = _device_post(app, "/api/checkin", key, {"sstp": "up"}).text
+        if needle in s:
+            return s
+        m = re.search(r"ack\\\?id=(\d+)", s)
+        if not m:
+            raise AssertionError(f"{needle!r} nedoručeno, poslední: {s[:300]}")
+        _device_post(app, f"/api/checkin/ack?id={m.group(1)}&status=done", key)
+    raise AssertionError(f"{needle!r} nedoručeno ani po {limit} check-inech")
+
+
 def test_old_checkin_script_gets_reinstalled():
     """Zařízení se starším skriptem check-inu (bez `sv`) dostane jednou jeho přeinstalaci:
     nový skript při chybě TLS sám dosadí CA controlleru (stejný otisk)."""

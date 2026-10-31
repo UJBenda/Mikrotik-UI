@@ -435,7 +435,7 @@ Controller nesmí nic převzít ani předělat sám od sebe. Platí tato pravidl
 5. **Změny jen přes plány**: požadovaný stav → diff proti inventuře → plán (skript +
    popis) → schválení → doručení frontou příkazů → potvrzení. Plán je vázaný na
    konkrétní stav zařízení (`basis_sha`); když se zařízení mezitím změní, plán propadne.
-   Pro moduly v `security.four_eyes_modules` (výchozí VLAN, firewall) musí schválit
+   Pro moduly v `security.four_eyes_modules` (výchozí jen firewall) musí schválit
    jiný uživatel než autor.
 
 ### VLAN a bridge
@@ -1049,3 +1049,22 @@ Pod čarou: Všechny lokality (seznam, hledání klienta v tenantovi), Uživatel
 - Podzáložky si prohlížeč pamatuje (`prefs.sub`); po změně lokality se otevřená sekce načte znovu.
 - Etapa 2 (backend) přinese automatické nasazení změn záměru a řetězec adopce; potom zmizí
   tlačítka „Připravit VLAN lokality“, „Sladit řízená zařízení“ a moduly observe/manage z panelu.
+
+## Uložit = nasadit (etapa 2a)
+
+`autoapply.py`: po uložení sítí lokality, SSID, skupin AP, výjimek zařízení nebo portu řízeného
+switche se pro **řízená** zařízení spočítá rozdíl (`switchcfg.reconcile`, CAPsMAN), plán se hned
+schválí pod jménem uživatele a zařízení se probudí (kick). Commit-confirm s návratem do 5 minut
+platí dál, plány zůstávají jako žurnál (Aktivita → Změny). Odpověď API nese `apply`
+(`applying` / `draft` / `blocked` / `ok` po zařízeních); UI ukáže neblokující ukazatel
+„Aplikuji změny… → Hotovo“ podle `GET /tenants/{tid}/plans/status?ids=`.
+
+- Ke schválení zůstane plán u uživatele bez práva schvalovat (technik) a u modulů ve
+  `security.four_eyes_modules` (výchozí jen `firewall`; kdo přidá `switch`/`capsman`, má čtyři oči i na sítě).
+- CAPsMAN se plánuje jen při změně skriptu proti poslednímu nasazenému.
+- **Porty řízeného switche**: VLAN část (PVID, tagované, vypnutí) se uloží jako výjimka záměru
+  zařízení a sladí; PoE, popis, edge a hlídač jdou plánem portu. Všechny sítě lokality tagovaně
+  = `trunk`, bez tagovaných = `access`, jinak nový režim `hybrid` (native VLAN + vybrané tagované).
+  Změna, kterou model odmítne (uplink jako access), se neuloží.
+- Řízené zařízení má spravovatelné moduly vždy `manage` (přepínače observe/manage jen u sledovaných);
+  LACP a „Připravit VLAN lokality“ jen u sledovaných (porty řízeného určuje záměr).

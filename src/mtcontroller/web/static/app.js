@@ -276,6 +276,44 @@ async function loadTenant() {
 
 let alertsCache = [];
 
+// --- Uložit = nasadit: neblokující ukazatel průběhu (plány s automatickým návratem běží dál) ---
+const APPLY_FINAL = { applied: "hotovo", rolled_back: "vráceno zařízením", failed: "selhalo", superseded: "zastaralé", discarded: "zahozeno" };
+let applyTimer = null;
+function showApply(ap) {
+  if (!ap) return;
+  const items = [...(ap.devices || []), ...(ap.wifi ? [ap.wifi] : [])];
+  for (const x of items.filter((i) => i.result === "blocked")) msg(`${x.device || "zařízení"}: ${x.reason}`, true);
+  const drafts = items.filter((i) => i.result === "draft");
+  if (drafts.length) msg(`${drafts.length === 1 ? "Změna čeká" : `${drafts.length} změn čeká`} na schválení – ${drafts[0].reason || "Aktivita → Změny"}`, true);
+  loadPlans();
+  const going = items.filter((i) => i.result === "applying" && i.plan_id);
+  if (!going.length) return;
+  const bar = $("apply-bar");
+  const n = new Set(going.map((x) => x.device_id)).size;
+  const t0 = Date.now();
+  bar.hidden = false; bar.className = "apply-bar";
+  bar.textContent = `Aplikuji změny na ${n} ${n === 1 ? "zařízení" : n < 5 ? "zařízeních" : "zařízeních"} (automatický návrat do 5 min při ztrátě spojení)…`;
+  clearInterval(applyTimer);
+  const ids = going.map((x) => x.plan_id).join(",");
+  const tick = async () => {
+    let st;
+    try { st = await api("GET", `/tenants/${tenantId}/plans/status?ids=${ids}`); } catch (_e) { return; }
+    const left = st.filter((x) => !APPLY_FINAL[x.status]);
+    const bad = st.filter((x) => ["rolled_back", "failed"].includes(x.status));
+    if (left.length && Date.now() - t0 < 8 * 60000) {
+      bar.textContent = `Aplikuji změny: ${st.length - left.length}/${st.length} hotovo (automatický návrat do 5 min při ztrátě spojení)…`;
+      return;
+    }
+    clearInterval(applyTimer);
+    bar.className = "apply-bar " + (bad.length ? "fail" : left.length ? "" : "done");
+    bar.textContent = bad.length ? `Změna na ${bad.map((x) => x.device).join(", ")} ${APPLY_FINAL[bad[0].status]} – podrobnosti v Aktivitě → Změny`
+      : left.length ? "Změny se ještě aplikují – průběh v Aktivitě → Změny" : "Hotovo";
+    setTimeout(() => { bar.hidden = true; }, bad.length ? 15000 : 5000);
+    loadPlans();
+  };
+  applyTimer = setInterval(tick, 3000);
+}
+
 // --- přehled: dlaždice s proklikem na seznam zařízení a problémů (s akcemi k řešení) ---
 let ovDrill = null;          // klíč otevřené dlaždice
 let securityCache = null;    // nálezy všech zařízení (načtou se při otevření dlaždice)
@@ -1119,8 +1157,9 @@ async function setCapsmanHost(deviceId, siteOverride) {
   if (!(await ask(text, deviceId ? "Nastavit" : "Vypnout"))) return;
   const wifi = { ...(v.intent.wifi || {}), capsman_device_id: deviceId || null };
   try {
-    await api("PUT", `/tenants/${tenantId}/sites/${sid}/intent`, { ...v.intent, wifi });
-    msg(deviceId ? `${d.name} je CAPsMAN lokality – dál: SSID a „Nasadit Wi-Fi“ v Nastavení lokality → Wi-Fi` : "CAPsMAN vypnut v záměru");
+    const r = await api("PUT", `/tenants/${tenantId}/sites/${sid}/intent`, { ...v.intent, wifi });
+    msg(deviceId ? `${d.name} je CAPsMAN lokality` : "CAPsMAN vypnut v záměru");
+    showApply(r.apply);
     if (!$("view-settings").hidden && !$("wifiset-wrap").hidden) { renderCapsmanCard(); loadIntent(); }
   } catch (e) { msg(e.message, true); }
 }
@@ -2429,7 +2468,7 @@ async function bulkPorts(names, body) {
     const r = await api("POST", `/tenants/${tenantId}/ports/bulk`, { targets: [{ device_id: detailId, ports: names }], ...body, apply: true });
     for (const x of r.results) {
       if (x.error) msg(x.error, true);
-      else { msg(`Odesláno: ${x.summary}`); for (const w of x.warnings || []) msg(w, true); }
+      else { msg(`Odesláno: ${x.summary || "VLAN portů podle sítí lokality"}`); for (const w of x.warnings || []) msg(w, true); showApply(x.apply); }
     }
     clearPortPick(); loadPlans();
   } catch (e) { msg(e.message, true); }
@@ -2626,17 +2665,20 @@ async function loadPortEditor(port) {
   const send = async (apply) => {
     try {
       const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(port)}/plan`, { desired: desired(), apply });
-      msg(apply ? `Odesláno: ${r.summary}. Zařízení změnu provede do minuty; když se do 5 min neozve, samo ji vrátí.`
+      msg(apply || r.managed ? `Odesláno: ${r.summary}. Zařízení změnu provede do minuty; když se do 5 min neozve, samo ji vrátí.`
                 : `Plán uložen: ${r.summary} (čeká na schválení v Aktivitě → Změny)`);
+      showApply(r.apply);
       for (const w of r.warnings || []) msg(w, true);
       loadPlans();
     } catch (e) { msg(e.message, true); }
   };
   const acts = el("div", null, "pe-acts");
-  const go = el("button", "Použít (s automatickým návratem)", "small"); go.type = "button";
-  go.onclick = async () => { if ((await ask("Použít změnu portu? Když se zařízení po změně do 5 minut neozve, vrátí ji samo."))) send(true); };
-  const save = el("button", "Uložit jako plán", "small secondary"); save.type = "button"; save.onclick = () => send(false);
-  acts.append(go, save);
+  // řízené zařízení: Uložit = nasadit (VLAN podle sítí lokality), sledované: použít nebo jen plán
+  const go = el("button", st.managed ? "Uložit" : "Použít (s automatickým návratem)", "small"); go.type = "button";
+  go.title = "Když se zařízení po změně do 5 minut neozve, vrátí ji samo";
+  go.onclick = async () => { if (st.managed || (await ask("Použít změnu portu? Když se zařízení po změně do 5 minut neozve, vrátí ji samo."))) send(true); };
+  acts.append(go);
+  if (!st.managed) { const save = el("button", "Uložit jako plán", "small secondary"); save.type = "button"; save.onclick = () => send(false); acts.append(save); }
   if (st.bridge || poe) {
     const mk = el("button", "Uložit jako profil…", "small secondary"); mk.type = "button";
     mk.onclick = async () => {
@@ -3059,7 +3101,7 @@ async function spBulk(body) {
     let ok = 0;
     for (const x of r.results) {
       const dn = ((spData.devices || []).find((d) => d.device_id === x.device_id) || {}).device || "switch";
-      if (x.error) msg(`${dn}: ${x.error}`, true); else { ok++; for (const w of x.warnings || []) msg(`${dn}: ${w}`, true); }
+      if (x.error) msg(`${dn}: ${x.error}`, true); else { ok++; for (const w of x.warnings || []) msg(`${dn}: ${w}`, true); showApply(x.apply); }
     }
     if (ok) msg(apply ? `Odesláno na ${ok} switch${ok === 1 ? "" : "e"} – změny se do 5 min samy vrátí, když se switch neozve` : `Uloženo ${ok} plánů ke schválení`);
     loadPlans(); setTimeout(loadSitePorts, 1500);
@@ -4031,6 +4073,7 @@ async function openDetail(id) {
     ["RouterBOOT", sm.firmware ? `${sm.firmware}${sm.firmware_upgrade && sm.firmware_upgrade !== sm.firmware ? " → " + sm.firmware_upgrade : ""}` : null],
     ["Uptime", sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} %${sm.cpu ? ` (${sm.cpu})` : ""}` : null],
     ["Paměť", sm.memory_used_pct != null ? `${sm.memory_used_pct} %` : null], ["Úložiště", sm.hdd_used_pct != null ? `${sm.hdd_used_pct} %` : null],
+    ["Režim", dev.managed_at ? "Řízené – controller nastavuje porty, VLAN, NTP a Wi-Fi" : "Sledované – controller jen čte"],
     ["Lokalita", dev.site], ["Poznámka", dev.note], isLocal() ? ["Adresa správy", dev.tunnel_ip || "–"] : ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
     ["Check-in", fmtTime(dev.last_checkin_at)], ["Inventura", fmtTime(dev.inventory_at)], ["Záloha", fmtTime(dev.backup_at)],
   ]);
@@ -5159,13 +5202,13 @@ async function patchSsid(x, change) {
   try {
     const r = await api("PUT", `${sitePath()}/ssids/${x.id}`, body);
     for (const w of r.warnings || []) msg(w);
-    msg(`Wi-Fi ${x.ssid} upravena – na AP se projeví po „Nasadit Wi-Fi“`); loadIntent();
+    msg(`Wi-Fi ${x.ssid} upravena`); showApply(r.apply); loadIntent();
   } catch (e) { msg(e.message, true); }
 }
 
 async function deleteSsid(x) {
-  if (!(await ask(`Smazat Wi-Fi ${x.ssid}? Z AP zmizí po dalším nasazení Wi-Fi.`, "Smazat"))) return false;
-  try { await api("DELETE", `${sitePath()}/ssids/${x.id}`); msg(`Wi-Fi ${x.ssid} smazána`); loadIntent(); return true; }
+  if (!(await ask(`Smazat Wi-Fi ${x.ssid}? Z AP hned zmizí.`, "Smazat"))) return false;
+  try { const r = await api("DELETE", `${sitePath()}/ssids/${x.id}`); msg(`Wi-Fi ${x.ssid} smazána`); showApply(r.apply); loadIntent(); return true; }
   catch (e) { msg(e.message, true); return false; }
 }
 
@@ -5283,7 +5326,7 @@ $("sd-save").addEventListener("click", async () => {
   try {
     const r = x.id ? await api("PUT", `${sitePath()}/ssids/${x.id}`, body) : await api("POST", `${sitePath()}/ssids`, body);
     for (const w of r.warnings || []) msg(w);
-    msg(`Wi-Fi ${body.ssid} uložena – na AP se projeví po „Nasadit Wi-Fi“`);
+    msg(`Wi-Fi ${body.ssid} uložena`); showApply(r.apply);
     sdClose(); loadIntent();
   } catch (e) { ul.appendChild(el("li", e.message, "sev-error")); }
 });
@@ -5389,7 +5432,7 @@ function apChip(d) {
 async function moveAps(ids, group) {
   try {
     const r = await api("POST", `${sitePath()}/ap-groups`, { devices: ids, group });
-    msg(`${r.moved || ids.length} AP → ${group ? groupName(group) : "bez skupiny"} · projeví se po „Nasadit Wi-Fi“`);
+    msg(`${r.moved || ids.length} AP → ${group ? groupName(group) : "bez skupiny"}`); showApply(r.apply);
     apSel.clear(); loadIntent();
   } catch (e) { msg(e.message, true); }
 }
@@ -5398,7 +5441,7 @@ async function moveAps(ids, group) {
 async function saveGroups(groups, done) {
   const w = wifiPolicy();
   const body = { ...intentData.intent, wifi: { ...w, groups } };
-  try { const r = await api("PUT", `${sitePath()}/intent`, body); msg(done); loadIntent(); return r; }
+  try { const r = await api("PUT", `${sitePath()}/intent`, body); msg(done); showApply(r.apply); loadIntent(); return r; }
   catch (e) { msg(e.message, true); return null; }
 }
 async function addGroup() {
@@ -5512,7 +5555,7 @@ async function saveIntent() {
             dfs: $("wifi-dfs").checked, country: $("wifi-country").value.trim(), groups: wifiGroups,
             tx_power: $("wifi-tx").value, steering: $("wifi-steer").checked, rogue_scan: $("wifi-rogue").checked ? "night" : "off" },
   };
-  try { await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/intent`, body); msg("Záměr lokality uložen"); loadIntent(); }
+  try { const r = await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/intent`, body); msg("Sítě lokality uloženy"); showApply(r.apply); loadIntent(); }
   catch (e) { msg(e.message, true); }
 }
 const SYNC_RESULT = { ok: "beze změn", plan: "plán čeká na schválení", auto: "jen přidání VLAN – aplikuje se samo",
@@ -5661,7 +5704,7 @@ $("ctl-save").addEventListener("click", async () => {
   const mode = $("ctl-mgmt-mode").value;
   const body = { ports: ctlOver, mgmt: mode ? { mode, address: $("ctl-mgmt-addr").value.trim() } : {},
                  role: $("ctl-role").value === "capsman" ? "switch" : $("ctl-role").value };
-  try { await api("PUT", `/tenants/${tenantId}/devices/${detailId}/intent`, body); msg("Výjimky uloženy"); loadControl(detailId); }
+  try { const r = await api("PUT", `/tenants/${tenantId}/devices/${detailId}/intent`, body); msg("Výjimky uloženy"); showApply(r.apply); loadControl(detailId); }
   catch (e) { msg(e.message, true); }
 });
 $("ctl-go").addEventListener("click", async () => {

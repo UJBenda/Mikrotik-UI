@@ -21,6 +21,7 @@ from .services import NotFound, ServiceError, _s, audit, enqueue
 MODULES = {"ntp", "ports", "vlan", "firewall", "capsman", "dhcp_snooping", "dhcp"}
 MANAGEABLE = {"ntp", "ports", "dhcp_snooping", "dhcp"}
 CONFIRM_MINUTES = 5  # výchozí okno pro potvrzení změny s automatickým návratem
+NO_CHANGE = "žádná změna oproti aktuálnímu stavu"
 
 
 def basis_for(module: str, inv: dict) -> str:
@@ -73,8 +74,12 @@ def set_module_mode(db: Database, tenant_id: Any, device_id: Any, module: str, m
 
 
 def module_modes(tx: Tx, device_id: Any) -> dict[str, str]:
+    """Režim modulů zařízení. Řízené zařízení (převzaté do řízení) má spravovatelné moduly vždy `manage`."""
     rows = tx.fetchall("SELECT module, mode FROM device_module WHERE device_id = %(d)s", {"d": str(device_id)})
-    return {m: "observe" for m in MODULES} | {r["module"]: r["mode"] for r in rows}
+    out = {m: "observe" for m in MODULES} | {r["module"]: r["mode"] for r in rows}
+    if tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND managed_at IS NOT NULL", {"d": str(device_id)}):
+        out |= {m: "manage" for m in MANAGEABLE}
+    return out
 
 
 def set_site_policy(db: Database, tenant_id: Any, site_id: Any, module: str, data: dict,
@@ -226,6 +231,8 @@ def approve_plan(db: Database, settings: Settings, tenant_id: Any, plan_id: int,
             pass  # oprava bezpečnostního nálezu – výslovná volba uživatele, s automatickým návratem
         elif p["module"] == "switch":
             raise ServiceError("sladění se záměrem je jen pro řízená zařízení")
+        elif p["module"] in MANAGEABLE and p["managed_at"] is not None:
+            pass  # řízené zařízení: controller spravuje vše kolem switchingu (bez přepínačů modulů)
         elif module_modes(tx, p["device_id"]).get(p["module"]) != "manage":
             raise ServiceError(f"modul {p['module']} je na zařízení v režimu observe – nejdřív přepni na manage")
         if p["state"] not in ("adopted", "offline"):
@@ -273,7 +280,7 @@ def create_port_plan(db: Database, tenant_id: Any, device_id: Any, port: str, de
         except portcfg.PortError as e:
             raise ServiceError(str(e)) from e
         if not p["changes"]:
-            raise ServiceError("žádná změna oproti aktuálnímu stavu")
+            raise ServiceError(NO_CHANGE)
         tx.execute("""UPDATE config_plan SET status = 'superseded' WHERE device_id = %(d)s AND module = 'ports'
                       AND status = 'draft' AND changes->>'port' = %(p)s""", {"d": str(device_id), "p": port})
         row = tx.fetchone(
@@ -302,7 +309,7 @@ def _ports_ready(tx: Tx, device_id: Any) -> dict:
 def _insert_ports_plan(tx: Tx, tenant_id: Any, device_id: Any, inv: dict, p: dict, chg: dict,
                        user_id: Any, ip: str | None) -> dict:
     if not p["changes"]:
-        raise ServiceError("žádná změna oproti aktuálnímu stavu")
+        raise ServiceError(NO_CHANGE)
     row = tx.fetchone(
         """INSERT INTO config_plan (tenant_id, device_id, module, summary, changes, script, revert_script,
                                     confirm_minutes, basis_sha, created_by)
@@ -336,6 +343,10 @@ def create_bond_plan(db: Database, tenant_id: Any, device_id: Any, kind: str, pa
 
     with tenant_scope(db, tenant_id) as tx:
         inv = _ports_ready(tx, device_id)
+        if tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND managed_at IS NOT NULL", {"d": str(device_id)}):
+            # porty i VLAN řízeného switche určuje záměr – bond by sladění rozbilo, VLAN přidá sladění samo
+            raise ServiceError("řízené zařízení: VLAN lokality nasazuje controller sám" if kind == "site_vlans"
+                               else "řízené zařízení: LACP zatím jen u sledovaných zařízení")
         try:
             if kind == "lacp":
                 vlan = params.get("vlan") if isinstance(params.get("vlan"), dict) else None
@@ -438,7 +449,7 @@ def create_lease_plan(db: Database, tenant_id: Any, device_id: Any, server: str,
         except ValueError as e:
             raise ServiceError(str(e)) from e
         if not p["changes"]:
-            raise ServiceError("žádná změna oproti aktuálnímu stavu")
+            raise ServiceError(NO_CHANGE)
         m = leases.norm_mac(mac)
         tx.execute("""UPDATE config_plan SET status = 'superseded' WHERE device_id = %(d)s AND module = 'dhcp'
                       AND status = 'draft' AND changes->>'mac' = %(m)s AND changes->>'server' = %(s)s""",
@@ -472,7 +483,7 @@ def create_network_plan(db: Database, tenant_id: Any, device_id: Any, server: st
         except ValueError as e:
             raise ServiceError(str(e)) from e
         if not p["changes"]:
-            raise ServiceError("žádná změna oproti aktuálnímu stavu")
+            raise ServiceError(NO_CHANGE)
         tx.execute("""UPDATE config_plan SET status = 'superseded' WHERE device_id = %(d)s AND module = 'dhcp'
                       AND status = 'draft' AND changes->>'network' = %(s)s""", {"d": str(device_id), "s": server})
         row = tx.fetchone(

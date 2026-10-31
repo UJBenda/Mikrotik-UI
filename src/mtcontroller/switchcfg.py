@@ -338,6 +338,16 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
             if vid not in vids:
                 blockers.append(f"{port}: VLAN {vid} není v sítích lokality")
             item.update(pvid=vid, frame_types=FT_ACCESS, loop=True)
+        elif mode == "hybrid":
+            # vlastní profil: native VLAN netagovaně + vybrané tagované (telefon + PC, AP cizí značky)
+            vid = int(o.get("vlan") or intent["access_vlan"])
+            if vid not in vids:
+                blockers.append(f"{port}: VLAN {vid} není v sítích lokality")
+            gone = [v for v in o.get("tagged") or [] if v not in vids]
+            if gone:
+                warnings.append(f"{port}: tagované VLAN {', '.join(map(str, gone))} už nejsou v sítích lokality – vynechány")
+            item.update(pvid=vid, tagged=[v for v in o.get("tagged") or [] if v in vids and v != vid],
+                        frame_types=FT_ALL, loop=True)
         elif mode == "trunk":
             item.update(pvid=mg_vid if native else 1, frame_types=FT_ALL if native else FT_TRUNK_TAGGED, loop=False)
         else:
@@ -353,8 +363,10 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         for it in out_ports:
             if it["mode"] == "trunk":
                 (untagged if native and vid == mg_vid else tagged).append(it["port"])
-            elif it["mode"] == "access" and it["pvid"] == vid:
+            elif it["mode"] in ("access", "hybrid") and it["pvid"] == vid:
                 untagged.append(it["port"])
+            elif it["mode"] == "hybrid" and vid in it["tagged"]:
+                tagged.append(it["port"])
         vlans.append({"vid": vid, "name": n["name"], "tagged": tagged, "untagged": untagged})
     mnet = intentmod.network(intent, mg_vid) or {}
     dm = (dev_intent.get("mgmt") or {})

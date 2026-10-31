@@ -908,3 +908,9 @@ tr.rogue-row td { color: var(--bad); font-weight: 600; }
   .nav-sep { flex: none; min-height: 0; border-bottom: 0; border-left: 1px solid var(--line); margin: 4px 6px; }
   #detail.dev-drawer { width: 100vw; }
 }
+
+/* Uložit = nasadit: ukazatel průběhu (neblokuje práci) */
+.apply-bar { position: fixed; top: 52px; left: 50%; transform: translateX(-50%); z-index: 45; max-width: min(720px, 92vw);
+             padding: 8px 14px; border-radius: 8px; background: var(--card); border: 1px solid var(--line);
+             border-left: 4px solid var(--accent); box-shadow: 0 6px 20px rgba(0, 0, 0, .15); font-size: 13px; }
+.apply-bar.done { border-left-color: var(--ok); } .apply-bar.fail { border-left-color: var(--bad); }

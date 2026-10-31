@@ -25,7 +25,7 @@ PURPOSES = {
     "jine": "jiné",
 }
 MAX_NETWORKS = 64
-PORT_MODES = ("access", "trunk", "off")
+PORT_MODES = ("access", "trunk", "hybrid", "off")
 PORT_NAME_RE = re.compile(r"^[A-Za-z0-9._+-]{1,64}$")
 
 
@@ -136,7 +136,8 @@ def network(intent: dict, vid: int) -> dict | None:
 
 
 def validate_device(data: dict, intent: dict | None, ports: set[str] | None = None) -> dict:
-    """Výjimky zařízení: {"ports": {port: {"mode": access|trunk|off, "vlan": vid}},
+    """Výjimky zařízení: {"ports": {port: {"mode": access|trunk|hybrid|off, "vlan": vid, "tagged": [vid]}},
+    hybrid = native VLAN `vlan` + vybrané tagované (vlastní profil portu);
     "mgmt": {"mode": "dhcp"} | {"mode": "static", "address": "a.b.c.d/nn"}}."""
     if not isinstance(data, dict):
         raise IntentError("výjimky musí být objekt")
@@ -154,9 +155,17 @@ def validate_device(data: dict, intent: dict | None, ports: set[str] | None = No
         if ports is not None and port not in ports:
             raise IntentError(f"port {port} na zařízení není")
         if not isinstance(p, dict) or p.get("mode") not in PORT_MODES:
-            raise IntentError(f"port {port}: režim musí být access, trunk nebo off")
+            raise IntentError(f"port {port}: režim musí být access, trunk, hybrid nebo off")
         item: dict[str, Any] = {"mode": p["mode"]}
-        if p["mode"] == "access" and p.get("vlan") not in (None, ""):
+        if p["mode"] == "hybrid":
+            raw = p.get("tagged") or []
+            if not isinstance(raw, list) or len(raw) > 64:
+                raise IntentError(f"port {port}: tagované VLAN – seznam (max. 64)")
+            tagged = sorted({_vid(x, f"port {port}") for x in raw})
+            if vids and set(tagged) - vids:
+                raise IntentError(f"port {port}: VLAN {', '.join(map(str, sorted(set(tagged) - vids)))} není v sítích lokality")
+            item["tagged"] = tagged
+        if p["mode"] in ("access", "hybrid") and p.get("vlan") not in (None, ""):
             vid = _vid(p.get("vlan"), f"port {port}")
             if vids and vid not in vids:
                 raise IntentError(f"port {port}: VLAN {vid} není v sítích lokality")

@@ -163,7 +163,7 @@ def _wifi_env():
 
 def test_wifi_flow():
     from helpers import drop_db
-    from test_flow import _device_post, _login
+    from test_flow import _device_post, _drain_until, _login
     from test_switchcfg import INTENT_RAW
 
     db, name, settings, box, app, tid, sid, host, ap, operator_scope = _wifi_env()
@@ -218,7 +218,8 @@ def test_wifi_flow():
         r = c.post(base + f"/plans/{pid}/approve", json_body={})
         assert r.status_code == 200, r.text
         # doručení na zařízení s CAPsMANem: hesla dosazená, bez tokenů a bez návratu
-        s = _device_post(app, "/api/checkin", "key-SW1", {"sstp": "up"}).text
+        # (před ním ve frontě čekají plány nasazené rovnou po uložení sítí a SSID)
+        s = _drain_until(app, "key-SW1", f"id={r.json()['command_id']}&status")
         assert 'passphrase="Tajne-heslo-123" ft=no' in s and 'passphrase="hoste-2026" ft=yes' in s
         assert "MTCPSK" not in s and "mtc-revert" not in s
         cid = int(re.search(r"ack\\\?id=(\d+)", s).group(1))
@@ -346,7 +347,7 @@ def test_cap_table_by_mac():
 def test_groups_ppsk_flow():
     """Skupiny AP, více hesel (šifrovaně, odhalení s auditem), plán CAPsMAN s hesly, tabulka VLAN na AP."""
     from helpers import drop_db
-    from test_flow import _device_post, _login
+    from test_flow import _device_post, _drain_until, _login
     from test_switchcfg import INTENT_RAW
 
     from mtcontroller import inventory, takeover
@@ -406,8 +407,9 @@ def test_groups_ppsk_flow():
         r5 = next(r for r in w["radios"] if r["band"] == "5")
         assert r5["group"] == "g-sklad" and r5["chip"] == "ax" and r5["ssids"] == ["Firma"]
         pid = c.post(S + "/wifi/plan", json_body={}).json()["plan_id"]
-        assert c.post(base + f"/plans/{pid}/approve", json_body={}).status_code == 200
-        s = _device_post(app, "/api/checkin", "key-SW1", {"sstp": "up"}).text
+        r = c.post(base + f"/plans/{pid}/approve", json_body={})
+        assert r.status_code == 200
+        s = _drain_until(app, "key-SW1", f"id={r.json()['command_id']}&status")
         assert '"hoste-heslo-1" vlan-id=20' in s and "MTCMP" not in s
         cid = int(re.search(r"ack\\\?id=(\d+)", s).group(1))
         _device_post(app, f"/api/checkin/ack?id={cid}&status=done", "key-SW1")
@@ -427,8 +429,7 @@ def test_groups_ppsk_flow():
             {"mac": "48:A9:8A:00:00:01", "ssid": "Firma", "pvid": 10, "tagged": [20]}]
         assert '"48:A9:8A:00:00:01"="10|20"' in p["script"].replace('\\"', '"')
         # doručení na AP; po úspěchu se stejná tabulka znovu neplánuje, dokud ji inventura neuvidí
-        s = _device_post(app, "/api/checkin", "key-AP1", {"sstp": "up"}).text
-        assert "mtc-wifi-vlan" in s
+        s = _drain_until(app, "key-AP1", "mtc-wifi-vlan")
         cid = int(re.search(r"ack\\\?id=(\d+)", s).group(1))
         _device_post(app, f"/api/checkin/ack?id={cid}&status=done", "key-AP1")
         assert takeover.sync_wifi_tables(db, settings, tid, sid) == 0

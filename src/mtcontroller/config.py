@@ -58,7 +58,9 @@ class SecurityConfig(BaseModel):
     # z http://<checkin_host>/mtc-ca.crt a ponechá jen při shodě otisku; prázdné = veřejná CA
     device_ca_file: Path | None = None
     # moduly, jejichž plány musí schválit jiný uživatel než autor
-    four_eyes_modules: list[str] = Field(default_factory=lambda: ["vlan", "firewall"])
+    # sítě, Wi-Fi a porty řízených zařízení se nasazují hned po uložení (s automatickým návratem);
+    # modul přidaný sem (např. "switch", "capsman") pak čeká na schválení druhým správcem
+    four_eyes_modules: list[str] = Field(default_factory=lambda: ["firewall"])
 
     @field_validator("device_check_certificate")
     @classmethod

@@ -171,9 +171,9 @@
             <label><input type="checkbox" id="intent-auto"> Trunky rozšiřovat automaticky</label>
           </div>
           <div class="intent-acts">
-            <button id="intent-save" type="button" class="small">Uložit záměr</button>
+            <button id="intent-save" type="button" class="small">Uložit a nasadit</button>
             <button id="intent-suggest" type="button" class="small secondary" hidden>Načíst ze stávající sítě</button>
-            <button id="intent-sync" type="button" class="small secondary">Sladit řízená zařízení</button>
+            <button id="intent-sync" type="button" class="small secondary" hidden>Sladit řízená zařízení</button>
           </div>
           <ul id="intent-devs" class="intent-devs"></ul>
           <ul id="intent-result"></ul>
@@ -845,6 +845,7 @@
     </div>
   </div>
   <div id="msg" role="status"></div>
+  <div id="apply-bar" class="apply-bar" role="status" hidden></div>
 </main>
 </body>
 </html>
