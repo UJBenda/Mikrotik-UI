@@ -914,3 +914,11 @@ tr.rogue-row td { color: var(--bad); font-weight: 600; }
              padding: 8px 14px; border-radius: 8px; background: var(--card); border: 1px solid var(--line);
              border-left: 4px solid var(--accent); box-shadow: 0 6px 20px rgba(0, 0, 0, .15); font-size: 13px; }
 .apply-bar.done { border-left-color: var(--ok); } .apply-bar.fail { border-left-color: var(--bad); }
+
+/* adopce na jeden krok */
+.ad-roles { display: flex; flex-direction: column; gap: 6px; }
+.ad-roles .check { align-items: baseline; gap: 6px; }
+.flow-chip { display: inline-block; margin-top: 3px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 600;
+             background: var(--accent-weak); color: var(--accent); }
+.flow-chip.warn { background: var(--warn-weak); color: var(--warn); } .flow-chip.bad { background: var(--bad-weak); color: var(--bad); }
+#adopt-dlg .pe-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }

@@ -624,30 +624,110 @@ async function forgetDevice(d) {
   catch (e) { msg(e.message, true); }
 }
 
+// adopce na jeden krok: jméno, role, skupina AP – zbytek (převzetí, Wi-Fi) udělá controller sám
 function approveControls(d) {
-  const wrap = el("span");
-  const site = el("select");
-  for (const s of sites) { const o = el("option", s.name); o.value = s.id; site.appendChild(o); }
-  if (d.site_id) site.value = d.site_id;
-  const role = el("select");
-  for (const r of ["unknown", "gateway", "switch", "ap", "ptp"]) { const o = el("option", r); o.value = r; role.appendChild(o); }
-  // jméno zařízení: pošle se hned po provisioningu (prázdné = ponechat to z RouterOS)
-  const name = el("input", null, "id-input"); name.maxLength = 63; name.size = 14;
-  name.placeholder = d.identity ? `jméno (${d.identity})` : "jméno, např. SW-sklad";
-  name.title = "Jméno zařízení (/system identity) – nastaví se po schválení";
-  const b = el("button", "Schválit", "small");
-  b.onclick = async () => {
-    const nm = name.value.trim();
-    if (!(await ask(`Schválit zařízení ${d.serial} (${d.model})${nm ? ` jako ${nm}` : ""}?`))) return;
-    try {
-      const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/approve`, { site_id: site.value, role: role.value, identity: nm || null });
-      if (r.concentrator_errors.length) msg("Schváleno, ale koncentrátor: " + r.concentrator_errors.join("; "), true);
-      else msg("Schváleno – provisioning proběhne při dalším check-inu");
-      loadDevices();
-    } catch (e) { msg(e.message, true); }
-  };
-  wrap.append(name, " ", site, " ", role, " ", b);
-  return wrap;
+  const b = el("button", "Adoptovat…", "small"); b.type = "button";
+  b.disabled = !canOperate();
+  b.onclick = () => openAdopt(d);
+  return b;
+}
+
+// výchozí role podle modelu: AP řady (cAP, wAP, hAP…) → AP + switch, routery → jen sledovat
+function suggestMode(d, hasNets) {
+  const m = String(d.model || "");
+  if (/^(cAP|wAP|hAP|Audience|Chateau|wsAP|mAP)/i.test(m)) return hasNets ? "ap" : "switch";
+  if (/^(CCR|RB5009|RB4011|RB3011|RB1100|hEX|RB750|RB760|L009|RB2011UiAS-IN)/i.test(m)) return "monitor";
+  return "switch";
+}
+
+let adoptDev = null;
+async function openAdopt(d) {
+  adoptDev = d;
+  $("ad-sub").textContent = `${d.serial}${d.model ? " · " + d.model : ""}${d.ros_version ? " · " + d.ros_version : ""}`;
+  $("ad-name").value = ""; $("ad-name").placeholder = d.identity ? `${d.identity} (ponechat)` : "např. SW-sklad";
+  const ss = $("ad-site"); ss.textContent = "";
+  for (const st of sites) { const o = el("option", st.name); o.value = st.id; ss.appendChild(o); }
+  ss.value = d.site_id || siteId() || (sites[0] || {}).id || "";
+  await adoptSiteChanged(true);
+  $("adopt-dlg").hidden = false;
+  try { $("ad-name").focus(); } catch (_e) { /* fokus není podstatný */ }
+}
+async function adoptSiteChanged(suggest) {
+  let it = null;
+  try { it = await api("GET", `/tenants/${tenantId}/sites/${$("ad-site").value}/intent`); } catch (_e) { it = null; }
+  const nets = !!(it && it.intent && it.intent.networks.length);
+  const groups = (it && it.intent && (it.intent.wifi || {}).groups) || [];
+  const g = $("ad-group"); g.textContent = "";
+  const o0 = el("option", "bez skupiny (všechna SSID)"); o0.value = ""; g.appendChild(o0);
+  for (const x of groups) { const o = el("option", x.name); o.value = x.id; g.appendChild(o); }
+  adoptState.groups = groups.length; adoptState.nets = nets;
+  if (suggest) { const m = suggestMode(adoptDev, nets); for (const k of ["switch", "ap", "monitor"]) $("ad-m-" + k).checked = k === m; }
+  adoptModeChanged();
+}
+const adoptState = { groups: 0, nets: false };
+function adoptMode() { return ["switch", "ap", "monitor"].find((k) => $("ad-m-" + k).checked) || "switch"; }
+function adoptModeChanged() {
+  const m = adoptMode();
+  $("ad-group-f").hidden = m !== "ap" || !adoptState.groups;
+  $("ad-note").textContent = m === "monitor" ? "Konfigurace zařízení se nezmění."
+    : !adoptState.nets ? "Lokalita zatím nemá sítě – převzetí počká, až je založíš (Nastavení lokality → Sítě)."
+    : "Po schválení: správa, inventura" + (m === "ap" ? ", ovladač Wi-Fi" : "") + " a převzetí do řízení podle sítí lokality. " +
+      "Tovární a jednoduchou konfiguraci controller přepíše sám (záloha a návrat při výpadku); vlastní konfiguraci (firewall, víc bridgů) nejdřív ukáže a zeptá se.";
+}
+for (const k of ["switch", "ap", "monitor"]) $("ad-m-" + k).addEventListener("change", adoptModeChanged);
+$("ad-site").addEventListener("change", () => adoptSiteChanged(false));
+function adoptClose() { $("adopt-dlg").hidden = true; adoptDev = null; }
+$("ad-close").addEventListener("click", adoptClose);
+$("ad-cancel").addEventListener("click", adoptClose);
+$("ad-ok").addEventListener("click", async () => {
+  const d = adoptDev; if (!d) return;
+  const mode = adoptMode();
+  const body = { site_id: $("ad-site").value, mode, identity: $("ad-name").value.trim() || null,
+                 ap_group: mode === "ap" && $("ad-group").value ? $("ad-group").value : null };
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/devices/${d.id}/approve`, body);
+    if (r.concentrator_errors.length) msg("Schváleno, ale koncentrátor: " + r.concentrator_errors.join("; "), true);
+    else msg(mode === "monitor" ? "Schváleno – zařízení se bude jen sledovat" : "Schváleno – controller zařízení nastaví sám, průběh je u zařízení");
+    adoptClose(); loadDevices();
+  } catch (e) { msg(e.message, true); }
+});
+
+// průběh adopce na jeden krok (řádek zařízení, panel)
+const FLOW_STEP = { provision: "zakládám správu", inventory: "inventura", wifi_pkg: "ovladač Wi-Fi", takeover: "převzetí",
+  takeover_wait: "převzetí", wifi: "Wi-Fi", needs_confirm: "čeká na rozhodnutí", failed: "nepovedlo se", done: "hotovo" };
+function flowActive(d) { return d.adopt_flow && d.adopt_flow.step !== "done"; }
+function flowChip(d) {
+  const f = d.adopt_flow;
+  const cls = f.step === "failed" ? "bad" : f.step === "needs_confirm" ? "warn" : "run";
+  const c = el("span", (f.step === "failed" || f.step === "needs_confirm" ? "⚠ " : "⟳ ") + (FLOW_STEP[f.step] || f.step), "flow-chip " + cls);
+  c.title = f.msg || "";
+  return c;
+}
+async function adoptDecide(d, action) {
+  const t = { overwrite: `Přepsat konfiguraci ${d.identity || d.serial} načisto? Před resetem se udělá záloha; když se zařízení neozve, samo se z ní vrátí.`,
+              monitor: `Ponechat ${d.identity || d.serial} jen ke sledování? Konfigurace se nezmění.`, retry: "Zkusit adopci znovu od inventury?" }[action];
+  if (!(await ask(t))) return;
+  try { await api("POST", `/tenants/${tenantId}/devices/${d.id}/adopt`, { action }); msg("Uloženo"); loadDevices(); if (detailId === d.id) openDetail(d.id); }
+  catch (e) { msg(e.message, true); }
+}
+async function startManage(d, target) {
+  if (!(await ask(`Převzít ${d.identity || d.serial} do řízení jako ${target === "ap" ? "AP + switch" : "switch"}? ` +
+                  "Porty a VLAN pak nastavuje controller podle sítí lokality. Vlastní konfiguraci (firewall, víc bridgů) " +
+                  "nejdřív ukáže a zeptá se; jinak převezme sám se zálohou a návratem při výpadku."))) return;
+  try { await api("POST", `/tenants/${tenantId}/devices/${d.id}/adopt`, { action: "manage", target }); msg("Převzetí běží – průběh je u zařízení"); await loadDevices(); openDetail(d.id); }
+  catch (e) { msg(e.message, true); }
+}
+function flowBanner(d) {
+  const f = d.adopt_flow;
+  const b = el("div", null, "banner " + (f.step === "failed" ? "warn" : f.step === "needs_confirm" ? "warn" : "info"));
+  b.appendChild(el("b", `Adopce: ${FLOW_STEP[f.step] || f.step}. `));
+  b.appendChild(document.createTextNode(f.msg || ""));
+  if (f.step === "needs_confirm" && f.removed && f.removed.length) b.appendChild(el("div", "Smaže se: " + f.removed.slice(0, 8).join(" · "), "muted small"));
+  const acts = el("div", null, "intent-acts");
+  if (f.step === "needs_confirm") acts.append(actBtn("Přepsat načisto", () => adoptDecide(d, "overwrite"), ""), actBtn("Ponechat ke sledování", () => adoptDecide(d, "monitor")));
+  if (f.step === "failed") acts.append(actBtn("Zkusit znovu", () => adoptDecide(d, "retry"), ""), actBtn("Ponechat ke sledování", () => adoptDecide(d, "monitor")));
+  if (acts.children.length) b.appendChild(acts);
+  return b;
 }
 
 async function sendCommand(d, kind, label, extra) {
@@ -4029,6 +4109,7 @@ async function openDetail(id) {
   if (pk && pk.mismatch && pk.mismatch.length)
     w.appendChild(el("p", `⚠ Balíčky s jinou verzí než RouterOS (po restartu budou vypnuté): ${pk.mismatch.join(", ")}`, "sev-warning"));
   const listed = (devicesCache || []).find((x) => x.id === id);
+  if (listed && flowActive(listed)) w.appendChild(flowBanner(listed));
   const up = $("d-upgrade");
   up.hidden = !(listed && listed.update_available && dev.state === "adopted");
   if (!up.hidden) { up.textContent = `Aktualizovat → ${listed.latest_version}`; up.onclick = () => upgradeDevice(listed); }
@@ -4700,6 +4781,7 @@ function devNameCell(d) {
     who.appendChild(pend);
   }
   if (d.identity) who.appendChild(el("div", d.serial, "muted small mono"));
+  if (flowActive(d)) who.appendChild(flowChip(d));
   if (d.state !== "pending" && d.state !== "removed") {
     who.title = "Dvojklik = přejmenovat";
     who.addEventListener("dblclick", (ev) => { ev.stopPropagation && ev.stopPropagation(); renameDevice(d); });
@@ -4833,6 +4915,11 @@ function renderQuickInfo(body, d, r) {
     const rb = el("button", "Restart", "small secondary"); rb.type = "button"; rb.onclick = () => sendCommand(d, "reboot", "Restart");
     const tl = el("button", "Nástroje (ping, test rychlosti)", "small secondary"); tl.type = "button"; tl.onclick = () => openDetailTab("tools");
     acts.append(rb, tl);
+  }
+  // sledované zařízení: převzetí do řízení stejným řetězcem jako při adopci
+  if (d.state === "adopted" && !(r.device && r.device.managed_at) && !flowActive(d) && canManage()) {
+    acts.append(actBtn("Řídit jako switch", () => startManage(d, "switch")),
+                actBtn("Řídit jako AP + switch", () => startManage(d, "ap")));
   }
   acts.appendChild(moreButton(d.identity || d.serial, () => deviceMenu(d)));
   body.appendChild(acts);

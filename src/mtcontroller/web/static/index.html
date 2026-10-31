@@ -241,7 +241,7 @@
           <div id="apg-board" class="apg-board"></div>
           <div class="intent-acts">
             <button id="ssid-add" type="button" class="small secondary">+ SSID</button>
-            <button id="wifi-deploy" type="button" class="small">Nasadit Wi-Fi</button>
+            <button id="wifi-deploy" type="button" class="small secondary" title="Wi-Fi se nasazuje sama po uložení; tímto ji pošleš znovu">Znovu nasadit Wi-Fi</button>
           </div>
           <ul id="wifi-result"></ul>
         <details class="fold" id="wifi-adv">
@@ -719,6 +719,30 @@
       <div class="modal-acts">
         <button id="lacp-cancel" type="button" class="secondary">Zrušit</button>
         <button id="lacp-ok" type="button">Vytvořit bond</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="adopt-dlg" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="ad-title">
+      <div class="sd-head"><h3 id="ad-title">Adoptovat zařízení</h3><button id="ad-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <p id="ad-sub" class="muted small mono"></p>
+      <label class="pe-field"><span>Jméno zařízení</span><input id="ad-name" maxlength="63" placeholder="např. SW-sklad"></label>
+      <div class="pe-field"><span>Role</span>
+        <div class="ad-roles">
+          <label class="check"><input type="radio" name="ad-mode" id="ad-m-switch" value="switch"> <b>Switch</b>
+            <span class="muted small">porty a VLAN podle sítí lokality</span></label>
+          <label class="check"><input type="radio" name="ad-mode" id="ad-m-ap" value="ap"> <b>AP + switch</b>
+            <span class="muted small">navíc Wi-Fi lokality přes CAPsMAN</span></label>
+          <label class="check"><input type="radio" name="ad-mode" id="ad-m-monitor" value="monitor"> <b>Jen sledovat</b>
+            <span class="muted small">brána / router – controller jen čte a radí</span></label>
+        </div></div>
+      <label class="pe-field" id="ad-group-f" hidden><span>Skupina AP</span><select id="ad-group"></select></label>
+      <label class="pe-field" id="ad-site-f"><span>Lokalita</span><select id="ad-site"></select></label>
+      <p id="ad-note" class="muted small"></p>
+      <div class="modal-acts">
+        <button id="ad-cancel" type="button" class="secondary">Zrušit</button>
+        <button id="ad-ok" type="button">Schválit a nastavit</button>
       </div>
     </div>
   </div>

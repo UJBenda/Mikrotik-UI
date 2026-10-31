@@ -71,7 +71,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
 
 (async () => {
   try {
-    vm.runInContext(fs.readFileSync(appPath, "utf8") + "\n;globalThis.__t = { openDetail, drawTopology, renderClients, setCapsmanHost };", ctx);
+    vm.runInContext(fs.readFileSync(appPath, "utf8") + "\n;globalThis.__t = { openDetail, drawTopology, renderClients, setCapsmanHost, openAdopt, flowBanner };", ctx);
     await new Promise((r) => setImmediate(r));
     for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
@@ -426,6 +426,21 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     const stpRows = byId["stp-bridges"].children.length;
     if (stpRows !== 3) errors.push("stp: čekány 3 bridge, je " + stpRows);
     if (!byId["stp-roots"].textContent.includes("core")) errors.push("stp: chybí root");
+    // adopce na jeden krok: dialog (jméno, role podle modelu, skupina AP) a průběh u zařízení
+    {
+      const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+      await ctx.__t.openAdopt({ id: "p1", serial: "HGX1", model: "cAP ax", state: "pending" }); await tick();
+      if (byId["adopt-dlg"].hidden || !byId["ad-m-ap"].checked || byId["ad-group-f"].hidden) errors.push("adopce: dialog / výchozí role AP");
+      byId["ad-name"].value = "AP-sklad";
+      const n0 = requests.length;
+      await byId["ad-ok"].fire("click"); await tick();
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/devices/p1/approve"))) errors.push("adopce: schválení");
+      await ctx.__t.openAdopt({ id: "p2", serial: "HGX2", model: "RB5009UG+S+", state: "pending" }); await tick();
+      if (!byId["ad-m-monitor"].checked || !byId["ad-group-f"].hidden) errors.push("adopce: router jen sledovat");
+      byId["adopt-dlg"].hidden = true;
+      const fb = ctx.__t.flowBanner({ id: "x", serial: "S", adopt_flow: { step: "needs_confirm", msg: "vlastní konfigurace", removed: ["firewall: 3 pravidel"] } });
+      if (!fb.textContent.includes("Přepsat načisto") || !fb.textContent.includes("firewall")) errors.push("adopce: banner rozhodnutí");
+    }
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
     // panel zařízení: aplikace zůstává vidět, záložky Přehled · Porty · Wi-Fi · Diagnostika

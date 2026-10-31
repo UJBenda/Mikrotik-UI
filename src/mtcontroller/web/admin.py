@@ -463,7 +463,7 @@ async def adoption_tokens(request: Request, p: Principal, tid: str) -> Response:
 
 # --- zařízení ----------------------------------------------------------------------
 
-_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model, d.managed_at IS NOT NULL AS managed,
+_DEVICE_COLS = """d.id, d.serial, d.identity, d.note, d.model, d.managed_at IS NOT NULL AS managed, d.adopt_flow,
                   (SELECT c.params->>'name' FROM device_command c WHERE c.device_id = d.id AND c.kind = 'set_identity'
                     AND c.status IN ('queued', 'sent') ORDER BY c.id DESC LIMIT 1) AS identity_pending, d.ros_version, d.role, d.state,
                   host(d.tunnel_ip) AS tunnel_ip, d.site_id, s.name AS site, d.concentrator,
@@ -517,11 +517,48 @@ async def approve(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     data = await _json(request)
     did = _uuid(request.path_params["device_id"])
+    target = data.get("mode")
     errors = await run_in_threadpool(
         services.approve_device, st.db, st.settings, st.box, st.providers, tid, did,
         _uuid(data.get("site_id")), str(data.get("role", "unknown")), p.user_id, client_ip(request),
-        data.get("identity") or None)
+        data.get("identity") or None, str(target) if target else None,
+        str(data["ap_group"]) if data.get("ap_group") else None, p.can(tid, MANAGE))
     return json_response({"ok": True, "concentrator_errors": errors})
+
+
+@endpoint(OPERATE)
+async def adopt_decide(request: Request, p: Principal, tid: str) -> Response:
+    """Adopce zařízení s vlastní konfigurací: {"action": "overwrite" | "monitor" | "retry"}."""
+    from .. import adoptflow
+
+    st = get_state(request)
+    data = await _json(request)
+    did = _uuid(request.path_params["device_id"])
+    action = str(data.get("action") or "")
+    if action in ("overwrite", "manage") and not p.can(tid, MANAGE):
+        raise ServiceError("převzít / přepsat konfiguraci může jen správce tenanta")
+
+    def run():
+        with tenant_scope(st.db, tid) as tx:
+            if action == "manage":
+                # sledované zařízení → řízené stejným řetězcem jako při adopci (od inventury)
+                d = tx.fetchone("SELECT state, managed_at FROM device WHERE id = %(d)s", {"d": did})
+                if not d or d["state"] != "adopted" or d["managed_at"] is not None:
+                    raise ServiceError("převzít jde jen sledované zařízení, které je online")
+                target = str(data.get("target") or "")
+                if target not in ("switch", "ap"):
+                    raise ServiceError("role: switch nebo AP + switch")
+                flow = adoptflow.start(tx, tid, did, target, None, p.user_id, True)
+                audit(tx, "device.manage_start", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
+                      after={"target": target}, ip=client_ip(request))
+            else:
+                flow = adoptflow.decide(tx, tid, did, action, p.user_id, client_ip(request))
+        if flow:
+            adoptflow.step(st.db, st.settings, st.box, tid, did)
+        with tenant_scope(st.db, tid) as tx:
+            return tx.fetchone("SELECT adopt_flow FROM device WHERE id = %(d)s", {"d": did})["adopt_flow"]
+
+    return json_response({"ok": True, "adopt_flow": await run_in_threadpool(run)})
 
 
 @endpoint(OPERATE)
@@ -625,6 +662,7 @@ def routes() -> list[Route]:
         Route(t + "/sites", sites, methods=["GET", "POST"]),
         Route(t + "/adoption-tokens", adoption_tokens, methods=["POST"]),
         Route(t + "/devices", devices, methods=["GET"]),
+        Route(t + "/devices/{device_id}/adopt", adopt_decide, methods=["POST"]),
         Route(t + "/devices/{device_id}/approve", approve, methods=["POST"]),
         Route(t + "/devices/{device_id}/forget", forget, methods=["POST"]),
         Route(t + "/devices/{device_id}/commands", command, methods=["POST"]),

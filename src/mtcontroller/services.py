@@ -328,10 +328,18 @@ def sstp_username(serial: str) -> str:
 
 def approve_device(db: Database, settings: Settings, box: SecretBox, providers: list[TunnelProvider],
                    tenant_id: Any, device_id: Any, site_id: Any, role: str = "unknown",
-                   user_id: Any = None, ip: str | None = None, identity: str | None = None) -> list[str]:
+                   user_id: Any = None, ip: str | None = None, identity: str | None = None,
+                   target: str | None = None, ap_group: str | None = None, can_apply: bool = True) -> list[str]:
     """Přidělí tunelovou IP, vygeneruje hesla, naplánuje provisioning a založí
     účty na koncentrátorech. Vrací seznam chyb koncentrátorů (worker je později
-    dorovná), schválení samotné tím neselže."""
+    dorovná), schválení samotné tím neselže.
+    `target` (switch / ap / monitor) = adopce na jeden krok: worker zařízení dovede do řízení."""
+    if target is not None:
+        from .adoptflow import TARGETS
+
+        if target not in TARGETS:
+            raise ServiceError("role: switch, AP + switch, nebo jen sledovat")
+        role = {"switch": "switch", "ap": "ap"}.get(target, role if role in ("gateway", "ptp") else "gateway")
     local = settings.tunnel.local
     if not local and not settings.tunnel.concentrators:
         raise ServiceError("v konfiguraci není žádný koncentrátor (tunnel.concentrators)")
@@ -374,12 +382,21 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
              "d": str(device_id)},
         )
         enqueue(tx, tenant_id, device_id, "provision", {}, user_id)
+        if target is not None:
+            from . import adoptflow
+
+            if ap_group is not None:
+                groups = {g["id"] for g in ((_site_intent(tx, site_id) or {}).get("wifi") or {}).get("groups") or []}
+                if ap_group not in groups:
+                    raise ServiceError("skupina AP neexistuje")
+            adoptflow.start(tx, tenant_id, device_id, target, ap_group, user_id, can_apply)
         if identity and identity != dev["identity"]:
             _identity_unique(tx, site_id, device_id, identity)
             # jméno až po provisioningu (fronta jde po pořadí)
             enqueue(tx, tenant_id, device_id, "set_identity", {"name": identity, "old": dev["identity"]}, user_id)
         audit(tx, "device.approve", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
-              after={"site_id": str(site_id), "role": role, "tunnel_ip": tunnel_ip, "identity": identity}, ip=ip)
+              after={"site_id": str(site_id), "role": role, "tunnel_ip": tunnel_ip, "identity": identity,
+                     "target": target, "ap_group": ap_group}, ip=ip)
         serial = dev["serial"]
         comment = f"{tenant_id}/{site_id}"
     errors: list[str] = []
@@ -396,6 +413,11 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
 
 
 DEVICE_ROLES = {"unknown", "gateway", "switch", "ap", "ptp"}
+
+
+def _site_intent(tx: Tx, site_id: Any) -> dict | None:
+    r = tx.fetchone("SELECT data FROM site_policy WHERE site_id = %(s)s AND module = 'intent'", {"s": str(site_id)})
+    return r["data"] if r else None
 
 
 def update_device(db: Database, tenant_id: Any, device_id: Any, changes: dict,

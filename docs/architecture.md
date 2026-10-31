@@ -1068,3 +1068,24 @@ platí dál, plány zůstávají jako žurnál (Aktivita → Změny). Odpověď 
   Změna, kterou model odmítne (uplink jako access), se neuloží.
 - Řízené zařízení má spravovatelné moduly vždy `manage` (přepínače observe/manage jen u sledovaných);
   LACP a „Připravit VLAN lokality“ jen u sledovaných (porty řízeného určuje záměr).
+
+## Adopce na jeden krok (etapa 2b)
+
+Dialog adopce má jméno, roli (**Switch** / **AP + switch** / **Jen sledovat** – výchozí podle modelu:
+cAP/wAP/hAP… → AP + switch, když lokalita má sítě; CCR/RB5009/hEX… → jen sledovat) a skupinu AP.
+`POST …/devices/{id}/approve` s `mode` spustí řetězec v `device.adopt_flow` (migrace 0023), který
+posouvá worker (`adoptflow.run_all`, krok `adopt`):
+
+`provision` → `inventory` (čerstvá po schválení) → `wifi_pkg` (AP se špatným ovladačem: `wifi_package`,
+restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `done`.
+
+- **factory / simple** → převzetí načisto bez ptaní (plán `takeover`, záloha, reset, návrat ze zálohy
+  při výpadku), schválené pod uživatelem, který adopci schválil.
+- **conforming** (VLAN na jednom bridgi `bridge`) → řízené hned bez resetu, rozdíl doladí sladění.
+- **custom** → `needs_confirm`: u zařízení banner „Přepsat načisto“ / „Ponechat ke sledování“
+  (`POST …/devices/{id}/adopt` s `action` overwrite / monitor / retry).
+- Čekání s vysvětlením v `msg` (lokalita bez sítí, AP bez řízeného switche s CAPsMANem) se zkouší znovu;
+  CAPsMAN lokality se vybere sám (první řízený switch s nejvíc porty), když ho lokalita nemá a má SSID.
+- Krok `wifi` nasadí Wi-Fi lokality (autoapply), takže nové AP vysílá bez dalšího klikání.
+- Sledované zařízení jde převzít stejným řetězcem (`action: manage`, tlačítka „Řídit jako switch /
+  AP + switch“ v Přehledu). Bez práva schvalovat zůstane plán převzetí ke schválení.
