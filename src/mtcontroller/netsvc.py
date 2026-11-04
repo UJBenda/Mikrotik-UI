@@ -94,8 +94,9 @@ def save(db: Database, data: dict, user_id: Any = None, ip: str | None = None) -
 
 
 def device_view(db: Database, settings) -> dict:
-    """Co dostanou řízená zařízení: {"ntp": [adresa controlleru], "dns": [...]}."""
-    return {"ntp": [settings.tunnel.controller_ip], "dns": load(db)["dns"]}
+    """Co dostanou řízená zařízení: {"ntp": [adresa controlleru], "dns": [...], "isolate": …}.
+    Izolace (bez internetu) jen v lokálním režimu – ve vzdáleném zařízení potřebují internet k SSTP."""
+    return {"ntp": [settings.tunnel.controller_ip], "dns": load(db)["dns"], "isolate": bool(settings.tunnel.local)}
 
 
 # --- chrony na controlleru (root) ---------------------------------------------------------------------

@@ -265,7 +265,7 @@ def _infra_neighbor(n: dict) -> bool:
 
 def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name: str = "",
           identity: str = "", ntp: dict | None = None, role: str = "switch", cap_manager: str | None = None,
-          dns: list[str] | None = None, ntp_ctl: bool = False) -> dict:
+          dns: list[str] | None = None, ntp_ctl: bool = False, isolate: list[str] | None = None) -> dict:
     """Model cílové konfigurace. `blockers` = převzetí/sladění nelze provést.
     role "ap" = AP + switch: rádia řídí CAPsMAN lokality (`cap_manager` = jeho identita)."""
     from .wificfg import supports_wifi
@@ -402,6 +402,8 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         # NTP z controlleru a DNS z administrace drží i sladění (ne jen převzetí)
         "ntp_ctl": bool(ntp_ctl),
         "dns_servers": [x for x in dns or [] if re.fullmatch(r"[0-9A-Fa-f.:]{2,45}", x)] or None,
+        # izolace (lokální režim): zařízení samo jen do privátních sítí + tyto adresy (controller, DNS)
+        "isolate": sorted({x for x in isolate if re.fullmatch(r"[0-9.]{7,15}", x)}) if isolate is not None else None,
         "blockers": blockers, "warnings": warnings,
     }
 
@@ -460,6 +462,8 @@ def config_body(model: dict) -> str:
         from .wificfg import cap_body
 
         lines.append(cap_body(model["cap"]["manager"]).rstrip())
+    if model.get("isolate") is not None:
+        lines += isolate_body(model["isolate"])
     lines += [
         f"/system identity set name={q(model['identity'])}",
         f"/system clock set time-zone-autodetect=no time-zone-name={q(model['timezone'])}",
@@ -470,6 +474,45 @@ def config_body(model: dict) -> str:
         "/tool mac-server set allowed-interface-list=none",
     ]
     return "\n".join(lines) + "\n"
+
+
+ISO = "mtc isolate"
+ISO_PRIVATE = ["10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"]
+ISO_V6 = ["fe80::/10", "ff00::/8", "fd00::/8"]
+
+
+def isolate_rules(extra: list[str]) -> list[tuple[str, str, str]]:
+    """Výstup zařízení (chain=output): (klíč, hodnota, akce). Provoz klientů přes bridge se netýká."""
+    rules = [("dst-address-type", t, "accept") for t in ("local", "broadcast", "multicast")]
+    rules += [("dst-address", n, "accept") for n in ISO_PRIVATE]
+    rules += [("dst-address", a, "accept") for a in extra if not _private(a)]
+    return rules + [("", "", "drop")]
+
+
+def _private(a: str) -> bool:
+    import ipaddress
+
+    try:
+        return any(ipaddress.ip_address(a) in ipaddress.ip_network(n) for n in ISO_PRIVATE)
+    except ValueError:
+        return False
+
+
+def _iso_line(k: str, v: str, action: str) -> str:
+    m = f" {k}={v}" if k else ""
+    return f"/ip firewall filter add chain=output{m} action={action} comment={q(ISO)}"
+
+
+def isolate_body(extra: list[str]) -> list[str]:
+    lines = [_iso_line(*r) for r in isolate_rules(extra)]
+    v6 = "; ".join([f"/ipv6 firewall filter add chain=output dst-address={n} action=accept comment={q(ISO)}" for n in ISO_V6]
+                   + [f"/ipv6 firewall filter add chain=output action=drop comment={q(ISO)}"])
+    lines.append(f":do {{ {v6} }} on-error={{}}")
+    return lines
+
+
+ISO_REMOVE = [f"/ip firewall filter remove [find comment={q(ISO)}]",
+              f":do {{ /ipv6 firewall filter remove [find comment={q(ISO)}] }} on-error={{}}"]
 
 
 def _revert_source(reverted_url: str, auth_header: str, check_certificate: str, backup_password: str) -> str:
@@ -726,6 +769,17 @@ def reconcile(inv: dict, model: dict) -> dict:
                 apply.append('/ip dhcp-client set [find comment="mtc"] use-peer-dns=no')
                 revert.append('/ip dhcp-client set [find comment="mtc"] use-peer-dns=yes')
                 break
+    # izolace: vlastní provoz zařízení jen do privátních sítí, na controller a DNS (výjimka = bez pravidel)
+    cur_iso = [(("dst-address-type", str(r["dst-address-type"])) if r.get("dst-address-type") else
+                ("dst-address", str(r["dst-address"])) if r.get("dst-address") else ("", "")) + (str(r.get("action")),)
+               for r in _rows(inv, "fw_filter") if str(r.get("comment") or "") == ISO]
+    want_iso = isolate_rules(model["isolate"]) if model.get("isolate") is not None else []
+    if model.get("ntp_ctl") and cur_iso != want_iso:  # jen model s nastavením controlleru (ne starý náhled)
+        apply += ISO_REMOVE + (isolate_body(model["isolate"]) if want_iso else [])
+        revert += (ISO_REMOVE + [_iso_line(*r) for r in cur_iso]) if cur_iso else ISO_REMOVE
+        changes.append("izolace: zařízení jen na controller a do privátních sítí" if want_iso
+                       else "izolace vypnuta (přístup do internetu povolen)")
+        additive = False
     # CAP (AP + switch): řídí ho CAPsMAN lokality
     capcur = inv.get("wifi_cap") if isinstance(inv.get("wifi_cap"), dict) else None
     if capcur is not None:

@@ -464,6 +464,9 @@
       <p class="muted">Řízené switche a AP berou čas <b>vždy z controlleru</b> (<span id="ns-ip" class="mono"></span>) –
         controller běží jako NTP server. Tady nastavíš, odkud si čas bere controller sám, a DNS servery, které dostanou
         řízená zařízení (prázdné = DNS z DHCP). Sledovaná zařízení se nemění.</p>
+      <p class="muted">V lokálním režimu řízená zařízení sama do internetu nesmí (jen na controller, DNS a privátní sítě;
+        provoz klientů přes switch se to netýká). Aktualizace a ovladače Wi-Fi jim stahuje controller. Výjimku
+        „Povolit přístup do internetu“ dáš u zařízení v Přehledu.</p>
       <form id="ns-form" class="pe-grid">
         <label class="pe-field"><span>NTP servery pro controller</span><input id="ns-ntp" placeholder="tik.cesnet.cz, tak.cesnet.cz"></label>
         <label class="pe-field"><span>DNS pro řízená zařízení</span><input id="ns-dns" placeholder="např. 192.168.77.1 (prázdné = z DHCP)"></label>

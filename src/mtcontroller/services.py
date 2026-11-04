@@ -693,6 +693,19 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         return routeros.wrap_command(ack_url, key, routeros.trust_ca_body(opts) + routeros.checkin_install(url, key, opts), opts)
     if kind == "deprovision":
         return routeros.wrap_command(ack_url, key, "", opts, tail=routeros.DEPROVISION_TAIL)
+    if kind in ("upgrade", "wifi_package"):
+        from . import inventory, pkgmirror
+
+        if pkgmirror.isolated(tx, settings, dev["id"]):
+            # zařízení bez internetu: balíčky z controlleru (worker je stáhl dřív, než se příkaz doručil)
+            base = f"https://{settings.web.checkin_host}"
+            inv = inventory.load(tx, dev["id"], ["packages", "resource", "wifi", "wireless", "wifi_radios"])
+            if kind == "upgrade":
+                version = str(cmd["params"].get("version", ""))
+                body = pkgmirror.upgrade_body(version, pkgmirror.upgrade_files(inv, version), base, key, opts.check_certificate)
+                return routeros.wrap_command(ack_url, key, body, opts, tail=pkgmirror.upgrade_tail(version))
+            return routeros.wrap_command(ack_url, key, pkgmirror.wifi_body(inv, base, key, opts.check_certificate), opts,
+                                         tail=packages_switch_tail())
     if kind == "upgrade":
         version = str(cmd["params"].get("version", ""))
         return routeros.wrap_command(ack_url, key, routeros.upgrade_body(version), opts,
@@ -922,13 +935,14 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
         if pc:
             cid = enqueue(tx, device_ref["tenant_id"], dev["id"], "confirm_plan", {"plan_id": pc["id"]})
             tx.execute("UPDATE device_command SET plan_id = %(p)s WHERE id = %(c)s", {"p": pc["id"], "c": cid})
-        cmd = tx.fetchone(
+        cands = tx.fetchall(
             """SELECT id, kind, params FROM device_command
                WHERE device_id = %(d)s AND status = 'queued'
-               ORDER BY (kind = 'confirm_plan') DESC, id LIMIT 1
+               ORDER BY (kind = 'confirm_plan') DESC, id LIMIT 10
                FOR UPDATE SKIP LOCKED""",
             {"d": str(dev["id"])},
         )
+        cmd = next((c for c in cands if _deliverable(tx, settings, dev["id"], c)), None)
         if not cmd:
             return routeros.NOTHING
         dev_full = dict(dev, concentrator=tx.fetchone(
@@ -940,6 +954,27 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
             {"id": cmd["id"]},
         )
         return script
+
+
+def _deliverable(tx: Tx, settings: Settings, device_id: Any, cmd: dict) -> bool:
+    """Aktualizace / ovladač Wi-Fi izolovaného zařízení až s balíčky u controlleru (stáhne je worker)."""
+    if cmd["kind"] not in ("upgrade", "wifi_package"):
+        return True
+    from . import inventory, pkgmirror
+
+    if not pkgmirror.isolated(tx, settings, device_id):
+        return True
+    inv = inventory.load(tx, device_id, ["packages", "resource", "wifi", "wireless", "wifi_radios"])
+    try:
+        return pkgmirror.ready(settings.paths.data_dir, pkgmirror.files_for(inv, cmd))
+    except ValueError:
+        return True  # skript sám nahlásí chybu (neznámá architektura apod.)
+
+
+def packages_switch_tail() -> str:
+    from .packages import SWITCH_TAIL
+
+    return SWITCH_TAIL
 
 
 def ack(db: Database, device_ref: dict, command_id: int, status: str, ip: str | None = None) -> bool:

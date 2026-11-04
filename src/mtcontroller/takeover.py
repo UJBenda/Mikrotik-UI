@@ -124,8 +124,9 @@ def set_site_intent(db: Database, tenant_id: Any, site_id: Any, data: dict, user
 # --- výjimky zařízení -------------------------------------------------------------------------------
 
 def load_device_intent(tx: Tx, device_id: Any) -> dict:
-    r = tx.fetchone("SELECT ports, mgmt, role FROM device_intent WHERE device_id = %(d)s", {"d": str(device_id)})
-    return {"ports": r["ports"], "mgmt": r["mgmt"], "role": r["role"]} if r else {"ports": {}, "mgmt": {}, "role": None}
+    r = tx.fetchone("SELECT ports, mgmt, role, internet FROM device_intent WHERE device_id = %(d)s", {"d": str(device_id)})
+    return ({"ports": r["ports"], "mgmt": r["mgmt"], "role": r["role"], "internet": bool(r["internet"])} if r
+            else {"ports": {}, "mgmt": {}, "role": None, "internet": False})
 
 
 def set_device_intent(db: Database, tenant_id: Any, device_id: Any, data: dict, user_id: Any = None,
@@ -184,7 +185,9 @@ def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None, ctl: dict
     model = switchcfg.build(inv, site_intent, dev_intent, model_name=d["model"] or "",
                             identity=d["identity"] or d["serial"], ntp=ntp_pol, role=role,
                             cap_manager=capsman_identity(tx, site_intent),
-                            dns=(ctl or {}).get("dns") or None, ntp_ctl=bool(ctl))
+                            dns=(ctl or {}).get("dns") or None, ntp_ctl=bool(ctl),
+                            isolate=(ctl["ntp"] + ctl["dns"]) if ctl and ctl.get("isolate") and not dev_intent.get("internet")
+                            else None)
     return model, dev_intent
 
 

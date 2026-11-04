@@ -88,6 +88,12 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
 
             site_row = tx.fetchone("SELECT site_id FROM device WHERE id = %(d)s", {"d": did})
             managed = tx.fetchone("SELECT 1 FROM device WHERE id = %(d)s AND managed_at IS NOT NULL", {"d": did})
+            from .. import pkgmirror
+
+            inet = tx.fetchone("SELECT internet FROM device_intent WHERE device_id = %(d)s", {"d": did})
+            # izolace řízených zařízení (lokální režim): None = netýká se
+            iso = ({"isolated": pkgmirror.isolated(tx, st.settings, did), "internet": bool(inet and inet["internet"])}
+                   if managed and st.settings.tunnel.local else None)
             # řízené zařízení dostává VLAN lokality samo (sladění) – banner jen u sledovaných
             vprep = None if managed else vlanprep.status(
                 inv, takeover.load_intent(tx, site_row["site_id"]) if site_row and site_row["site_id"] else None)
@@ -117,6 +123,7 @@ async def device_detail(request: Request, p: Principal, tid: str) -> Response:
             "interfaces": ifaces,
             "bonds": _bonds(inv),
             "site_vlans": vprep,
+            "isolation": iso,
             "addresses": inv.get("addresses") or [],
             "vlan_names": portview.vlan_names(inv),
             "neighbors": inv.get("neighbors") or [],
@@ -1247,6 +1254,33 @@ async def device_takeover_post(request: Request, p: Principal, tid: str) -> Resp
     return json_response(out, 201)
 
 
+@endpoint(MANAGE)
+async def device_internet_put(request: Request, p: Principal, tid: str) -> Response:
+    """Výjimka z izolace řízeného zařízení: {"allow": true} = zařízení smí do internetu (audit)."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    allow = data.get("allow") is True
+
+    def run():
+        with tenant_scope(st.db, tid) as tx:
+            d = tx.fetchone("SELECT site_id, managed_at FROM device WHERE id = %(d)s AND state <> 'removed'", {"d": did})
+            if not d:
+                raise NotFound("zařízení neexistuje")
+            old = tx.fetchone("SELECT internet FROM device_intent WHERE device_id = %(d)s", {"d": did})
+            tx.execute("""INSERT INTO device_intent (tenant_id, device_id, internet, updated_by) VALUES (%(t)s, %(d)s, %(a)s, %(u)s)
+                          ON CONFLICT (device_id) DO UPDATE SET internet = EXCLUDED.internet, updated_by = EXCLUDED.updated_by,
+                              updated_at = now()""", {"t": tid, "d": did, "a": allow, "u": str(p.user_id) if p.user_id else None})
+            audit(tx, "device.internet", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
+                  before={"allow": bool(old and old["internet"])}, after={"allow": allow}, ip=client_ip(request))
+            return d
+
+    d = await run_in_threadpool(run)
+    apply = (await _autoapply(st, p, tid, str(d["site_id"]), request, only={did}, wifi=False)
+             if d["site_id"] and d["managed_at"] else None)
+    return json_response({"ok": True, "allow": allow, "apply": apply})
+
+
 @endpoint(OPERATE)
 async def device_intent_put(request: Request, p: Principal, tid: str) -> Response:
     from .. import takeover
@@ -1709,6 +1743,7 @@ def routes() -> list[Route]:
         Route(d + "/takeover", device_takeover_get, methods=["GET"]),
         Route(d + "/takeover", device_takeover_post, methods=["POST"]),
         Route(d + "/intent", device_intent_put, methods=["PUT"]),
+        Route(d + "/internet", device_internet_put, methods=["PUT"]),
         Route(d + "/backup", request_backup, methods=["POST"]),
         Route(d + "/backups/{backup_id}/diff", backup_diff, methods=["GET"]),
         Route(d + "/backups/{backup_id}/download", backup_download, methods=["GET"]),

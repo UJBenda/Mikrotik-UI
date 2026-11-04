@@ -1101,3 +1101,20 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   Model nese `ntp_ctl` a `dns_servers`; převzetí je nastaví, sladění je drží (s návratem) a otisk
   sladění zahrnuje NTP i DNS. NTP politika lokality platí jen pro sledovaná zařízení s modulem NTP.
 - Nastavení v `system_setting` (klíč `netsvc`, jen provozovatel), změna se audituje (`system.netsvc`).
+
+## Izolace řízených zařízení a balíčky přes controller (etapa 3b, 3c)
+
+- **Izolace (jen lokální režim)**: řízené switche a AP mají v `chain=output` pravidla `mtc isolate` –
+  vlastní provoz zařízení jen na lokální/broadcast/multicast adresy, privátní sítě (RFC 1918, 100.64/10,
+  169.254/16), controller a DNS z administrace; zbytek drop (IPv6: jen link-local, multicast, ULA).
+  Provoz klientů přes bridge chain output neprochází. Převzetí pravidla nasadí, sladění je drží.
+  Ve vzdáleném režimu se neizoluje (zařízení potřebují internet k SSTP koncentrátoru).
+- **Výjimka** „Povolit přístup do internetu“ (`device_intent.internet`, migrace 0024,
+  `PUT …/devices/{id}/internet`, správce, audit `device.internet`) pravidla odebere sladěním.
+- **Balíčky přes controller** (`pkgmirror.py`): pro izolovaná zařízení stahuje worker (krok `pkgmirror`)
+  balíčky z download.mikrotik.com do `<data_dir>/pkg` (staré po 45 dnech pryč), zařízení je bere z
+  `/api/checkin/pkg/<soubor>` s klíčem check-inu. Příkaz `upgrade` / `wifi_package` čeká ve frontě,
+  dokud balíčky nejsou u controlleru. Aktualizace = stažení všech zapnutých balíčků a restart.
+  Dostupnou verzi kanálu zjišťuje controller (upgrade.mikrotik.com `NEWESTa7.<kanál>`, každých 6 h) a doplní
+  ji do inventury izolovaného zařízení; zbytek (schválení verze, postupná aktualizace) funguje beze změny.
+  x86/CHR zatím jen s výjimkou.

@@ -126,7 +126,7 @@ def _due(db: Database, box: SecretBox, where: str, limit: int) -> list[tuple[dic
         return [(d, device_api(tx, box, d)) for d in devs]
 
 
-def poll_inventory(db: Database, box: SecretBox, limit: int = 200, urgent: bool = False) -> int:
+def poll_inventory(db: Database, box: SecretBox, limit: int = 200, urgent: bool = False, settings=None) -> int:
     """urgent = jen zařízení, kterým se právě změnila konfigurace (inventory_at NULL po ack)."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -140,6 +140,10 @@ def poll_inventory(db: Database, box: SecretBox, limit: int = 200, urgent: bool 
         d, api = item
         try:
             data, errors = inventory.collect(api)
+            if settings is not None:
+                from .. import pkgmirror
+
+                pkgmirror.fill_update(db, settings, d["id"], data)  # izolované: dostupná verze od controlleru
             inventory.store(db, d["tenant_id"], d["id"], data, errors)
             return True
         except Exception as e:  # zařízení nedostupné, pin nesedí apod.
@@ -232,7 +236,7 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
     from .. import (adoptflow, alerts, clients, cloudbackup, heartbeat, inventory, notify, releases, rogue, routes,
-                    sysalerts, takeover, upgrades)
+                    pkgmirror, sysalerts, takeover, upgrades)
 
     # -inf: monotonic() počítá od startu systému, 0.0 by po čerstvém bootu oddálilo první běh
     last_reconcile = last_rollup = last_releases = float("-inf")
@@ -244,11 +248,12 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
         for name, step in (("offline", lambda: mark_offline(db)),
                            ("requeue", lambda: requeue_stale(db)),
                            ("verify", lambda: verify_provisioning(db, box)),
-                           ("inventory", lambda: poll_inventory(db, box)),
+                           ("inventory", lambda: poll_inventory(db, box, settings=settings)),
                            ("backup", lambda: run_backups(db, box)),
                            ("updates", lambda: check_updates(db, box)),
                            ("upgrades", lambda: upgrades.advance(db)),
                            ("adopt", lambda: adoptflow.run_all(db, settings, box)),
+                           ("pkgmirror", lambda: pkgmirror.run(db, settings)),
                            ("wifitable", lambda: takeover.sync_all_wifi_tables(db, settings)),
                            ("rogue", lambda: rogue.nightly(db, box)),
                            ("alerts", lambda: alerts.reconcile(db)),
@@ -307,7 +312,7 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
             if stop.wait(FAST_EVERY):
                 break
             try:
-                poll_inventory(db, box, limit=20, urgent=True)
+                poll_inventory(db, box, limit=20, urgent=True, settings=settings)
             except Exception:
                 log.exception("rychlá inventura selhala")
     log.info("worker zastaven")

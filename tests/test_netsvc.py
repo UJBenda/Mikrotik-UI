@@ -74,7 +74,8 @@ def test_api_and_root_apply(tmp_path):
         r = c.put("/api/admin/system/netsvc", json_body={"ntp_upstream": ["ntp.firma.cz"], "dns": ["10.0.0.53"]})
         assert r.status_code == 200, r.text
         assert netsvc.request_path(settings.paths.data_dir).exists()
-        assert netsvc.device_view(db, settings) == {"ntp": [settings.tunnel.controller_ip], "dns": ["10.0.0.53"]}
+        assert netsvc.device_view(db, settings) == {"ntp": [settings.tunnel.controller_ip], "dns": ["10.0.0.53"],
+                                                    "isolate": settings.tunnel.local}
         # root: chrony podle DB, výchozí pool vypnutý, restart; stav pro web
         main = tmp_path / "chrony.conf"
         main.write_text("pool 2.debian.pool.ntp.org iburst\nconfdir /etc/chrony/conf.d\n")

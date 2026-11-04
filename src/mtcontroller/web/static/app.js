@@ -4047,6 +4047,21 @@ let detailId = null;
 let detailData = null;
 
 // zařízení s Wi-Fi rádii (nebo s rolí AP) má v panelu záložku Wi-Fi
+// izolace řízeného zařízení: samo jen na controller a do privátních sítí; výjimka s auditem
+function isoCell(d) {
+  const box = el("span", d.isolation.internet ? "povolen (výjimka) " : "jen controller a privátní sítě ");
+  if (canManage()) {
+    const allow = !d.isolation.internet;
+    box.appendChild(actBtn(allow ? "Povolit přístup do internetu" : "Zrušit výjimku", async () => {
+      if (!(await ask(allow ? "Povolit tomuto zařízení přístup do internetu? (např. dočasně kvůli diagnostice – zapíše se do auditu)"
+                            : "Zrušit výjimku? Zařízení bude zase smět jen na controller a do privátních sítí."))) return;
+      try { const r = await api("PUT", `/tenants/${tenantId}/devices/${d.device.id}/internet`, { allow }); showApply(r.apply); openDetail(d.device.id); }
+      catch (e) { msg(e.message, true); }
+    }));
+  }
+  return box;
+}
+
 function hasWifi(d) {
   return (d.interfaces || []).some((i) => /^(wifi|wlan|wireless)/.test(String(i.type || "")) || /^(wifi|wlan)\d/.test(String(i.name || "")))
     || (d.device && d.device.role === "ap");
@@ -4096,9 +4111,12 @@ async function loadDevWifi(id) {
 
 function kv(tbody, rows) {
   tbody.textContent = "";
-  for (const [k, v] of rows) {
+  for (const row of rows) {
+    if (!row) continue;
+    const [k, v] = row;
     if (v === undefined || v === null || v === "") continue;
-    const tr = el("tr"); tr.append(el("th", k), el("td", v)); tbody.appendChild(tr);
+    const td = el("td"); if (typeof v === "object") td.appendChild(v); else td.textContent = String(v);
+    const tr = el("tr"); tr.append(el("th", k), td); tbody.appendChild(tr);
   }
 }
 
@@ -4179,6 +4197,7 @@ async function openDetail(id) {
     ["Uptime", sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} %${sm.cpu ? ` (${sm.cpu})` : ""}` : null],
     ["Paměť", sm.memory_used_pct != null ? `${sm.memory_used_pct} %` : null], ["Úložiště", sm.hdd_used_pct != null ? `${sm.hdd_used_pct} %` : null],
     ["Režim", dev.managed_at ? "Řízené – controller nastavuje porty, VLAN, NTP a Wi-Fi" : "Sledované – controller jen čte"],
+    d.isolation ? ["Internet", isoCell(d)] : null,
     ["Lokalita", dev.site], ["Poznámka", dev.note], isLocal() ? ["Adresa správy", dev.tunnel_ip || "–"] : ["Tunel", `${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
     ["Check-in", fmtTime(dev.last_checkin_at)], ["Inventura", fmtTime(dev.inventory_at)], ["Záloha", fmtTime(dev.backup_at)],
   ]);

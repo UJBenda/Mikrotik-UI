@@ -158,6 +158,23 @@ async def bootstrap(request: Request) -> Response:
     return script_response(script)
 
 
+async def pkg(request: Request) -> Response:
+    """Balíček RouterOS z controlleru (zařízení bez internetu) – jen s klíčem check-inu."""
+    from starlette.responses import FileResponse
+
+    from .. import pkgmirror
+
+    st = get_state(request)
+    dev = await run_in_threadpool(services.lookup_device_by_key, st.db, _bearer(request))
+    if not dev:
+        return script_response("unauthorized\n", 401)
+    name = str(request.path_params["name"])
+    path = pkgmirror.pkg_dir(st.settings.paths.data_dir) / name
+    if not pkgmirror.FILE_RE.match(name) or not path.is_file():
+        return script_response("not found\n", 404)
+    return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
 def _ascii(s: str) -> str:
     import unicodedata
 
@@ -174,4 +191,5 @@ def routes() -> list[Route]:
         Route("/api/checkin", checkin, methods=["POST"]),
         Route("/api/checkin/ack", ack, methods=["POST"]),
         Route("/api/checkin/bootstrap", bootstrap, methods=["POST"]),
+        Route("/api/checkin/pkg/{name}", pkg, methods=["GET"]),
     ]
