@@ -235,7 +235,7 @@ async function startApp() {
   $("tenant-form").hidden = !me.superadmin;
   buildNav();
   showView(prefs.view || "dash");
-  if (me.superadmin) { loadSystem(); loadBackups(); loadTls(); }
+  if (me.superadmin) { loadSystem(); loadBackups(); loadTls(); loadNetsvc(); }
   await loadTenants();
 }
 
@@ -1608,6 +1608,30 @@ $("backup-now").addEventListener("click", async () => {
 });
 
 // --- certifikát HTTPS (superadmin) ---------------------------------------------------------
+
+// --- čas a DNS pro řízená zařízení (NTP vždy z controlleru) ----------------------------------
+async function loadNetsvc() {
+  let r;
+  try { r = await api("GET", "/system/netsvc"); } catch (_e) { return; }
+  $("ns-card").hidden = false;
+  $("ns-ip").textContent = r.controller_ip;
+  $("ns-ntp").value = r.netsvc.ntp_upstream.join(", ");
+  $("ns-dns").value = r.netsvc.dns.join(", ");
+  const st = r.status || {};
+  $("ns-state").textContent = r.pending ? "nastavuji NTP server…"
+    : st.at ? (st.ok ? `NTP server běží (${fmtTime(st.at)}), povoleno pro ${(st.allow || []).join(", ")}` : `chyba: ${st.error}`) : "";
+  $("ns-state").className = st.ok === false ? "sev-error small" : "muted small";
+  if (r.pending) setTimeout(loadNetsvc, 3000);
+}
+$("ns-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const split = (v) => v.split(/[ ,;]+/).filter(Boolean);
+  try {
+    await api("PUT", "/system/netsvc", { ntp_upstream: split($("ns-ntp").value), dns: split($("ns-dns").value) });
+    msg("Uloženo – NTP controlleru se přenastaví, DNS dostanou řízená zařízení při dalším sladění");
+    loadNetsvc();
+  } catch (e) { msg(e.message, true); }
+});
 
 const TLS_KIND = { own_ca: "CA controlleru", letsencrypt: "Let's Encrypt", custom: "vlastní" };
 const TLS_SLOT = { admin: "administrace", checkin: "check-in" };

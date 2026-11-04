@@ -1,0 +1,12 @@
+[Unit]
+Description=MikroTik Controller – NTP server pro řízená zařízení (chrony)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+# root: zapisuje /etc/chrony a restartuje chrony; nastavení čte z DB
+Environment=MTC_CONFIG=/etc/mtcontroller/config.toml
+Environment=PYTHONPATH=/opt/mtcontroller/app
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m mtcontroller.cli netsvc-apply
+TimeoutStartSec=2min

@@ -121,6 +121,9 @@ def port_vlans(db: Database, settings: Settings, box: SecretBox, tenant_id: Any,
                items: dict[str, dict], user_id: Any = None, ip: str | None = None, *, can_approve: bool = True) -> dict | None:
     """VLAN portů řízeného zařízení: uloží výjimky do záměru zařízení a sladí (jen toto zařízení).
     None = žádná VLAN změna. Změna, kterou by model odmítl (např. uplink jako access), se neuloží."""
+    from .netsvc import device_view
+
+    ctl = device_view(db, settings)
     with tenant_scope(db, tenant_id) as tx:
         d = takeover._device(tx, device_id)
         if d["managed_at"] is None:
@@ -153,8 +156,8 @@ def port_vlans(db: Database, settings: Settings, box: SecretBox, tenant_id: Any,
             raise ServiceError(str(e)) from e
         if not (old["mgmt"] or {}).get("mode"):
             new["mgmt"] = {}
-        before, _x = takeover._model(tx, d, inv)
-        model, _di = takeover._model(tx, d, inv, new)
+        before, _x = takeover._model(tx, d, inv, ctl=ctl)
+        model, _di = takeover._model(tx, d, inv, new, ctl=ctl)
         bad = [b for b in model["blockers"] if b not in before["blockers"]]
         if bad:
             raise ServiceError("změnu nelze: " + "; ".join(bad))

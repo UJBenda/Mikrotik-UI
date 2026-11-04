@@ -1089,3 +1089,15 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
 - Krok `wifi` nasadí Wi-Fi lokality (autoapply), takže nové AP vysílá bez dalšího klikání.
 - Sledované zařízení jde převzít stejným řetězcem (`action: manage`, tlačítka „Řídit jako switch /
   AP + switch“ v Přehledu). Bez práva schvalovat zůstane plán převzetí ke schválení.
+
+## Čas a DNS řízených zařízení (etapa 3a)
+
+- Controller je NTP server (chrony z Debianu, závislost balíčku). `mtc-admin netsvc-apply` (root,
+  `mtc-netsvc.path` na žádost z UI, postinst, průvodce) zapíše `/etc/chrony/sources.d/mtcontroller.sources`
+  (zdroje času controlleru ze Systém → Čas a DNS, výchozí regionální) a `/etc/chrony/conf.d/mtcontroller.conf`
+  (`allow`: lokální režim privátní sítě, vzdálený tunelový pool) a vypne výchozí `pool` v chrony.conf
+  (originál `chrony.conf.mtc-orig`). Stav pro UI `netsvc-status.json`; `mtc-admin doctor` hlásí chybějící konfiguraci.
+- Řízené switche a AP mají NTP vždy `tunnel.controller_ip` a DNS z administrace (prázdné = z DHCP).
+  Model nese `ntp_ctl` a `dns_servers`; převzetí je nastaví, sladění je drží (s návratem) a otisk
+  sladění zahrnuje NTP i DNS. NTP politika lokality platí jen pro sledovaná zařízení s modulem NTP.
+- Nastavení v `system_setting` (klíč `netsvc`, jen provozovatel), změna se audituje (`system.netsvc`).

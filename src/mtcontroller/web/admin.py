@@ -369,6 +369,26 @@ async def system_tls(request: Request, p: Principal, _t) -> Response:
 
 
 @endpoint(None)
+async def system_netsvc(request: Request, p: Principal, _t) -> Response:
+    """Čas a DNS pro řízená zařízení (superadmin): NTP controlleru (odkud si bere čas), DNS zařízení."""
+    from .. import netsvc
+
+    if not p.superadmin:
+        return _err(404, "nenalezeno")
+    st = get_state(request)
+    s = st.settings
+    if request.method == "PUT":
+        data = await _json(request)
+        new = await run_in_threadpool(netsvc.save, st.db, data, p.user_id, client_ip(request))
+        await run_in_threadpool(netsvc.write_request, s.paths.data_dir, p.email)
+        return json_response({"ok": True, "netsvc": new})
+    cur = await run_in_threadpool(netsvc.load, st.db)
+    return json_response({"netsvc": cur, "controller_ip": s.tunnel.controller_ip, "local": s.tunnel.local,
+                          "allow": netsvc.allow_nets(s), "status": netsvc.read_status(s.paths.data_dir),
+                          "pending": netsvc.request_path(s.paths.data_dir).exists()})
+
+
+@endpoint(None)
 async def system_status(request: Request, p: Principal, _t) -> Response:
     """Stav controlleru pro superadmina: worker (heartbeat), fronty, alerty, verze."""
     from .. import heartbeat
@@ -652,6 +672,7 @@ def routes() -> list[Route]:
         Route("/api/admin/system/backup-targets/{target_id}", system_backup_target, methods=["PATCH", "DELETE"]),
         Route("/api/admin/system/backup-targets/{target_id}/{action:str}", system_backup_target, methods=["POST"]),
         Route("/api/admin/system/tls", system_tls, methods=["GET", "POST"]),
+        Route("/api/admin/system/netsvc", system_netsvc, methods=["GET", "PUT"]),
         Route("/api/admin/system/backups/{name}", system_backup_download, methods=["GET"]),
         Route("/api/admin/users/{user_id}/reset-mfa", user_mfa_reset, methods=["POST"]),
         Route(t + "/users", tenant_users, methods=["GET", "POST"]),

@@ -51,7 +51,7 @@ say "Balíčky (apt)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q python3 python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
-  python3-cryptography postgresql nginx openssl ca-certificates ieee-data
+  python3-cryptography postgresql nginx openssl ca-certificates ieee-data chrony
 [ -n "$CERTBOT" ] && apt-get install -y -q certbot
 python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python >= 3.12"'
 python3 -c 'import pydantic; assert int(pydantic.VERSION.split(".")[0]) >= 2, "pydantic >= 2 (Debian 13; Ubuntu 24.04 má jen 1.10)"' 
@@ -113,7 +113,8 @@ mtc-admin migrate
 say "systemd"
 install -m 0644 "$SRC/deploy/systemd/mtc-web.service" "$SRC/deploy/systemd/mtc-worker.service" "$SRC/deploy/systemd/mtc-syslog.service" \
   "$SRC/deploy/systemd/mtc-backup.service" "$SRC/deploy/systemd/mtc-backup.timer" "$SRC/deploy/systemd/mtc-backup.path" \
-  "$SRC/deploy/systemd/mtc-tls.service" "$SRC/deploy/systemd/mtc-tls.path" /etc/systemd/system/
+  "$SRC/deploy/systemd/mtc-tls.service" "$SRC/deploy/systemd/mtc-tls.path" \
+  "$SRC/deploy/systemd/mtc-netsvc.service" "$SRC/deploy/systemd/mtc-netsvc.path" /etc/systemd/system/
 install -d -o root -g mtcontroller -m 0750 /var/backups/mtcontroller
 if [ ! -f "$ETC/backup.key" ]; then
   (umask 077; PYTHONPATH="$APP" python3 -c 'from mtcontroller.sysbackup import new_passphrase; print(new_passphrase())' > "$ETC/backup.key")
@@ -130,8 +131,9 @@ else
   rm -f /etc/systemd/system/mtc-worker.service.d/routes.conf
 fi
 systemctl daemon-reload
-systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path mtc-tls.path >/dev/null
-systemctl start mtc-backup.path mtc-tls.path
+systemctl enable mtc-web mtc-worker mtc-syslog mtc-backup.timer mtc-backup.path mtc-tls.path mtc-netsvc.path >/dev/null
+systemctl start mtc-backup.path mtc-tls.path mtc-netsvc.path
+mtc-admin netsvc-apply || echo "!! NTP: mtc-admin netsvc-apply selhal" >&2
 systemctl restart mtc-backup.timer
 systemctl restart mtc-web mtc-worker mtc-syslog
 sleep 2

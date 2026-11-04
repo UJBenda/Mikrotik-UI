@@ -1229,7 +1229,10 @@ async def device_takeover_get(request: Request, p: Principal, tid: str) -> Respo
 
     st = get_state(request)
     did = _uuid(request.path_params["device_id"])
-    return json_response(await run_in_threadpool(takeover.preview, st.db, tid, did))
+    from .. import netsvc
+
+    ctl = await run_in_threadpool(netsvc.device_view, st.db, st.settings)
+    return json_response(await run_in_threadpool(takeover.preview, st.db, tid, did, ctl))
 
 
 @endpoint(MANAGE)

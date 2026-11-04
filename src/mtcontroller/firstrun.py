@@ -509,7 +509,9 @@ def _finish_common(plan: SetupPlan, env: Env, sd: Path) -> None:
     _write(avail / "mtcontroller.conf", render_nginx(plan, env.ssl, env.share), 0o644)
     env.run("timedatectl", "set-timezone", plan.timezone, check=False)
     env.run("systemctl", "enable", "--now", "mtc-web", "mtc-worker", "mtc-syslog", "mtc-backup.timer",
-            "mtc-backup.path", "mtc-tls.path")
+            "mtc-backup.path", "mtc-tls.path", "mtc-netsvc.path")
+    # NTP server pro řízená zařízení (chrony); povolené sítě podle režimu z průvodce
+    env.run("systemctl", "start", "mtc-netsvc.service", check=False)
 
 
 def _finish(env: Env, sd: Path) -> None:

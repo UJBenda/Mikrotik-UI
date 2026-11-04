@@ -341,12 +341,23 @@ def check_backup(s: Settings) -> list[Check]:
     return out
 
 
+def check_ntp_server(conf: Path | None = None) -> list[Check]:
+    """NTP server pro řízená zařízení (chrony s povolenými sítěmi zařízení)."""
+    from . import netsvc
+
+    conf = conf or netsvc.CHRONY_CONF
+    if not conf.is_file():
+        return [Check(WARN, "NTP pro zařízení", "chrony bez povolených sítí zařízení – sudo mtc-admin netsvc-apply")]
+    return [Check(OK, "NTP pro zařízení", "chrony: " + ", ".join(
+        ln.split(None, 1)[1] for ln in conf.read_text().splitlines() if ln.startswith("allow ")))]
+
+
 def run(s: Settings, app_db, owner_db, providers=None) -> list[Check]:
     checks: list[Check] = []
     for fn in (lambda: check_config(s), lambda: check_files(s), lambda: check_master_key(s),
                lambda: check_database(s, app_db, owner_db), lambda: check_network(s), lambda: check_routes(s), lambda: check_worker(s),
                check_oui, lambda: check_concentrators(s, providers), lambda: check_notify(s), lambda: check_backup(s),
-               lambda: check_tls(s), lambda: check_backup_targets(app_db)):
+               lambda: check_tls(s), lambda: check_backup_targets(app_db), check_ntp_server):
         try:
             checks.extend(fn())
         except Exception as e:  # noqa: BLE001 – jedna rozbitá kontrola nesmí shodit ostatní

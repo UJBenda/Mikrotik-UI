@@ -5035,6 +5035,7 @@
     "poe_watchdog_timeout": 60
    }
   ],
+  "/api/admin/system/netsvc": {"netsvc": {"ntp_upstream": ["tik.cesnet.cz", "tak.cesnet.cz"], "dns": ["192.168.77.1"]}, "controller_ip": "192.168.77.80", "local": true, "allow": ["192.168.0.0/16"], "status": {"ok": true, "at": "2026-11-04T17:00:00+00:00", "allow": ["192.168.0.0/16"]}, "pending": false},
   "/api/admin/system/tls": {
    "slots": {
     "admin": {

@@ -304,7 +304,7 @@
         </div>
       </div>
           <div id="ntp-wrap" class="sub">
-          <h3>NTP politika lokality</h3>
+          <h3>NTP politika lokality <span class="muted small">– jen sledovaná zařízení se správou NTP; řízená berou čas z controlleru</span></h3>
           <form id="ntp-form">
             <label>Primární NTP (zařízení) <select name="primary_device_id" id="ntp-primary"></select></label>
             <label>Upstream servery <input name="upstream" placeholder="tik.cesnet.cz, tak.cesnet.cz"></label>
@@ -458,6 +458,17 @@
       <table><thead><tr><th>Soubor</th><th>Velikost</th><th>Vytvořeno</th><th></th></tr></thead><tbody id="backup-list"></tbody></table>
       <p class="muted">Zálohy jsou šifrované heslem záloh (zobrazí ho <code>sudo mtc-admin recovery-kit</code>).
         Obsahují databázi, konfiguraci a klíče. Obnova: průvodce nové instalace nebo <code>sudo mtc-admin restore SOUBOR</code>.</p>
+    </div>
+    <div class="card" id="ns-card" hidden>
+      <h2>Čas a DNS pro řízená zařízení</h2>
+      <p class="muted">Řízené switche a AP berou čas <b>vždy z controlleru</b> (<span id="ns-ip" class="mono"></span>) –
+        controller běží jako NTP server. Tady nastavíš, odkud si čas bere controller sám, a DNS servery, které dostanou
+        řízená zařízení (prázdné = DNS z DHCP). Sledovaná zařízení se nemění.</p>
+      <form id="ns-form" class="pe-grid">
+        <label class="pe-field"><span>NTP servery pro controller</span><input id="ns-ntp" placeholder="tik.cesnet.cz, tak.cesnet.cz"></label>
+        <label class="pe-field"><span>DNS pro řízená zařízení</span><input id="ns-dns" placeholder="např. 192.168.77.1 (prázdné = z DHCP)"></label>
+        <div class="pe-acts"><button type="submit" class="small">Uložit</button> <span id="ns-state" class="muted small"></span></div>
+      </form>
     </div>
     <div class="card" id="tls-card" hidden>
       <h2>Certifikát HTTPS</h2>

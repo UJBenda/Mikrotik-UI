@@ -467,6 +467,13 @@ def cmd_tls_apply(a) -> int:
     return tlscfg.apply_request(get_settings())
 
 
+def cmd_netsvc_apply(a) -> int:
+    """Root (mtc-netsvc.path, postinst): chrony podle Systém → Čas a DNS."""
+    from . import netsvc
+    _tls_log()
+    return netsvc.apply_request(_db(), get_settings())
+
+
 def cmd_tls_sync(a) -> int:
     from . import tlscfg
     _tls_log()
@@ -521,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("nginx-repair").set_defaults(fn=cmd_nginx_repair)
     sub.add_parser("tls-apply").set_defaults(fn=cmd_tls_apply)
     sub.add_parser("tls-sync").set_defaults(fn=cmd_tls_sync)
+    sub.add_parser("netsvc-apply").set_defaults(fn=cmd_netsvc_apply)
     sub.add_parser("device-trust").set_defaults(fn=cmd_device_trust)
     x = sub.add_parser("device-check"); x.add_argument("tenant"); x.add_argument("device")
     x.set_defaults(fn=cmd_device_check)

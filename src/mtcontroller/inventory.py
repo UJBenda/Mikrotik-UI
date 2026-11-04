@@ -122,7 +122,8 @@ SECTIONS: list[Section] = [
     # WAN: výchozí routy (jen 0.0.0.0/0) a DHCP klient – pro pohled Infrastruktura
     Section("routes_default", "/ip/route", "dst-address,gateway,immediate-gw,distance,active,disabled,comment,routing-table",
             (("dst-address", "0.0.0.0/0"),)),
-    Section("dhcp_client", "/ip/dhcp-client", "interface,address,gateway,dhcp-server,status,disabled,add-default-route"),
+    Section("dhcp_client", "/ip/dhcp-client",
+            "interface,address,gateway,dhcp-server,status,disabled,add-default-route,use-peer-dns,comment"),
     Section("capsman_caps", "/interface/wifi/capsman/remote-cap"),
     # řízený režim (F5b): rádia, stav CAPsMANu / CAP a provisioning (bez hesel)
     Section("wifi_radios", "/interface/wifi/radio", "interface,radio-mac,bands,cap"),

@@ -169,7 +169,9 @@ def _device(tx: Tx, device_id: Any) -> dict:
     return d
 
 
-def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None) -> tuple[dict | None, dict]:
+def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None, ctl: dict | None = None) -> tuple[dict | None, dict]:
+    """Model cílové konfigurace řízeného zařízení. `ctl` = netsvc.device_view: NTP vždy z controlleru,
+    DNS z administrace (bez `ctl` – náhled bez nastavení – zůstává NTP politika lokality)."""
     site_intent = load_intent(tx, d["site_id"]) if d["site_id"] else None
     if not site_intent:
         return None, {}
@@ -177,9 +179,12 @@ def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None) -> tuple[
     ntp_pol = (pol or {}).get("data") or {"upstream": regional.ntp_servers(), "timezone": regional.timezone()}
     dev_intent = dev_intent if dev_intent is not None else load_device_intent(tx, d["id"])
     role = dev_intent.get("role") or (d["role"] if d["role"] in ("switch", "ap") else "switch")
+    if ctl:
+        ntp_pol = {**ntp_pol, "upstream": ctl["ntp"]}
     model = switchcfg.build(inv, site_intent, dev_intent, model_name=d["model"] or "",
                             identity=d["identity"] or d["serial"], ntp=ntp_pol, role=role,
-                            cap_manager=capsman_identity(tx, site_intent))
+                            cap_manager=capsman_identity(tx, site_intent),
+                            dns=(ctl or {}).get("dns") or None, ntp_ctl=bool(ctl))
     return model, dev_intent
 
 
@@ -193,12 +198,12 @@ def capsman_identity(tx: Tx, site_intent: dict) -> str | None:
     return (r["identity"] or r["serial"]) if r else None
 
 
-def preview(db: Database, tenant_id: Any, device_id: Any) -> dict:
+def preview(db: Database, tenant_id: Any, device_id: Any, ctl: dict | None = None) -> dict:
     """Co převzetí udělá: třída konfigurace, co zanikne, role portů, VLAN, překážky."""
     with tenant_scope(db, tenant_id) as tx:
         d = _device(tx, device_id)
         inv = inventory.load(tx, device_id)
-        model, dev_intent = _model(tx, d, inv)
+        model, dev_intent = _model(tx, d, inv, ctl=ctl)
         site_intent = (load_intent(tx, d["site_id"]) or {}) if d["site_id"] else {}
         cap_host = capsman_identity(tx, site_intent) if d["site_id"] else None
         cap_id = (site_intent.get("wifi") or {}).get("capsman_device_id")
@@ -241,6 +246,9 @@ def preview(db: Database, tenant_id: Any, device_id: Any) -> dict:
 
 def create_takeover_plan(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, device_id: Any,
                          confirm_custom: bool = False, user_id: Any = None, ip: str | None = None) -> dict:
+    from .netsvc import device_view
+
+    ctl = device_view(db, settings)
     with tenant_scope(db, tenant_id) as tx:
         d = _device(tx, device_id)
         if d["managed_at"] is not None:
@@ -252,7 +260,7 @@ def create_takeover_plan(db: Database, settings: Settings, box: SecretBox, tenan
             raise ServiceError("inventura chybí nebo je starší než 15 minut – počkej na novou")
         if d["role"] == "gateway":
             raise ServiceError("zařízení má roli gateway – řízený režim zatím umí jen switch")
-        model, _di = _model(tx, d, inv)
+        model, _di = _model(tx, d, inv, ctl=ctl)
         if model is None:
             raise ServiceError("lokalita nemá záměr – nejdřív nadefinuj sítě")
         if model["blockers"]:
@@ -384,8 +392,11 @@ def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site
     se plány, které jen přidávají tagované VLAN, rovnou schválí (nemohou přerušit provoz)."""
     from .plans import CONFIRM_MINUTES, approve_plan
 
+    from .netsvc import device_view
+
     out: list[dict] = []
     auto_ids: list[int] = []
+    ctl = device_view(db, settings)
     with tenant_scope(db, tenant_id) as tx:
         site_intent = load_intent(tx, site_id)
         if not site_intent:
@@ -403,7 +414,7 @@ def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site
             if not inv:
                 out.append(item | {"result": "skipped", "reason": "inventura zatím neproběhla"})
                 continue
-            model, _di = _model(tx, dd, inv)
+            model, _di = _model(tx, dd, inv, ctl=ctl)
             if model["blockers"]:
                 out.append(item | {"result": "blocked", "reason": "; ".join(model["blockers"])})
                 continue

@@ -264,7 +264,8 @@ def _infra_neighbor(n: dict) -> bool:
 
 
 def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name: str = "",
-          identity: str = "", ntp: dict | None = None, role: str = "switch", cap_manager: str | None = None) -> dict:
+          identity: str = "", ntp: dict | None = None, role: str = "switch", cap_manager: str | None = None,
+          dns: list[str] | None = None, ntp_ctl: bool = False) -> dict:
     """Model cílové konfigurace. `blockers` = převzetí/sladění nelze provést.
     role "ap" = AP + switch: rádia řídí CAPsMAN lokality (`cap_manager` = jeho identita)."""
     from .wificfg import supports_wifi
@@ -398,6 +399,9 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         "snooping": snooping, "identity": ascii_text(identity, 60) or "mtc-switch",
         "timezone": ntp.get("timezone") or "Europe/Prague",
         "ntp": [h for h in (ntp.get("upstream") or regional.ntp_servers()) if re.fullmatch(r"[A-Za-z0-9.-]{1,100}", h)],
+        # NTP z controlleru a DNS z administrace drží i sladění (ne jen převzetí)
+        "ntp_ctl": bool(ntp_ctl),
+        "dns_servers": [x for x in dns or [] if re.fullmatch(r"[0-9A-Fa-f.:]{2,45}", x)] or None,
         "blockers": blockers, "warnings": warnings,
     }
 
@@ -440,14 +444,18 @@ def config_body(model: dict) -> str:
         lines.append(f":do {{ /interface bridge set {BRIDGE} dhcp-snooping=yes }} on-error={{}}")
     # filtrování zapnout až s hotovou VLAN tabulkou
     lines.append(f"/interface bridge set {BRIDGE} vlan-filtering=yes")
+    dns = model.get("dns_servers")
     if m["mode"] == "static":
         lines.append(f"/ip address add address={q(m['address'])} interface={BRIDGE} comment=\"mtc\"")
         lines.append(f"/ip route add dst-address=0.0.0.0/0 gateway={q(m['gateway'])} comment=\"mtc mgmt\"")
-        if m.get("dns"):
-            lines.append(f"/ip dns set servers={q(','.join(m['dns']))}")
+        if dns or m.get("dns"):
+            lines.append(f"/ip dns set servers={q(','.join(dns or m['dns']))}")
     else:
-        lines.append(f"/ip dhcp-client add interface={BRIDGE} use-peer-dns=yes use-peer-ntp=no "
+        # DNS z administrace má přednost před DNS z DHCP
+        lines.append(f"/ip dhcp-client add interface={BRIDGE} use-peer-dns={'no' if dns else 'yes'} use-peer-ntp=no "
                      f"add-default-route=yes comment=\"mtc\" disabled=no")
+        if dns:
+            lines.append(f"/ip dns set servers={q(','.join(dns))}")
     if model.get("cap"):
         from .wificfg import cap_body
 
@@ -695,6 +703,29 @@ def reconcile(inv: dict, model: dict) -> dict:
         revert += r
         changes += c
         additive = False
+    # NTP z controlleru, DNS z administrace (jen když je model nese – převzetí s nastavením controlleru)
+    if model.get("ntp_ctl"):
+        nc = inv.get("ntp_client") if isinstance(inv.get("ntp_client"), dict) else {}
+        cur_s = [x for x in str(nc.get("servers") or "").split(",") if x]
+        if nc and (cur_s != model["ntp"] or not _true(nc.get("enabled"))):
+            apply.append(f"/system ntp client set enabled=yes servers={q(','.join(model['ntp']))}")
+            revert.append(f"/system ntp client set enabled={'yes' if _true(nc.get('enabled')) else 'no'} "
+                          f"servers={q(','.join(cur_s))}")
+            changes.append(f"NTP → controller ({', '.join(model['ntp'])})")
+            additive = False
+    if model.get("dns_servers"):
+        dn = inv.get("dns") if isinstance(inv.get("dns"), dict) else {}
+        cur_d = [x for x in str(dn.get("servers") or "").split(",") if x]
+        if dn and cur_d != model["dns_servers"]:
+            apply.append(f"/ip dns set servers={q(','.join(model['dns_servers']))}")
+            revert.append(f"/ip dns set servers={q(','.join(cur_d))}")
+            changes.append(f"DNS → {', '.join(model['dns_servers'])}")
+            additive = False
+        for dc in _rows(inv, "dhcp_client"):
+            if str(dc.get("comment") or "") == "mtc" and _true(dc.get("use-peer-dns")):
+                apply.append('/ip dhcp-client set [find comment="mtc"] use-peer-dns=no')
+                revert.append('/ip dhcp-client set [find comment="mtc"] use-peer-dns=yes')
+                break
     # CAP (AP + switch): řídí ho CAPsMAN lokality
     capcur = inv.get("wifi_cap") if isinstance(inv.get("wifi_cap"), dict) else None
     if capcur is not None:
@@ -786,5 +817,7 @@ def basis(inv: dict) -> str:
                                 for v in _rows(inv, "bridge_vlans") if not _true(v.get("dynamic"))), key=str),
         "ethernet": sorted(([str(e.get(k)) for k in ("default-name", "name", "loop-protect", "disabled")]
                             for e in _rows(inv, "ethernet")), key=str),
+        "ntp": str((inv.get("ntp_client") or {}).get("servers") if isinstance(inv.get("ntp_client"), dict) else ""),
+        "dns": str((inv.get("dns") or {}).get("servers") if isinstance(inv.get("dns"), dict) else ""),
     }
     return hashlib.sha256(json.dumps(keep, sort_keys=True).encode()).hexdigest()

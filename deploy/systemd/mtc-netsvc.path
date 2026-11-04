@@ -1,0 +1,9 @@
+[Unit]
+Description=MikroTik Controller – změna času (NTP) na žádost z UI
+
+[Path]
+PathExists=/var/lib/mtcontroller/netsvc-request.json
+Unit=mtc-netsvc.service
+
+[Install]
+WantedBy=multi-user.target

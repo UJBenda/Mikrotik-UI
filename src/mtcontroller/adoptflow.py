@@ -125,8 +125,10 @@ def _set_capsman(tx: Tx, tenant_id: Any, site_id: Any, host: str) -> None:
 def step(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, device_id: Any) -> str | None:
     """Posune řetězec jednoho zařízení o krok. Vrací nový krok (nebo None, když se nic nedělo)."""
     from . import autoapply
+    from .netsvc import device_view
 
     after: list = []   # akce mimo transakci (schválení plánu, nasazení, probuzení)
+    ctl = device_view(db, settings)
     with tenant_scope(db, tenant_id) as tx:
         d = tx.fetchone(
             """SELECT id, state, site_id, managed_at, role::text AS role, adopt_flow, approved_at, inventory_at,
@@ -173,7 +175,7 @@ def step(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, devic
                 flow = _go(tx, tenant_id, device_id, flow, "takeover", "převádím do řízení")
                 st = "takeover"
         if st == "takeover":
-            if _takeover(tx, settings, box, tenant_id, d, flow, after) == "plan":
+            if _takeover(tx, settings, box, tenant_id, d, flow, after, ctl) == "plan":
                 after.append(("plan",))
         elif st == "takeover_wait":
             p = tx.fetchone("SELECT status::text AS s FROM config_plan WHERE id = %(i)s", {"i": flow.get("plan_id")})
@@ -222,12 +224,13 @@ def step(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, devic
     return (cur or {}).get("step")
 
 
-def _takeover(tx: Tx, settings: Settings, box: SecretBox, tenant_id: Any, d: dict, flow: dict, after: list) -> str | None:
+def _takeover(tx: Tx, settings: Settings, box: SecretBox, tenant_id: Any, d: dict, flow: dict, after: list,
+              ctl: dict | None = None) -> str | None:
     did = d["id"]
     if d["state"] != "adopted":
         return None
     inv = inventory.load(tx, did)
-    model, _di = takeover._model(tx, takeover._device(tx, did), inv)
+    model, _di = takeover._model(tx, takeover._device(tx, did), inv, ctl=ctl)
     if model is None:
         _go(tx, tenant_id, did, flow, "takeover", "čekám: lokalita nemá sítě (Nastavení lokality → Sítě)")
         return None
