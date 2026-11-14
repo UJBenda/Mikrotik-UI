@@ -1118,3 +1118,19 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   Dostupnou verzi kanálu zjišťuje controller (upgrade.mikrotik.com `NEWESTa7.<kanál>`, každých 6 h) a doplní
   ji do inventury izolovaného zařízení; zbytek (schválení verze, postupná aktualizace) funguje beze změny.
   x86/CHR zatím jen s výjimkou.
+
+## Úklid rozhraní, snazší adopce, design (etapa 4)
+
+- **Přidat zařízení** (tlačítko v Zařízeních, první kroky prázdné lokality): jeden dialog – vygeneruje příkaz,
+  čeká na ohlášení a nabídne rovnou adopci. Pod seznamem zařízení „Nalezeno v síti“: nespravované MikroTiky,
+  které řízená zařízení vidí jako sousedy (MNDP, `platform`).
+- **Automatická adopce** (`site.auto_adopt`, migrace 0025, výchozí vypnuto, `PUT …/sites/{id}/auto-adopt`, správce,
+  audit): zařízení ohlášené do lokality se schválí samo s rolí podle modelu (`adoptflow.suggest_target`). Řetězec má
+  příznak `auto` – bez ptaní převezme jen tovární (a vyhovující) konfiguraci, jednoduchou i vlastní zastaví na
+  rozhodnutí člověka.
+- **Úklid**: zakládání tenanta ve Všech lokalitách; upozornění a novinky verze v panelu zařízení sbalené do jednoho
+  řádku; souhrn bez duplicit; převzetí do řízení se nenabízí u bran; stavy a role česky; „Nasadit“ u DHCP snoopingu
+  a NTP sledovaných zařízení plány rovnou schválí (technikovi zůstanou ke schválení); bridge + DHCP snooping,
+  NTP sledovaných a příprava před montáží (výchozí konfigurace, Netinstall) jsou sbalené jako pokročilé.
+- **Design**: písmo 12 / 14 / 16 / 20 px (základ 14; drobné popisky jen v grafice), výchozí tlačítko neutrální a
+  plné jen hlavní (`.primary`, odeslání formuláře), navigace s ikonami, první kroky v prázdné lokalitě.

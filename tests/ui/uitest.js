@@ -441,6 +441,17 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const fb = ctx.__t.flowBanner({ id: "x", serial: "S", adopt_flow: { step: "needs_confirm", msg: "vlastní konfigurace", removed: ["firewall: 3 pravidel"] } });
       if (!fb.textContent.includes("Přepsat načisto") || !fb.textContent.includes("firewall")) errors.push("adopce: banner rozhodnutí");
     }
+    // přidání zařízení: jeden dialog s příkazem; zakládání tenanta je ve Všech lokalitách
+    {
+      const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+      const n0 = requests.length;
+      await byId["add-dev"].fire("click"); await tick();
+      if (byId["add-dlg"].hidden || !requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/adoption-tokens"))) errors.push("přidat zařízení: dialog / příkaz");
+      await byId["add-close"].fire("click");
+      if (!byId["add-dlg"].hidden) errors.push("přidat zařízení: zavření");
+      if (byId["tenant-card"].hidden) errors.push("nový tenant: karta superadmina");
+      if (byId["onboard"] && !byId["onboard"].hidden) errors.push("první kroky: jen v prázdné lokalitě");
+    }
     // detail gw a sw (legacy) + náhled migrace + diff zálohy
     await ctx.__t.openDetail(api.gw);
     // panel zařízení: aplikace zůstává vidět, záložky Přehled · Porty · Wi-Fi · Diagnostika

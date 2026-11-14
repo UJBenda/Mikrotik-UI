@@ -12,10 +12,6 @@
   <h1><span class="logo" aria-hidden="true"></span>MikroTik Controller</h1>
   <div id="hdr-tenant" class="hdr-tenant" hidden>
     <label>Tenant <select id="tenant"></select></label>
-    <form id="tenant-form" class="inline superadmin" hidden>
-      <input name="name" placeholder="Nový tenant (firma)" required size="18">
-      <button class="small">Založit</button>
-    </form>
   </div>
   <div id="who"></div>
 </header>
@@ -50,6 +46,18 @@
   <section id="app" hidden>
     <div class="content">
       <div id="view-dash" class="view">
+        <div id="onboard" class="card onboard" hidden>
+          <h2>Začni tady</h2>
+          <p class="muted">Lokalita je zatím prázdná. Tři kroky a controller se o zbytek postará sám.</p>
+          <ol>
+            <li><b>1. Sítě</b><span class="muted">Jaké VLAN má lokalita mít (kancelář, hosté, správa).</span>
+              <button id="ob-net" type="button" class="small">Nastavit sítě</button></li>
+            <li><b>2. Wi-Fi</b><span class="muted">SSID a do které sítě patří. Jde přeskočit.</span>
+              <button id="ob-wifi" type="button" class="small">Nastavit Wi-Fi</button></li>
+            <li><b>3. Zařízení</b><span class="muted">Vlož příkaz do MikroTiku, vyber roli – hotovo.</span>
+              <button id="ob-add" type="button" class="small primary">+ Přidat zařízení</button></li>
+          </ol>
+        </div>
         <div id="overview" class="overview"></div>
         <div id="ov-drill" class="card ov-drill" hidden></div>
         <div class="card">
@@ -88,7 +96,8 @@
       <div id="view-devices" class="view" hidden>
     <div class="card">
       <div class="site-head">
-        <h2>Zařízení <button id="refresh" type="button" class="small secondary">Obnovit</button></h2>
+        <h2>Zařízení <button id="add-dev" type="button" class="small primary">+ Přidat zařízení</button>
+          <button id="refresh" type="button" class="small secondary">Obnovit</button></h2>
         <div id="devs-tabs" class="seg">
           <button id="devlist-btn" type="button">Seznam</button>
           <button id="sports-btn" type="button">Porty všech switchů</button>
@@ -112,6 +121,7 @@
             <thead><tr id="devices-head"></tr></thead>
             <tbody id="devices"></tbody>
           </table>
+          <div id="dev-found" class="dev-found" hidden></div>
         </div>
       </div>
     </div>
@@ -171,7 +181,7 @@
             <label><input type="checkbox" id="intent-auto"> Trunky rozšiřovat automaticky</label>
           </div>
           <div class="intent-acts">
-            <button id="intent-save" type="button" class="small">Uložit a nasadit</button>
+            <button id="intent-save" type="button" class="small primary">Uložit a nasadit</button>
             <button id="intent-suggest" type="button" class="small secondary" hidden>Načíst ze stávající sítě</button>
             <button id="intent-sync" type="button" class="small secondary" hidden>Sladit řízená zařízení</button>
           </div>
@@ -201,6 +211,7 @@
           <table class="ptable leases"><thead><tr><th>IP</th><th>MAC</th><th>Výrobce</th><th>Hostname</th><th>Typ</th><th>Kde</th><th>Poznámka</th><th>DHCP options</th><th></th></tr></thead>
           <tbody id="lease-rows"></tbody></table>
         </div>
+        <details class="fold" id="net-adv"><summary>Pokročilé – bridge na zařízeních a ochrana proti cizím DHCP serverům</summary>
         <h3>Nastavení bridgů</h3>
         <table><thead><tr><th>Zařízení</th><th>Bridge</th><th>Porty</th><th>STP</th><th>VLAN filtering</th><th>IGMP snooping</th><th>DHCP snooping</th><th>Trusted porty</th></tr></thead>
         <tbody id="net-bridges"></tbody></table>
@@ -208,7 +219,7 @@
         <p class="muted">DHCP snooping zahodí odpovědi DHCP serveru z portu, který není <b>trusted</b>. Trusted musí
           být na každém switchi port, kterým vede cesta k legitimnímu DHCP serveru – controller ji počítá z topologie
           (sousedé MNDP/LLDP). Zařízení, kde cestu nezná, přeskočí. Na routerech přidá i DHCP alert, který cizí server
-          nahlásí. Plány jdou přes schválení s automatickým návratem.</p>
+          nahlásí. Změny se nasazují s automatickým návratem.</p>
         <ul id="dg-rogue"></ul>
         <h4>Zdroje DHCP</h4>
         <ul id="dg-sources"></ul>
@@ -224,8 +235,9 @@
         <h4>Plán po zařízeních</h4>
         <table><thead><tr><th>Zařízení</th><th>Stav</th><th>Nové trusted porty</th><th>Už trusted</th><th>DHCP snooping na</th><th>Poznámky</th><th>Správa modulu</th></tr></thead>
         <tbody id="dg-devices"></tbody></table>
-        <button id="dg-generate" type="button" class="small">Vytvořit plány ke schválení</button>
+        <button id="dg-generate" type="button" class="small">Nasadit ochranu</button>
         <span id="dg-result" class="muted"></span>
+        </details>
       </div>
       <div id="wifiset-wrap" class="pane" hidden>
           <div class="wifi-head"><h4>Wi-Fi</h4>
@@ -237,15 +249,16 @@
           <div class="wifi-sub"><h4>Skupiny AP</h4>
             <button id="apg-add" type="button" class="small secondary">+ Skupina</button></div>
           <p class="muted">Přetáhni AP do skupiny (Ctrl+klik vybere víc AP najednou). SSID bez skupiny se vysílá na všech AP,
-            SSID se skupinami jen na AP v nich. Změna se na AP projeví po „Nasadit Wi-Fi“.</p>
+            SSID se skupinami jen na AP v nich. Změna se na AP nasadí hned.</p>
           <div id="apg-board" class="apg-board"></div>
           <div class="intent-acts">
-            <button id="ssid-add" type="button" class="small secondary">+ SSID</button>
-            <button id="wifi-deploy" type="button" class="small secondary" title="Wi-Fi se nasazuje sama po uložení; tímto ji pošleš znovu">Znovu nasadit Wi-Fi</button>
+            <button id="ssid-add" type="button" class="small">+ SSID</button>
           </div>
           <ul id="wifi-result"></ul>
         <details class="fold" id="wifi-adv">
           <summary>Pokročilé nastavení rádií – CAPsMAN, šířka, DFS, výkon, 802.11k/v, noční sken</summary>
+          <p class="muted">Wi-Fi se nasazuje sama po každém uložení.
+            <button id="wifi-deploy" type="button" class="small secondary">Nasadit znovu</button></p>
           <div class="intent-opts">
             <label>CAPsMAN na <select id="wifi-host"></select></label>
             <label>Max. šířka 5 GHz <select id="wifi-width"><option value="80">80 MHz</option><option value="40">40 MHz</option><option value="20">20 MHz</option></select></label>
@@ -293,28 +306,22 @@
       <div id="sys-wrap" class="pane" hidden>
       <div class="card-lite">
         <h3>Adopce zařízení</h3>
-        <form id="token-form" class="inline">
-          <select name="site_id" id="token-site"></select>
-          <button>Vygenerovat příkaz</button>
-        </form>
-        <div id="token-out" hidden>
-          <p>Vlož do terminálu MikroTiku (platí do <span id="token-exp"></span>, jednorázově):</p>
-          <pre id="token-cmd"></pre>
-          <button id="token-copy" type="button">Kopírovat</button>
-        </div>
+        <button id="add-dev2" type="button" class="small">+ Přidat zařízení</button>
+        <span class="muted">příkaz pro terminál MikroTiku; funguje i na prázdném zařízení</span>
       </div>
-          <div id="ntp-wrap" class="sub">
-          <h3>NTP politika lokality <span class="muted small">– jen sledovaná zařízení se správou NTP; řízená berou čas z controlleru</span></h3>
+          <details id="ntp-wrap" class="fold sub">
+          <summary>NTP sledovaných zařízení <span class="muted small">– řízená berou čas z controlleru</span></summary>
           <form id="ntp-form">
             <label>Primární NTP (zařízení) <select name="primary_device_id" id="ntp-primary"></select></label>
             <label>Upstream servery <input name="upstream" placeholder="tik.cesnet.cz, tak.cesnet.cz"></label>
             <label>Časová zóna <input name="timezone" placeholder="Europe/Prague"></label>
-            <button>Uložit politiku</button>
-            <button type="button" id="ntp-plan" class="secondary">Vygenerovat plány</button>
+            <button>Uložit</button>
+            <button type="button" id="ntp-plan" class="secondary">Nasadit na zařízení</button>
           </form>
           <div id="ntp-result" class="muted"></div>
-          </div>
+          </details>
       <div id="upg-wrap" class="sub">
+        <h3>Postupná aktualizace RouterOS</h3>
         <p class="muted">Postupně po jednom zařízení, <b>od konce sítě</b>: nejdřív zařízení nejdál od brány (podle
           sousedů MNDP/LLDP), gateway poslední – restart nikdy neodřízne cestu k ostatním. Další až po návratu
           předchozího s novou verzí; při chybě se zastaví. Pořadí i výběr můžeš upravit ručně.</p>
@@ -328,8 +335,8 @@
         <h4>Úlohy</h4>
         <ul id="upg-jobs"></ul>
       </div>
-      <div id="deploy-wrap" class="sub">
-        <h3>Výchozí konfigurace podle role</h3>
+      <details id="deploy-wrap" class="fold sub">
+        <summary>Příprava před montáží – výchozí konfigurace podle role, Netinstall, hesla ze štítků</summary>
         <p class="muted">Nový kus připrav ještě před montáží: nahraj mu výchozí konfiguraci zvolené role. Po zapojení se
           sám ohlásí controlleru a objeví se v Adopci jako čekající – schvaluješ ručně. Po adopci ho controller řídí
           bez dalšího resetu (sítě a VLAN ze záměru lokality). Klíč lokality je v souborech i příkazech – nesdílej je.</p>
@@ -359,7 +366,7 @@
         </details>
         <table><thead><tr><th>Sériové číslo</th><th>Poznámka</th><th>Zařízení</th><th>Heslo</th><th></th></tr></thead>
         <tbody id="fpw-rows"></tbody></table>
-      </div>
+      </details>
       </div>
         </div>
       </div>
@@ -399,6 +406,14 @@
           <ul id="csearch-out"></ul>
         </div>
         <div class="grid">
+      <div class="card superadmin" id="tenant-card" hidden>
+        <h2>Nový tenant</h2>
+        <p class="muted">Tenant = oddělený zákazník nebo firma s vlastními lokalitami, zařízeními a uživateli.</p>
+        <form id="tenant-form" class="inline">
+          <input name="name" placeholder="Jméno firmy" required size="24">
+          <button class="small">Založit</button>
+        </form>
+      </div>
       <div class="card">
         <h2>Lokality</h2>
         <ul id="sites"></ul>
@@ -516,12 +531,14 @@
       <h2 id="d-title"></h2>
       <span class="grow"></span>
       <button id="d-backup" type="button" class="small secondary">Zálohovat teď</button>
-      <button id="d-upgrade" type="button" class="small" hidden></button>
+      <button id="d-upgrade" type="button" class="small primary" hidden></button>
       <button id="d-firmware" type="button" class="small secondary" hidden></button>
       <button id="d-close" type="button" class="icon-btn" title="Zavřít (Esc)">×</button>
     </div>
     <div class="dd-body">
       <div id="d-live" class="live" hidden></div>
+      <div id="d-flow"></div>
+      <details class="fold d-issues" id="d-issues" hidden><summary id="d-issues-sum"></summary>
       <div id="d-warn"></div>
       <ul id="d-alerts"></ul>
       <div id="d-notes" hidden>
@@ -529,6 +546,7 @@
         <ul id="d-notes-list"></ul>
         <p id="d-notes-more" class="muted"></p>
       </div>
+      </details>
       <div id="d-tabs" class="seg dtabs">
         <button id="dt-over" type="button">Přehled</button>
         <button id="dt-ports" type="button">Porty</button>
@@ -737,6 +755,28 @@
     </div>
   </div>
 
+  <div id="add-dlg" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="add-title">
+      <div class="sd-head"><h3 id="add-title">Přidat zařízení</h3><button id="add-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <form id="token-form" class="inline">
+        <label id="token-site-f">Lokalita <select name="site_id" id="token-site"></select></label>
+        <button class="small secondary">Nový příkaz</button>
+      </form>
+      <ol class="add-steps">
+        <li>Otevři terminál MikroTiku (Winbox → New Terminal; u prázdného zařízení přes MAC).</li>
+        <li>Vlož tento příkaz <span class="muted">(platí do <span id="token-exp"></span>, pro jedno zařízení)</span>:
+          <div id="token-out" hidden>
+            <pre id="token-cmd"></pre>
+            <button id="token-copy" type="button" class="small primary">Kopírovat příkaz</button>
+          </div></li>
+        <li>Zařízení se tu do minuty objeví – vybereš jméno a roli, zbytek nastaví controller.</li>
+      </ol>
+      <div id="add-wait" class="add-wait muted">Čekám na zařízení…</div>
+      <label class="check" id="add-auto-f"><input type="checkbox" id="add-auto"> Tovární zařízení v této lokalitě adoptovat automaticky
+        <span class="muted small">(role podle modelu; cokoli s vlastní konfigurací počká na tebe)</span></label>
+    </div>
+  </div>
+
   <div id="adopt-dlg" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="ad-title">
       <div class="sd-head"><h3 id="ad-title">Adoptovat zařízení</h3><button id="ad-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
@@ -756,7 +796,7 @@
       <p id="ad-note" class="muted small"></p>
       <div class="modal-acts">
         <button id="ad-cancel" type="button" class="secondary">Zrušit</button>
-        <button id="ad-ok" type="button">Schválit a nastavit</button>
+        <button id="ad-ok" type="button" class="primary">Schválit a nastavit</button>
       </div>
     </div>
   </div>
@@ -859,7 +899,7 @@
       <ul id="cl-warn"></ul>
       <div class="modal-acts"><span class="grow"></span>
         <button id="cl-cancel" type="button" class="secondary">Zavřít</button>
-        <button id="cl-save" type="button">Uložit</button></div>
+        <button id="cl-save" type="button" class="primary">Uložit</button></div>
     </div>
     <div id="clp-jr" hidden>
       <div class="jr-bar"><span id="jr-range" class="seg"></span></div>

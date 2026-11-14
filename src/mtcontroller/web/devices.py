@@ -922,7 +922,8 @@ def build_topology(devices: list[dict], invs: dict[str, dict]) -> dict:
                 key = mac or str(n.get("identity"))
                 b = f"ext:{key}"
                 unknown.setdefault(b, {"id": b, "label": n.get("identity") or mac, "managed": False,
-                                       "model": n.get("board") or n.get("platform"), "address": n.get("address")})
+                                       "model": n.get("board") or n.get("platform"), "address": n.get("address"),
+                                       "platform": n.get("platform"), "version": n.get("version")})
             if b == a:
                 continue
             local_if = str(n.get("interface", "")).split(",")[0]

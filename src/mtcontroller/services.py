@@ -281,6 +281,39 @@ def register_device(db: Database, box: SecretBox, token: str, payload: dict,
     return Registration(device_id, tenant_id, key)
 
 
+def auto_adopt(db: Database, settings: Settings, box: SecretBox, providers: list, reg: Registration,
+               ip: str | None = None) -> bool:
+    """Automatická adopce (lokalita ji má zapnutou): čerstvě ohlášené zařízení se schválí samo s rolí
+    podle modelu. Bez ptaní se pak převezme jen tovární konfigurace – jinou řetězec adopce zastaví."""
+    from .adoptflow import suggest_target
+
+    with tenant_scope(db, reg.tenant_id) as tx:
+        d = tx.fetchone(
+            """SELECT d.model, d.site_id, s.auto_adopt,
+                      EXISTS (SELECT 1 FROM site_policy p WHERE p.site_id = d.site_id AND p.module = 'intent') AS nets
+               FROM device d JOIN site s ON s.id = d.site_id WHERE d.id = %(d)s AND d.state = 'pending'""",
+            {"d": str(reg.device_id)})
+        if not d or not d["auto_adopt"]:
+            return False
+        target = suggest_target(d["model"], bool(d["nets"]))
+        audit(tx, "device.auto_adopt", tenant_id=reg.tenant_id, target=f"device:{reg.device_id}",
+              after={"target": target, "model": d["model"]}, ip=ip)
+    approve_device(db, settings, box, providers, reg.tenant_id, reg.device_id, d["site_id"], ip=ip,
+                   target=target, auto=True)
+    return True
+
+
+def set_site_auto_adopt(db: Database, tenant_id: Any, site_id: Any, enabled: bool, user_id: Any = None,
+                        ip: str | None = None) -> None:
+    with tenant_scope(db, tenant_id) as tx:
+        old = tx.fetchone("SELECT auto_adopt FROM site WHERE id = %(s)s FOR UPDATE", {"s": str(site_id)})
+        if not old:
+            raise NotFound("lokalita neexistuje")
+        tx.execute("UPDATE site SET auto_adopt = %(a)s WHERE id = %(s)s", {"a": bool(enabled), "s": str(site_id)})
+        audit(tx, "site.auto_adopt", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
+              before={"enabled": old["auto_adopt"]}, after={"enabled": bool(enabled)}, ip=ip)
+
+
 # --- klíč lokality pro výchozí konfiguraci (ohlášení bez jednorázového tokenu) ----------------
 
 def site_enroll_key(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, rotate: bool = False,
@@ -329,7 +362,8 @@ def sstp_username(serial: str) -> str:
 def approve_device(db: Database, settings: Settings, box: SecretBox, providers: list[TunnelProvider],
                    tenant_id: Any, device_id: Any, site_id: Any, role: str = "unknown",
                    user_id: Any = None, ip: str | None = None, identity: str | None = None,
-                   target: str | None = None, ap_group: str | None = None, can_apply: bool = True) -> list[str]:
+                   target: str | None = None, ap_group: str | None = None, can_apply: bool = True,
+                   auto: bool = False) -> list[str]:
     """Přidělí tunelovou IP, vygeneruje hesla, naplánuje provisioning a založí
     účty na koncentrátorech. Vrací seznam chyb koncentrátorů (worker je později
     dorovná), schválení samotné tím neselže.
@@ -389,7 +423,7 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
                 groups = {g["id"] for g in ((_site_intent(tx, site_id) or {}).get("wifi") or {}).get("groups") or []}
                 if ap_group not in groups:
                     raise ServiceError("skupina AP neexistuje")
-            adoptflow.start(tx, tenant_id, device_id, target, ap_group, user_id, can_apply)
+            adoptflow.start(tx, tenant_id, device_id, target, ap_group, user_id, can_apply, auto)
         if identity and identity != dev["identity"]:
             _identity_unique(tx, site_id, device_id, identity)
             # jméno až po provisioningu (fronta jde po pořadí)

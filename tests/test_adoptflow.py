@@ -136,3 +136,47 @@ def test_monitored_device_can_be_taken_into_management():
         assert {"device.manage_start", "device.adopt_flow", "device.adopt_decide"} <= acts
     finally:
         drop_db(name)
+
+
+def test_site_auto_adopt_approves_by_model():
+    """Lokalita s automatickou adopcí: ohlášené zařízení se schválí samo s rolí podle modelu;
+    bez ptaní se pak převezme jen tovární konfigurace (jednoduchá počká na člověka)."""
+    from helpers import AsgiClient, drop_db
+    from test_flow import _login, _setup
+
+    assert adoptflow.suggest_target("cAP ax", True) == "ap" and adoptflow.suggest_target("cAP ax", False) == "switch"
+    assert adoptflow.suggest_target("RB5009UG+S+", True) == "monitor" and adoptflow.suggest_target("CRS326-24G-2S+", True) == "switch"
+    db, name, settings, box, providers, app = _setup()
+    try:
+        c = _login(app)
+        tid = c.post("/api/admin/tenants", json_body={"name": "Firma A"}).json()["id"]
+        sid = c.post(f"/api/admin/tenants/{tid}/sites", json_body={"name": "Praha"}).json()["id"]
+        dev = AsgiClient(app, "checkin.test", client_ip="203.0.113.5")
+
+        def register(serial, model):
+            token = c.post(f"/api/admin/tenants/{tid}/adoption-tokens", json_body={"site_id": sid}).json()["token"]
+            r = dev.post(f"/adopt/{token}/register", json_body={"serial": serial, "model": model, "version": "7.20.1",
+                                                                "mac": "AA:BB:CC:00:00:01"})
+            assert r.status_code == 200, r.text
+
+        register("SER0001", "CRS326-24G-2S+")
+        d = c.get(f"/api/admin/tenants/{tid}/devices").json()[0]
+        assert d["state"] == "pending" and not d["adopt_flow"]  # výchozí: ruční schválení
+        r = c.request("PUT", f"/api/admin/tenants/{tid}/sites/{sid}/auto-adopt", json_body={"enabled": True})
+        assert r.status_code == 200 and c.get(f"/api/admin/tenants/{tid}/sites").json()[0]["auto_adopt"] is True
+        register("SER0002", "CRS326-24G-2S+")
+        d = next(x for x in c.get(f"/api/admin/tenants/{tid}/devices").json() if x["serial"] == "SER0002")
+        assert d["state"] != "pending" and d["role"] == "switch"
+        assert d["adopt_flow"]["step"] == "provision" and d["adopt_flow"]["auto"] is True
+        with operator_scope(db) as tx:
+            acts = {x["action"] for x in tx.fetchall("SELECT action FROM audit_log")}
+            did = d["id"]
+            tx.execute("UPDATE device SET state = 'adopted' WHERE id = %(d)s", {"d": did})
+        assert {"site.auto_adopt", "device.auto_adopt", "device.approve"} <= acts
+        # jednoduchá (ne tovární) konfigurace: automat se zeptá, ručně schválená by šla rovnou
+        assert c.put(f"/api/admin/tenants/{tid}/sites/{sid}/intent", json_body=INTENT_RAW).status_code == 200
+        adoptflow.step(db, settings, box, tid, did)
+        inventory.store(db, tid, did, copy.deepcopy(INV), [])
+        assert adoptflow.step(db, settings, box, tid, did) == "needs_confirm"
+    finally:
+        drop_db(name)

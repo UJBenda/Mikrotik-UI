@@ -450,6 +450,16 @@ async def tenants(request: Request, p: Principal, _t) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(MANAGE)
+async def site_auto_adopt(request: Request, p: Principal, tid: str) -> Response:
+    """Automatická adopce lokality: {"enabled": true|false}."""
+    st = get_state(request)
+    data = await _json(request)
+    await run_in_threadpool(services.set_site_auto_adopt, st.db, tid, _uuid(request.path_params["site_id"]),
+                            data.get("enabled") is True, p.user_id, client_ip(request))
+    return json_response({"ok": True, "enabled": data.get("enabled") is True})
+
+
 @endpoint(READ)
 async def sites(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
@@ -464,7 +474,7 @@ async def sites(request: Request, p: Principal, tid: str) -> Response:
     def q():
         with tenant_scope(st.db, tid) as tx:
             return tx.fetchall(
-                """SELECT s.id, s.name, s.address,
+                """SELECT s.id, s.name, s.address, s.auto_adopt,
                           (SELECT count(*) FROM device d WHERE d.site_id = s.id AND d.state <> 'removed') AS devices
                    FROM site s ORDER BY s.name""")
 
@@ -681,6 +691,7 @@ def routes() -> list[Route]:
         Route("/api/admin/mfa/verify", mfa_verify, methods=["POST"]),
         Route("/api/admin/tenants", tenants, methods=["GET", "POST"]),
         Route(t + "/sites", sites, methods=["GET", "POST"]),
+        Route(t + "/sites/{site_id}/auto-adopt", site_auto_adopt, methods=["PUT"]),
         Route(t + "/adoption-tokens", adoption_tokens, methods=["POST"]),
         Route(t + "/devices", devices, methods=["GET"]),
         Route(t + "/devices/{device_id}/adopt", adopt_decide, methods=["POST"]),

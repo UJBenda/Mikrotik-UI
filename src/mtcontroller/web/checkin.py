@@ -59,6 +59,7 @@ async def adopt_register(request: Request) -> Response:
     try:
         payload = services.parse_json_body(await _body(request), MAX_BODY)
         reg = await run_in_threadpool(services.register_device, st.db, st.box, token, payload, ip)
+        await _auto_adopt(st, reg, ip)
     except NotFound as e:
         log.warning("adopce odmítnuta z %s: %s", ip, e)
         return script_response(routeros.error_script("adopcni token je neplatny nebo prosly"), 404)
@@ -90,6 +91,7 @@ async def enroll_register(request: Request) -> Response:
     try:
         payload = services.parse_json_body(await _body(request), MAX_BODY)
         reg = await run_in_threadpool(services.register_device, st.db, st.box, "", payload, ip, key)
+        await _auto_adopt(st, reg, ip)
     except NotFound as e:
         log.warning("ohlášení odmítnuto z %s: %s", ip, e)
         return script_response(routeros.error_script("klic lokality je neplatny"), 404)
@@ -173,6 +175,14 @@ async def pkg(request: Request) -> Response:
     if not pkgmirror.FILE_RE.match(name) or not path.is_file():
         return script_response("not found\n", 404)
     return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+async def _auto_adopt(st, reg, ip) -> None:
+    """Lokalita s automatickou adopcí: schválit hned; chyba adopci nezastaví (zůstane čekající)."""
+    try:
+        await run_in_threadpool(services.auto_adopt, st.db, st.settings, st.box, st.providers, reg, ip)
+    except services.ServiceError as e:
+        log.warning("automatická adopce %s: %s", reg.device_id, e)
 
 
 def _ascii(s: str) -> str:

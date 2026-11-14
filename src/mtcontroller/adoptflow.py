@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from typing import Any
 
 from . import inventory, packages, switchcfg, takeover
@@ -40,8 +41,22 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+_AP_MODEL = re.compile(r"^(cAP|wAP|hAP|Audience|Chateau|wsAP|mAP)", re.I)
+_ROUTER_MODEL = re.compile(r"^(CCR|RB5009|RB4011|RB3011|RB1100|hEX|RB750|RB760|L009|RB2011UiAS-IN)", re.I)
+
+
+def suggest_target(model: str | None, has_networks: bool) -> str:
+    """Výchozí role podle modelu (stejně jako dialog adopce): AP řady → AP + switch, routery → jen sledovat."""
+    m = str(model or "")
+    if _AP_MODEL.match(m):
+        return "ap" if has_networks else "switch"
+    if _ROUTER_MODEL.match(m):
+        return "monitor"
+    return "switch"
+
+
 def start(tx: Tx, tenant_id: Any, device_id: Any, target: str, ap_group: str | None, user_id: Any,
-          can_apply: bool) -> dict | None:
+          can_apply: bool, auto: bool = False) -> dict | None:
     """Při schválení adopce: cílová role a skupina AP do záměru zařízení, řetězec od provisioningu."""
     if target not in TARGETS:
         raise ServiceError("role: switch, AP + switch, nebo jen sledovat")
@@ -57,6 +72,8 @@ def start(tx: Tx, tenant_id: Any, device_id: Any, target: str, ap_group: str | N
          "u": _s(user_id)})
     flow = {"target": target, "step": "provision", "msg": "zakládám správu (tunel, účet, check-in)",
             "user": _s(user_id), "can_apply": bool(can_apply), "started": _now(), "at": _now()}
+    if auto:
+        flow["auto"] = True  # schváleno bez člověka: bez ptaní se převezme jen tovární konfigurace
     _save(tx, device_id, flow)
     return flow
 
@@ -238,9 +255,10 @@ def _takeover(tx: Tx, settings: Settings, box: SecretBox, tenant_id: Any, d: dic
         _go(tx, tenant_id, did, flow, "takeover", "čekám na čerstvou inventuru")
         return None
     cls = switchcfg.classify(inv, model["role"])
-    if cls["class"] == "custom" and not flow.get("confirm_custom"):
+    if (cls["class"] == "custom" or (flow.get("auto") and cls["class"] == "simple")) and not flow.get("confirm_custom"):
+        why = ", ".join(cls["custom"]) or "není tovární"
         _go(tx, tenant_id, did, flow, "needs_confirm",
-            "zařízení má vlastní konfiguraci (" + ", ".join(cls["custom"]) + ") – přepsat načisto, nebo ponechat ke sledování?",
+            "zařízení má vlastní konfiguraci (" + why + ") – přepsat načisto, nebo ponechat ke sledování?",
             classification=cls["class"], removed=cls["removed"][:30])
         return "needs_confirm"
     if model["blockers"]:
