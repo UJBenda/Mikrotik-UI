@@ -141,7 +141,7 @@ def validate_device(data: dict, intent: dict | None, ports: set[str] | None = No
     "mgmt": {"mode": "dhcp"} | {"mode": "static", "address": "a.b.c.d/nn"}}."""
     if not isinstance(data, dict):
         raise IntentError("výjimky musí být objekt")
-    out: dict[str, Any] = {"ports": {}, "mgmt": {"mode": "dhcp"}, "role": None}
+    out: dict[str, Any] = {"ports": {}, "mgmt": {"mode": "dhcp"}, "role": None, "bonds": []}
     if data.get("role") not in (None, "", "switch", "ap"):
         raise IntentError("role: switch nebo ap (AP + switch)")
     out["role"] = data.get("role") or None
@@ -171,6 +171,11 @@ def validate_device(data: dict, intent: dict | None, ports: set[str] | None = No
                 raise IntentError(f"port {port}: VLAN {vid} není v sítích lokality")
             item["vlan"] = vid
         out["ports"][port] = item
+    out["bonds"] = _bonds(data.get("bonds") or [], vids, ports)
+    for b in out["bonds"]:
+        for port in b["ports"]:
+            # člen bondu nemá vlastní VLAN – platí nastavení bondu
+            out["ports"].pop(port, None)
     m = data.get("mgmt") or {}
     if not isinstance(m, dict):
         raise IntentError("management: neplatné nastavení")
@@ -189,6 +194,62 @@ def validate_device(data: dict, intent: dict | None, ports: set[str] | None = No
         out["mgmt"] = {"mode": "static", "address": str(ipi)}
     elif m.get("mode") not in (None, "", "dhcp"):
         raise IntentError("management: režim dhcp nebo static")
+    return out
+
+
+BOND_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+BOND_MODES = ("trunk", "access", "hybrid")
+LACP_RATES = ("30secs", "1sec")
+LACP_HASHES = ("layer-2", "layer-2-and-3", "layer-3-and-4")
+
+
+def _bonds(raw: Any, vids: set[int], ports: set[str] | None) -> list[dict]:
+    """LACP bondy řízeného zařízení. Členy jsou libovolné porty (nemusí sousedit), každý nejvýš v jednom bondu."""
+    if not isinstance(raw, list) or len(raw) > 16:
+        raise IntentError("LACP: neplatný seznam (max. 16)")
+    out: list[dict] = []
+    used: set[str] = set()
+    names: set[str] = set()
+    for b in raw:
+        if not isinstance(b, dict) or not BOND_NAME_RE.match(str(b.get("name") or "")):
+            raise IntentError("LACP: neplatné jméno")
+        name = str(b["name"])
+        if name in names or (ports is not None and name in ports):
+            raise IntentError(f"LACP {name}: jméno už existuje")
+        names.add(name)
+        members = b.get("ports")
+        if not isinstance(members, list) or not 2 <= len(members) <= 8 or len(set(map(str, members))) != len(members):
+            raise IntentError(f"LACP {name}: vyber 2 až 8 různých portů")
+        members = [str(x) for x in members]
+        for port in members:
+            if not PORT_NAME_RE.match(port):
+                raise IntentError(f"LACP {name}: neplatné jméno portu {port!r}")
+            if ports is not None and port not in ports:
+                raise IntentError(f"LACP {name}: port {port} na zařízení není")
+            if port in used:
+                raise IntentError(f"LACP {name}: port {port} už je v jiném bondu")
+            used.add(port)
+        mode = b.get("mode") or "trunk"
+        if mode not in BOND_MODES:
+            raise IntentError(f"LACP {name}: režim trunk, access nebo hybrid")
+        rate, hsh = b.get("lacp_rate") or "30secs", b.get("hash") or "layer-2-and-3"
+        if rate not in LACP_RATES or hsh not in LACP_HASHES:
+            raise IntentError(f"LACP {name}: neplatné parametry")
+        item: dict[str, Any] = {"name": name, "ports": members, "mode": mode, "lacp_rate": rate, "hash": hsh}
+        if mode == "hybrid":
+            tg = b.get("tagged") or []
+            if not isinstance(tg, list) or len(tg) > 64:
+                raise IntentError(f"LACP {name}: tagované VLAN – seznam (max. 64)")
+            tagged = sorted({_vid(x, f"LACP {name}") for x in tg})
+            if vids and set(tagged) - vids:
+                raise IntentError(f"LACP {name}: VLAN {', '.join(map(str, sorted(set(tagged) - vids)))} není v sítích lokality")
+            item["tagged"] = tagged
+        if mode in ("access", "hybrid") and b.get("vlan") not in (None, ""):
+            vid = _vid(b.get("vlan"), f"LACP {name}")
+            if vids and vid not in vids:
+                raise IntentError(f"LACP {name}: VLAN {vid} není v sítích lokality")
+            item["vlan"] = vid
+        out.append(item)
     return out
 
 

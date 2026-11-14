@@ -226,6 +226,33 @@ def test_wifi_flow():
         _device_post(app, f"/api/checkin/ack?id={cid}&status=done", "key-SW1")
         with operator_scope(db) as tx:
             assert tx.fetchone("SELECT status::text AS s FROM config_plan WHERE id = %(i)s", {"i": pid})["s"] == "applied"
+        # optimalizace kanálů: bez měření nejde, po skenu se připne a nasadí přes CAPsMAN
+        from mtcontroller import rogue
+
+        o = c.get(S + "/wifi/optimize").json()
+        assert len(o["items"]) == 2 and len(o["missing"]) == 1 and o["pinned"] is None, o
+        r = c.post(S + "/wifi/optimize", json_body={})
+        assert r.status_code == 400 and "měření" in r.json()["detail"]
+        rogue.store(db, tid, sid, ap, [
+            {"bssid": "11:22:33:44:55:01", "ssid": "Soused", "frequency": f, "signal": -45, "security": ""}
+            for f in (5180, 5260, 2412, 2437)])
+        o = c.get(S + "/wifi/optimize?lower_tx=0").json()
+        assert o["missing"] == [] and o["aps"][0]["scanned_at"] and {i["new"]["channel"] for i in o["items"]} == {11, 100}, o
+        r = c.post(S + "/wifi/optimize", json_body={"lower_tx": True})
+        assert r.status_code == 201, r.text
+        ow = r.json()["apply"]["wifi"]
+        assert ow["result"] == "applying" and ow["plan_id"], r.json()["apply"]
+        with operator_scope(db) as tx:
+            sc = tx.fetchone("SELECT script FROM config_plan WHERE id = %(i)s", {"i": ow["plan_id"]})["script"]
+            acts = [x["action"] for x in tx.fetchall("SELECT action FROM audit_log ORDER BY id")]
+        assert "frequency=5500" in sc and "frequency=2462" in sc and "wifi.optimize" in acts
+        w = c.get(S + "/wifi/preview").json()
+        assert w["optimized_at"] and all(x["optimized"] for x in w["radios"])
+        assert c.get(S + "/wifi/optimize").json()["pinned"]["radios"] == 2
+        r = c.post(S + "/wifi/optimize", json_body={"action": "reset"})
+        assert r.status_code == 201 and r.json()["reset"] is True
+        assert c.post(S + "/wifi/optimize", json_body={"action": "reset"}).json()["reset"] is False
+        assert c.get(S + "/wifi/preview").json()["optimized_at"] is None
         assert c.delete(S + f"/ssids/{fid}").status_code == 200
     finally:
         drop_db(name)

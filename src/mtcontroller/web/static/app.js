@@ -1328,6 +1328,102 @@ async function setCapsmanHost(deviceId, siteOverride) {
 }
 
 // cizí a podvržená AP ze skenu rádií (Air Marshal)
+// --- optimalizace kanálů a výkonu podle měření okolí ----------------------------------------
+let rfoptData = null;
+
+async function loadRfopt() {
+  const box = $("rfopt-card"); box.textContent = ""; box.hidden = true;
+  let v;
+  try { v = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/optimize`); } catch (e) { return; }
+  rfoptData = v;
+  box.hidden = false;
+  const head = el("div", null, "rogue-head");
+  head.appendChild(el("h3", "Kanály a výkon"));
+  if (canOperate()) {
+    const b = el("button", "Optimalizovat kanály", "small primary"); b.type = "button";
+    b.onclick = openRfopt;
+    head.appendChild(b);
+  }
+  box.appendChild(head);
+  const scanned = v.aps.filter((a) => a.scanned_at).length;
+  box.appendChild(el("p", v.pinned
+    ? `Kanály jsou nastavené podle měření okolí z ${fmtTime(v.pinned.at)}.`
+    : `Kanály se rozdělují jen podle počtu AP. Měření okolí má ${scanned} z ${v.aps.length} AP` +
+      (v.changes && scanned ? ` – optimalizace navrhuje ${v.changes} ${v.changes === 1 ? "změnu" : v.changes < 5 ? "změny" : "změn"}.` : "."),
+    "muted small"));
+}
+
+function renderRfopt() {
+  const v = rfoptData;
+  if (!v) return;
+  const scanned = v.aps.filter((a) => a.scanned_at).length;
+  $("rfopt-scan-state").textContent = `Měření má ${scanned} z ${v.aps.length} AP` + (v.missing.length ? ` (chybí: ${v.missing.join(", ")})` : "");
+  $("rfopt-sum").textContent = scanned
+    ? `Rušení ${v.before} → ${v.after} · ${v.changes ? `${v.changes} ${v.changes === 1 ? "změna kanálu" : v.changes < 5 ? "změny kanálu" : "změn kanálu"}` : "kanály beze změny"}`
+    : "Zatím bez měření – spusť „Změřit okolí“.";
+  const tb = $("rfopt-rows"); tb.textContent = "";
+  for (const i of v.items) {
+    const tr = el("tr", null, i.change ? "" : "muted");
+    const now = i.now.freq ? `${i.now.channel} / ${i.now.width} MHz` : "?";
+    const tx = el("td", i.tx_power != null ? `${i.tx_power} dBm` : "max");
+    tx.title = i.tx_reason || "";
+    if (/výkon −/.test(i.tx_reason || "")) tx.className = "plan-new";
+    const fr = el("td", String(i.foreign));
+    if (i.strongest) fr.title = `nejsilnější: ${i.strongest.ssid || "(skryté)"} ${i.strongest.signal} dBm, kanál ${i.strongest.channel}`;
+    tr.append(el("td", `${i.device || "?"}${i.scanned ? "" : " (bez měření)"}`), el("td", i.band === "5" ? "5 GHz" : "2,4 GHz"),
+              el("td", now), el("td", `${i.new.channel} / ${i.new.width} MHz${i.new.dfs ? " · DFS" : ""}`, i.change ? "plan-new" : ""),
+              el("td", `${i.now.cost != null ? i.now.cost : "?"} → ${i.new.cost}`), fr, tx);
+    tb.appendChild(tr);
+  }
+  const ul = $("rfopt-notes"); ul.textContent = "";
+  for (const n of v.notes) ul.appendChild(el("li", n));
+  $("rfopt-reset").hidden = !v.pinned;
+  $("rfopt-apply").disabled = !scanned;
+}
+
+async function refreshRfopt() {
+  try {
+    rfoptData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/wifi/optimize?lower_tx=${$("rfopt-tx").checked ? 1 : 0}`);
+    renderRfopt();
+  } catch (e) { msg(e.message, true); }
+}
+
+function openRfopt() { $("rfopt-dlg").hidden = false; renderRfopt(); }
+$("rfopt-close").addEventListener("click", () => { $("rfopt-dlg").hidden = true; loadRfopt(); });
+$("rfopt-tx").addEventListener("change", refreshRfopt);
+$("rfopt-scan").addEventListener("click", async () => {
+  const aps = (rfoptData ? rfoptData.aps : []).filter((a) => a.online);
+  if (!aps.length) return msg("Žádné AP není online", true);
+  if (!(await ask(`Změřit okolí ze ${aps.length} AP? Jedno po druhém, klienti se na každém na pár sekund odpojí.`))) return;
+  const b = $("rfopt-scan"); b.disabled = true;
+  let n = 0;
+  for (const a of aps) {
+    n += 1;
+    $("rfopt-scan-state").textContent = `Měřím ${a.device} (${n}/${aps.length})…`;
+    try { await api("POST", `/tenants/${tenantId}/sites/${siteId()}/wifi/rogue`, { device_id: a.device_id }); }
+    catch (e) { msg(`${a.device}: ${e.message}`, true); }
+  }
+  b.disabled = false;
+  refreshRfopt();
+});
+$("rfopt-apply").addEventListener("click", async () => {
+  const ch = rfoptData ? rfoptData.changes : 0;
+  if (!(await ask(`Nasadit optimalizované kanály${$("rfopt-tx").checked ? " a výkon" : ""}? ` +
+                  (ch ? "Při přeladění se klienti na dotčených AP krátce odpojí." : "Kanály se nemění, připne se jen současný stav.")))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/wifi/optimize`, { lower_tx: $("rfopt-tx").checked });
+    $("rfopt-dlg").hidden = true;
+    msg(`Optimalizace nasazena: rušení ${r.before} → ${r.after}`); showApply(r.apply); loadRfopt();
+  } catch (e) { msg(e.message, true); }
+});
+$("rfopt-reset").addEventListener("click", async () => {
+  if (!(await ask("Zrušit optimalizaci? Kanály se vrátí k rozdělení podle počtu AP."))) return;
+  try {
+    const r = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/wifi/optimize`, { action: "reset" });
+    $("rfopt-dlg").hidden = true; showApply(r.apply); loadRfopt();
+  } catch (e) { msg(e.message, true); }
+});
+
 async function loadRogue(radios) {
   const box = $("rogue-card"); box.textContent = "";
   const aps = new Map();
@@ -1389,6 +1485,7 @@ async function loadRogue(radios) {
 
 function renderWifi(w) {
   renderCapsmanCard();
+  loadRfopt();
   loadRogue(w.radios);
   const sm = w.summary;
   $("wifi-summary").textContent = `${sm.aps} zařízení, ${sm.radios} rádií, ${sm.clients} klientů` +
@@ -2132,7 +2229,7 @@ async function removeBond(b) {
   if (!(await ask(`Zrušit bond ${b.name}? Porty ${b.slaves.join(", ")} se vrátí do bridge s VLAN bondu. Vypni LACP i na protistraně.`))) return;
   try {
     const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, { kind: "bond_remove", name: b.name, apply: true });
-    msg(`Odesláno: ${r.summary}`); loadPlans();
+    msg(`Odesláno: ${r.summary}`); showApply(r.apply); loadPlans();
   } catch (e) { msg(e.message, true); }
 }
 
@@ -2660,7 +2757,7 @@ $("lacp-ok").addEventListener("click", async () => {
     const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/bonds`, body);
     $("lacp-dlg").hidden = true;
     msg(`Odesláno: ${r.summary}`); for (const w of r.warnings || []) msg(w, true);
-    clearPortPick(); loadPlans();
+    showApply(r.apply); clearPortPick(); loadPlans();
   } catch (e) { msg(e.message, true); }
 });
 
@@ -5917,7 +6014,8 @@ function renderCtlPorts() {
     for (const [v, label] of opts) { const o = el("option", label); o.value = v; sel.appendChild(o); }
     const o = ctlOver[p.name];
     sel.value = !o ? "" : o.mode === "access" ? `access:${o.vlan || ""}` : o.mode;
-    sel.disabled = c.model.uplink === p.port;
+    // bond (LACP): VLAN se nastavuje na bondu v Portech, ne výjimkou portu
+    sel.disabled = c.model.uplink === p.port || !!p.bond;
     sel.addEventListener("change", () => {
       if (!sel.value) delete ctlOver[p.name];
       else if (sel.value.startsWith("access:")) ctlOver[p.name] = { mode: "access", vlan: Number(sel.value.slice(7)) };
@@ -5926,8 +6024,9 @@ function renderCtlPorts() {
     const tds = el("td"); tds.appendChild(sel);
     const net = nets.find((v) => v.vid === p.pvid);
     const res = p.mode === "access" ? `přístup – ${net ? net.name : "VLAN " + p.pvid}` : p.mode === "trunk"
-      ? (c.model.mgmt.native ? "trunk, mgmt bez tagu" : "trunk, vše tagované") : "vypnuto";
-    tr.append(el("td", p.name + (p.name !== p.port ? ` (${p.port})` : "")), tds, el("td", res, "mode-" + p.mode),
+      ? (c.model.mgmt.native ? "trunk, mgmt bez tagu" : "trunk, vše tagované")
+      : p.mode === "hybrid" ? `vlastní – ${net ? net.name : "VLAN " + p.pvid} + tagované ${(p.tagged || []).join(", ")}` : "vypnuto";
+    tr.append(el("td", p.bond ? `${p.name} (LACP: ${p.bond.slaves.join(" + ")})` : p.name + (p.name !== p.port ? ` (${p.port})` : "")), tds, el("td", res, "mode-" + p.mode),
               el("td", p.reason + (p.trusted ? " · DHCP trusted" : ""), "muted"));
     tb.appendChild(tr);
   }

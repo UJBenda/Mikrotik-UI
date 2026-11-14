@@ -4918,6 +4918,7 @@
     }
    ]
   },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/wifi/optimize": {"items": [{"device_id": "ap1", "device": "cAP-chodba", "interface": "wifi1", "band": "5", "scanned": true, "now": {"freq": 5180, "channel": 36, "width": 80, "cost": 6.4}, "new": {"freq": 5500, "channel": 100, "width": 80, "cost": 0.4, "dfs": true}, "change": true, "foreign": 7, "strongest": {"ssid": "Soused", "signal": -48, "channel": 36}, "tx_power": 17, "tx_reason": "na stejném kanálu slyší cAP-sklad (-58 dBm) – výkon −4 dB"}], "before": 6.4, "after": 0.4, "changes": 1, "missing": [], "notes": ["DFS kanály (52–64, 100+): při detekci radaru rádio na chvíli přejde jinam."], "aps": [{"device_id": "ap1", "device": "cAP-chodba", "online": true, "scanned_at": "2026-11-14T02:10:00+00:00"}], "pinned": null},
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/sites/a965789c-1657-49cc-9207-dfaa5674db7a/wifi/rogue": {
    "bss": [
     {

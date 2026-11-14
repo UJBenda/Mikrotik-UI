@@ -221,7 +221,14 @@ def test_takeover_scripts():
                                 OPTS, tail=switchcfg.TAKEOVER_TAIL)
     conf = routeros.wrap_command("https://c.example/api/checkin/ack?id=10", "KEY", switchcfg.TAKEOVER_CONFIRM, OPTS)
     rec = switchcfg.reconcile(t._managed_inv(), switchcfg.build(t._managed_inv(), t.INTENT, {"ports": {"ether2": {"mode": "off"}}}))
-    for s in (boot, cmd, conf, rec["apply"], rec["revert"]):
+    # LACP na řízeném switchi (i nesousední porty): sladění i převzetí načisto
+    bonded = {"bonds": [{"name": "bond-mtc1", "ports": ["ether2", "sfp1"], "mode": "trunk"}]}
+    mb = switchcfg.build(t._managed_inv(), t.INTENT, bonded, model_name="CRS326")
+    lacp = switchcfg.reconcile(t._managed_inv(), mb)
+    undo = switchcfg.reconcile(t._bonded_inv(t._managed_inv(), mb), switchcfg.build(t._managed_inv(), t.INTENT, {}))
+    assert 'comment="mtc"' in next(ln for ln in lacp["apply"].splitlines() if "bonding add" in ln)
+    for s in (boot, cmd, conf, rec["apply"], rec["revert"], lacp["apply"], lacp["revert"], undo["apply"], undo["revert"],
+              switchcfg.config_body(mb)):
         assert _balanced(s), s
         s.encode("ascii")
     # check-in hlásí běžící převzetí

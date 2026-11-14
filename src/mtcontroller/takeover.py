@@ -124,9 +124,21 @@ def set_site_intent(db: Database, tenant_id: Any, site_id: Any, data: dict, user
 # --- výjimky zařízení -------------------------------------------------------------------------------
 
 def load_device_intent(tx: Tx, device_id: Any) -> dict:
-    r = tx.fetchone("SELECT ports, mgmt, role, internet FROM device_intent WHERE device_id = %(d)s", {"d": str(device_id)})
-    return ({"ports": r["ports"], "mgmt": r["mgmt"], "role": r["role"], "internet": bool(r["internet"])} if r
-            else {"ports": {}, "mgmt": {}, "role": None, "internet": False})
+    r = tx.fetchone("SELECT ports, mgmt, role, internet, bonds FROM device_intent WHERE device_id = %(d)s",
+                    {"d": str(device_id)})
+    return ({"ports": r["ports"], "mgmt": r["mgmt"], "role": r["role"], "internet": bool(r["internet"]),
+             "bonds": r["bonds"] or []} if r
+            else {"ports": {}, "mgmt": {}, "role": None, "internet": False, "bonds": []})
+
+
+def save_device_intent(tx: Tx, tenant_id: Any, device_id: Any, new: dict, user_id: Any = None) -> None:
+    tx.execute(
+        """INSERT INTO device_intent (tenant_id, device_id, ports, mgmt, role, bonds, updated_by)
+           VALUES (%(t)s, %(d)s, %(p)s, %(m)s, %(r)s, %(b)s, %(u)s)
+           ON CONFLICT (device_id) DO UPDATE SET ports = EXCLUDED.ports, mgmt = EXCLUDED.mgmt,
+               role = EXCLUDED.role, bonds = EXCLUDED.bonds, updated_by = EXCLUDED.updated_by, updated_at = now()""",
+        {"t": str(tenant_id), "d": str(device_id), "p": new["ports"], "m": new["mgmt"], "r": new["role"],
+         "b": new.get("bonds") or [], "u": _s(user_id)})
 
 
 def set_device_intent(db: Database, tenant_id: Any, device_id: Any, data: dict, user_id: Any = None,
@@ -139,20 +151,17 @@ def set_device_intent(db: Database, tenant_id: Any, device_id: Any, data: dict, 
         site_intent = load_intent(tx, dev["site_id"]) if dev["site_id"] else None
         inv = inventory.load(tx, device_id, ["ethernet"])
         names = {p["name"] for p in switchcfg.physical_ports(inv)}
+        old = load_device_intent(tx, device_id)
+        if "bonds" not in data:
+            # formulář výjimek bondy neposílá – zůstávají
+            data = {**data, "bonds": old["bonds"]}
         try:
             new = intent.validate_device(data, site_intent, names or None)
         except intent.IntentError as e:
             raise ServiceError(str(e)) from e
         if not (data.get("mgmt") or {}).get("mode"):
             new["mgmt"] = {}
-        old = load_device_intent(tx, device_id)
-        tx.execute(
-            """INSERT INTO device_intent (tenant_id, device_id, ports, mgmt, role, updated_by)
-               VALUES (%(t)s, %(d)s, %(p)s, %(m)s, %(r)s, %(u)s)
-               ON CONFLICT (device_id) DO UPDATE SET ports = EXCLUDED.ports, mgmt = EXCLUDED.mgmt,
-                   role = EXCLUDED.role, updated_by = EXCLUDED.updated_by, updated_at = now()""",
-            {"t": str(tenant_id), "d": str(device_id), "p": new["ports"], "m": new["mgmt"], "r": new["role"],
-             "u": _s(user_id)})
+        save_device_intent(tx, tenant_id, device_id, new, user_id)
         audit(tx, "device.intent", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
               before=old, after=new, ip=ip)
     return new
@@ -703,9 +712,12 @@ def wifi_preview(tx: Tx, site_id: Any) -> dict:
         r["chip"] = packages.chip(invs[r["device_id"]])
     host_inv = inventory.load(tx, host)
     ssids = list_ssids(tx, site_id)
-    m = wificfg.manager(ssids, radios, pol, host_has_radios=bool(wificfg.radios(host_inv)))
+    from . import rfopt
+
+    rf = rfopt.get_pins(tx, site_id)
+    m = wificfg.manager(ssids, radios, pol, host_has_radios=bool(wificfg.radios(host_inv)), rf=rf)
     return {"host": dict(hd, id=str(hd["id"])), "aps": [str(d["id"]) for d in aps], "host_inv": host_inv,
-            "groups": pol.get("groups") or [], **m}
+            "groups": pol.get("groups") or [], "optimized_at": (rf or {}).get("at"), **m}
 
 
 def create_wifi_plan(db: Database, box: SecretBox, tenant_id: Any, site_id: Any, user_id: Any = None,

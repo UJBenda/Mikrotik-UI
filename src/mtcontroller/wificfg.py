@@ -124,7 +124,8 @@ def _applies(s: dict, r: dict, band: str) -> bool:
     return not groups or r.get("group") in groups
 
 
-def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, host_has_radios: bool) -> dict:
+def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, host_has_radios: bool,
+            rf: dict | None = None) -> dict:
     """Konfigurace CAPsMANu: {script, summary, radios, notes, blockers, config_map, channel_plan}.
 
     ssids: [{id, ssid, vlan_id, bands, isolation, ft, enabled, groups, ppsk: [{name, vlan_id}]}] – bez hesel.
@@ -201,6 +202,16 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
             notes.append(f"{r['device']} {r['interface']}: {len(mine)} SSID v pásmu {band} GHz – nad 4 klesá "
                          "propustnost (každé SSID vysílá beacony)")
         freq, width = (it["new"]["freq"], it["new"]["width"]) if it else (None, 20)
+        # optimalizace podle měření (rfopt) má přednost před plánem podle počtu AP
+        from . import rfopt
+
+        pin = rfopt.pin_for(rf, r["device_id"], r["interface"], band, policy)
+        if pin:
+            freq, width = pin["freq"], pin["width"]
+            if it:
+                it["new"] = {"freq": freq, "channel": channels.chan(freq), "width": width, "dfs": freq in channels.DFS}
+                it["change"] = it["now"]["freq"] != freq or it["now"]["width"] != width
+                it["reasons"] = ["optimalizace podle měření okolí"] if it["change"] else []
         ch = f'/interface wifi channel add name="mtc-ch-{key}" band={r["std"]} width={_width_arg(width, band)}'
         if freq:
             ch += f" frequency={int(freq)}"
@@ -210,6 +221,9 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
         first, rest = mine[0], mine[1:]
         n1 = names[first["id"]]
         tp = (tx.get((r["device_id"], r["interface"])) or {}).get("tx_power")
+        tp_why = (tx.get((r["device_id"], r["interface"])) or {}).get("reason")
+        if pin and "tx" in pin:
+            tp, tp_why = pin["tx"], "optimalizace podle měření okolí"
         txa = f" tx-power={int(tp)}" if tp is not None else ""
         lines.append(f'/interface wifi configuration add name="mtc-r-{key}" ssid={q(first["ssid"])} country={q(country)} '
                      f'mode=ap security="mtc-sec{n1}" datapath="mtc-dp{n1}" '
@@ -221,8 +235,8 @@ def manager(ssids: list[dict], site_radio_list: list[dict], policy: dict, *, hos
                      + ' comment="mtc"')
         radio_rows.append({"device_id": r["device_id"], "device": r["device"], "interface": r["interface"], "band": band,
                            "group": r.get("group"), "chip": r.get("chip"), "ssids": [s["ssid"] for s in mine],
-                           "skipped": skipped, "channel": it["new"]["channel"] if it else None, "width": width,
-                           "tx_power": tp, "tx_reason": (tx.get((r["device_id"], r["interface"])) or {}).get("reason")})
+                           "skipped": skipped, "channel": channels.chan(freq) if freq else None, "width": width,
+                           "tx_power": tp, "tx_reason": tp_why, "optimized": bool(pin)})
     if steering:
         lines.append(f':do {{ /interface wifi configuration set [find comment="mtc"] steering="{STEERING}" }} on-error={{}}')
     lines += [

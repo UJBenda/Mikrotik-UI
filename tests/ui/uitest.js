@@ -297,6 +297,15 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/wifi/plan"))) errors.push("wifi: plán");
       if (byId["wifi-result"].children.length < 5 || !byId["wifi-result"].textContent.includes("doladí")) errors.push("wifi: přehled rádií");
     }
+    // optimalizace kanálů: karta s tlačítkem, dialog s návrhem
+    if (!byId["rfopt-card"].textContent.includes("Optimalizovat kanály")) errors.push("rfopt: karta");
+    else {
+      const ob = byId["rfopt-card"].children[0].children[1];
+      if (ob && ob.onclick) ob.onclick();
+      if (byId["rfopt-dlg"].hidden || !byId["rfopt-rows"].textContent.includes("100 / 80 MHz · DFS") ||
+          !byId["rfopt-sum"].textContent.includes("6.4 → 0.4")) errors.push("rfopt: dialog");
+      byId["rfopt-dlg"].hidden = true;
+    }
     if (!byId["dg-rogue"].textContent.includes("E4:5F:01:00:00:09")) errors.push("DHCP: cizí server");
     if (!byId["dg-missing"].textContent.includes("192.168.30.10")) errors.push("DHCP: nedohledaný server");
     const dgRows = byId["dg-devices"].children;

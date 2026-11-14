@@ -137,6 +137,8 @@ def port_vlans(db: Database, settings: Settings, box: SecretBox, tenant_id: Any,
         vids = [int(n["vlan_id"]) for n in site_intent["networks"]]
         old = takeover.load_device_intent(tx, device_id)
         ports = dict(old["ports"] or {})
+        bonds = [dict(x) for x in old["bonds"]]
+        by_bond = {x["name"]: x for x in bonds}
         changed = []
         for port, desired in items.items():
             try:
@@ -144,36 +146,112 @@ def port_vlans(db: Database, settings: Settings, box: SecretBox, tenant_id: Any,
             except portcfg.PortError as e:
                 raise ServiceError(str(e)) from e
             o = override_for(desired, st, vids)
-            if o is not None:
+            if o is None:
+                continue
+            if port in by_bond:
+                # VLAN bondu (LACP) patří k bondu, ne k portu
+                if o["mode"] == "off":
+                    raise ServiceError(f"{port}: LACP nejde vypnout – zruš ho")
+                for k in ("mode", "vlan", "tagged"):
+                    by_bond[port].pop(k, None)
+                by_bond[port].update(o)
+            else:
                 ports[port] = o
-                changed.append(port)
+            changed.append(port)
         if not changed:
             return None
-        names = {p["name"] for p in switchcfg.physical_ports(inv)}
-        try:
-            new = intent.validate_device({"ports": ports, "mgmt": old["mgmt"] or {}, "role": old["role"]}, site_intent, names or None)
-        except intent.IntentError as e:
-            raise ServiceError(str(e)) from e
-        if not (old["mgmt"] or {}).get("mode"):
-            new["mgmt"] = {}
-        before, _x = takeover._model(tx, d, inv, ctl=ctl)
-        model, _di = takeover._model(tx, d, inv, new, ctl=ctl)
-        bad = [b for b in model["blockers"] if b not in before["blockers"]]
-        if bad:
-            raise ServiceError("změnu nelze: " + "; ".join(bad))
-        tx.execute(
-            """INSERT INTO device_intent (tenant_id, device_id, ports, mgmt, role, updated_by)
-               VALUES (%(t)s, %(d)s, %(p)s, %(m)s, %(r)s, %(u)s)
-               ON CONFLICT (device_id) DO UPDATE SET ports = EXCLUDED.ports, updated_by = EXCLUDED.updated_by,
-                   updated_at = now()""",
-            {"t": str(tenant_id), "d": str(device_id), "p": new["ports"], "m": new["mgmt"], "r": new["role"],
-             "u": _s(user_id)})
-        audit(tx, "device.intent", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
-              before={"ports": {p: (old["ports"] or {}).get(p) for p in changed}},
-              after={"ports": {p: ports[p] for p in changed}}, ip=ip)
-        site_id = d["site_id"]
+        site_id = _store(tx, tenant_id, d, inv, site_intent, old, {"ports": ports, "bonds": bonds}, ctl, user_id, ip,
+                         {"ports": changed})
     return site(db, settings, box, tenant_id, site_id, user_id, ip, can_approve=can_approve, wifi=False,
                 only={str(device_id)})
+
+
+def _store(tx, tenant_id: Any, d: dict, inv: dict, site_intent: dict, old: dict, change: dict, ctl: dict,
+           user_id: Any, ip: str | None, what: dict) -> Any:
+    """Ověří nový záměr zařízení modelem (nové překážky = změna se neuloží), uloží ho a zapíše audit."""
+    names = {p["name"] for p in switchcfg.physical_ports(inv)}
+    try:
+        new = intent.validate_device({"ports": change.get("ports", old["ports"] or {}), "mgmt": old["mgmt"] or {},
+                                      "role": old["role"], "bonds": change.get("bonds", old["bonds"])},
+                                     site_intent, names or None)
+    except intent.IntentError as e:
+        raise ServiceError(str(e)) from e
+    if not (old["mgmt"] or {}).get("mode"):
+        new["mgmt"] = {}
+    before, _x = takeover._model(tx, d, inv, ctl=ctl)
+    model, _di = takeover._model(tx, d, inv, new, ctl=ctl)
+    bad = [b for b in model["blockers"] if b not in before["blockers"]]
+    if bad:
+        raise ServiceError("změnu nelze: " + "; ".join(bad))
+    takeover.save_device_intent(tx, tenant_id, d["id"], new, user_id)
+    audit(tx, "device.intent", tenant_id=tenant_id, user_id=user_id, target=f"device:{d['id']}",
+          before={"ports": old["ports"], "bonds": old["bonds"]},
+          after={"ports": new["ports"], "bonds": new["bonds"], **what}, ip=ip)
+    return d["site_id"]
+
+
+def bond(db: Database, settings: Settings, box: SecretBox, tenant_id: Any, device_id: Any, kind: str, params: dict,
+         user_id: Any = None, ip: str | None = None, *, can_approve: bool = True) -> dict:
+    """LACP na řízeném zařízení: bond je součást záměru zařízení, vytvoří / zruší ho sladění.
+    Členy jsou libovolné porty – nemusí sousedit."""
+    from . import bondcfg
+    from .netsvc import device_view
+
+    ctl = device_view(db, settings)
+    with tenant_scope(db, tenant_id) as tx:
+        d = takeover._device(tx, device_id)
+        if d["managed_at"] is None:
+            raise ServiceError("zařízení není řízené")
+        site_intent = takeover.load_intent(tx, d["site_id"]) if d["site_id"] else None
+        if not site_intent:
+            raise ServiceError("lokalita nemá sítě")
+        inv = inventory.load(tx, device_id)
+        if not inv:
+            raise ServiceError("inventura zařízení zatím neproběhla")
+        old = takeover.load_device_intent(tx, device_id)
+        bonds = [dict(x) for x in old["bonds"]]
+        if kind == "bond_remove":
+            name = str(params.get("name") or "")
+            if not any(x["name"] == name for x in bonds):
+                raise ServiceError("rušit jde jen LACP vytvořené controllerem")
+            bonds = [x for x in bonds if x["name"] != name]
+            what = {"bond_removed": name}
+        else:
+            members = [str(x) for x in params.get("ports") or []]
+            used = {str(x["name"]) for x in bonds}
+            name, n = None, 1
+            taken = used | {str(i.get("name")) for i in inv.get("interfaces") or [] if isinstance(i, dict)}
+            while name is None:
+                name = None if f"{bondcfg.PREFIX}{n}" in taken else f"{bondcfg.PREFIX}{n}"
+                n += 1
+            item: dict[str, Any] = {"name": name, "ports": members, "mode": "trunk",
+                                    "lacp_rate": str(params.get("lacp_rate") or "30secs"),
+                                    "hash": str(params.get("hash") or "layer-2-and-3")}
+            vlan = params.get("vlan") if isinstance(params.get("vlan"), dict) else None
+            if params.get("profile_id") not in (None, ""):
+                from . import profiles
+
+                prof = profiles.expand(profiles.get(tx, int(params["profile_id"])), profiles.site_vlans(tx, device_id))
+                vlan = {k: prof.get(k) for k in ("pvid", "tagged") if prof.get(k) is not None}
+            if not vlan and members:
+                # výchozí: VLAN převzít z prvního portu (jako u sledovaných zařízení)
+                try:
+                    st0 = portcfg.port_state(inv, members[0])
+                    vlan = {"pvid": st0.get("pvid"), "tagged": st0.get("tagged") or []}
+                except portcfg.PortError:
+                    vlan = None
+            if vlan and vlan.get("pvid"):
+                vids = [int(v["vlan_id"]) for v in site_intent["networks"]]
+                o = override_for({"pvid": vlan.get("pvid"), "tagged": vlan.get("tagged") or [], "disabled": False},
+                                 {"pvid": None, "tagged": None, "disabled": False}, vids)
+                if o and o["mode"] != "off":
+                    item.update(o)
+            bonds.append(item)
+            what = {"bond": name}
+        site_id = _store(tx, tenant_id, d, inv, site_intent, old, {"bonds": bonds}, ctl, user_id, ip, what)
+    out = site(db, settings, box, tenant_id, site_id, user_id, ip, can_approve=can_approve, wifi=False,
+               only={str(device_id)})
+    return {"apply": out, "managed": True, "summary": ("LACP zrušeno" if kind == "bond_remove" else f"LACP {what['bond']}")}
 
 
 def split(desired: dict) -> tuple[dict, dict]:

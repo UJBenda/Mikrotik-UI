@@ -273,6 +273,7 @@
         </details>
       <div id="wifi-wrap" class="sub">
         <div id="capsman-card" class="capsman-card"></div>
+        <div id="rfopt-card" class="card-lite rogue-card"></div>
         <div id="rogue-card" class="card-lite rogue-card"></div>
         <div class="roam-card">
           <div class="roam-head"><h3>Roaming a problémy klientů</h3><span id="roam-range" class="seg"></span>
@@ -724,6 +725,30 @@
       </div>
     </div>
   </section>
+
+  <div id="rfopt-dlg" class="modal" hidden>
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="rfopt-title">
+      <div class="sd-head"><h3 id="rfopt-title">Optimalizace kanálů a výkonu</h3></div>
+      <p class="muted small">AP změří okolí (sousední sítě a navzájem sebe), controller vybere kanály s nejmenším rušením
+        a nasadí je. Stávající kanál zůstane, když není znatelně horší.</p>
+      <div class="rogue-head">
+        <span id="rfopt-scan-state" class="muted small"></span>
+        <button id="rfopt-scan" type="button" class="small secondary"
+                title="Každé AP na ~10 s přepne rádia do skenu – klienti na něm se na chvíli odpojí">Změřit okolí</button>
+      </div>
+      <label class="check"><input type="checkbox" id="rfopt-tx" checked> snížit výkon AP, která se na stejném kanálu slyší příliš silně</label>
+      <p id="rfopt-sum"></p>
+      <div class="table-wrap"><table class="grid">
+        <thead><tr><th>AP</th><th>Pásmo</th><th>Nyní</th><th>Návrh</th><th title="Vážené rušení na kanálu: sousední sítě a vlastní AP">Rušení</th><th>Sousedů</th><th>Výkon</th></tr></thead>
+        <tbody id="rfopt-rows"></tbody></table></div>
+      <ul id="rfopt-notes" class="muted small"></ul>
+      <div class="modal-acts">
+        <button id="rfopt-close" type="button" class="secondary">Zavřít</button>
+        <button id="rfopt-reset" type="button" class="secondary" hidden>Vrátit automatiku</button>
+        <button id="rfopt-apply" type="button" class="primary">Nasadit</button>
+      </div>
+    </div>
+  </div>
 
   <div id="lacp-dlg" class="modal" hidden>
     <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="lacp-title">

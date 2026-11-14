@@ -227,6 +227,110 @@ def test_reconcile_new_neighbor_and_port_change():
     assert any(c.startswith("VLAN 10") for c in r["changes"]) and any(c.startswith("VLAN 20") for c in r["changes"])
 
 
+def _bonded_inv(inv, model):
+    """Inventura po nasazení modelu s bondy (jak ji uvidí další inventura)."""
+    out = copy.deepcopy(inv)
+    names = {e["default-name"]: e["name"] for e in inv["ethernet"]}
+    bonds = [p for p in model["ports"] if p.get("bond")]
+    slaves = {names[s] for b in bonds for s in b["bond"]["slaves"]}
+    out["bonds"] = [{"name": b["port"], "slaves": ",".join(names[s] for s in b["bond"]["slaves"]), "mode": "802.3ad",
+                     "lacp-rate": b["bond"]["lacp_rate"], "transmit-hash-policy": b["bond"]["hash"], "comment": "mtc"}
+                    for b in bonds]
+    out["interfaces"] = out["interfaces"] + [{"name": b["port"], "type": "bond"} for b in bonds]
+    out["bridge_ports"] = [b for b in out["bridge_ports"] if b["interface"] not in slaves] + [
+        {"bridge": "bridge", "interface": b["port"], "pvid": str(b["pvid"]), "frame-types": b["frame_types"],
+         "trusted": "true" if b["trusted"] else "false"} for b in bonds]
+    out["bridge_vlans"] = [{"bridge": "bridge", "vlan-ids": str(v["vid"]), "tagged": ",".join(names.get(x, x) for x in v["tagged"]),
+                            "untagged": ",".join(names.get(x, x) for x in v["untagged"]), "comment": f"mtc:v{v['vid']}"}
+                           for v in model["vlans"]]
+    return out
+
+
+def test_lacp_managed_nonadjacent():
+    inv = _managed_inv()
+    di = intent.validate_device({"bonds": [{"name": "bond-mtc1", "ports": ["ether2", "sfp1"]}],
+                                 "ports": {"ether2": {"mode": "access", "vlan": 20}}}, INTENT,
+                                {"ether1", "ether2", "ether3", "ether4", "ether5-tiskarna", "sfp1"})
+    assert di["ports"] == {} and di["bonds"][0]["mode"] == "trunk"
+    for bad, msg in [([{"name": "b1", "ports": ["ether2"]}], "2 až 8"),
+                     ([{"name": "b1", "ports": ["ether2", "ether9"]}], "na zařízení není"),
+                     ([{"name": "b1", "ports": ["ether2", "ether4"]}, {"name": "b2", "ports": ["ether4", "sfp1"]}], "jiném bondu"),
+                     ([{"name": "b 1", "ports": ["ether2", "ether4"]}], "jméno"),
+                     ([{"name": "b1", "ports": ["ether2", "ether4"], "mode": "access", "vlan": 77}], "není v sítích")]:
+        try:
+            intent.validate_device({"bonds": bad}, INTENT, {"ether1", "ether2", "ether3", "ether4", "sfp1"})
+            raise AssertionError(f"prošlo: {bad}")
+        except intent.IntentError as e:
+            assert msg in str(e), (msg, str(e))
+    m = switchcfg.build(inv, INTENT, di, model_name="CRS326")
+    assert m["blockers"] == []
+    by = {p["port"]: p for p in m["ports"]}
+    assert "ether2" not in by and "sfp1" not in by
+    assert by["bond-mtc1"]["bond"]["slaves"] == ["ether2", "sfp1"] and by["bond-mtc1"]["mode"] == "trunk"
+    v10 = next(v for v in m["vlans"] if v["vid"] == 10)
+    assert "bond-mtc1" in v10["tagged"] and "ether2" not in v10["untagged"]
+    r = switchcfg.reconcile(inv, m)
+    a = r["apply"].splitlines()
+    i_rm, i_bond = a.index('/interface bridge port remove [find bridge=bridge interface="ether2"]'), next(
+        i for i, ln in enumerate(a) if ln.startswith('/interface bonding add name="bond-mtc1" slaves="ether2,sfp1" mode=802.3ad'))
+    i_vlan = next(i for i, ln in enumerate(a) if "bridge vlan set" in ln and "bond-mtc1" in ln)
+    i_port = next(i for i, ln in enumerate(a) if ln.startswith('/interface bridge port add bridge=bridge interface="bond-mtc1"'))
+    assert i_rm < i_bond < i_vlan < i_port, a
+    assert "LACP bond-mtc1: ether2 + sfp1" in r["changes"] and r["additive"] is False
+    # návrat: port bondu pryč, VLAN zpět, bond pryč, členy zpět do bridge
+    rv = r["revert"].splitlines()
+    j_bp = rv.index('/interface bridge port remove [find bridge=bridge interface="bond-mtc1"]')
+    j_vlan = max(i for i, ln in enumerate(rv) if "bridge vlan set" in ln)
+    j_bond = rv.index('/interface bonding remove [find name="bond-mtc1" comment="mtc"]')
+    j_mem = next(i for i, ln in enumerate(rv) if ln.startswith('/interface bridge port add bridge=bridge interface="ether2" pvid=10'))
+    assert j_bp < j_vlan < j_bond < j_mem, rv
+    assert not any("bond-mtc1" in ln for ln in rv[j_bond + 1:])
+    _ascii(r["apply"] + r["revert"])
+    # po nasazení je sladěno; uplink se pozná i přes bond
+    after = _bonded_inv(inv, m)
+    assert switchcfg.reconcile(after, switchcfg.build(after, INTENT, di, model_name="CRS326"))["changes"] == []
+    # jiný člen (ether4 místo sfp1): nový z bridge ven, starý zpět
+    di2 = {"bonds": [{"name": "bond-mtc1", "ports": ["ether2", "ether4"], "mode": "trunk"}]}
+    r = switchcfg.reconcile(after, switchcfg.build(after, INTENT, di2, model_name="CRS326"))
+    assert '/interface bonding set [find name="bond-mtc1"] slaves="ether2,ether4"' in r["apply"]
+    assert r["apply"].index('port remove [find bridge=bridge interface="ether4"]') < r["apply"].index("bonding set")
+    assert '/interface bridge port add bridge=bridge interface="sfp1"' in r["apply"]
+    assert 'slaves="ether2,sfp1"' in r["revert"]
+    # zrušení: bond pryč před VLAN tabulkou, členy zpět; návrat bond obnoví před VLAN
+    r = switchcfg.reconcile(after, switchcfg.build(after, INTENT, {}, model_name="CRS326"))
+    a = r["apply"].splitlines()
+    k_rm = a.index('/interface bonding remove [find name="bond-mtc1" comment="mtc"]')
+    assert a.index('/interface bridge port remove [find bridge=bridge interface="bond-mtc1"]') < k_rm
+    assert k_rm < next(i for i, ln in enumerate(a) if "bridge vlan set" in ln)
+    assert any(ln.startswith('/interface bridge port add bridge=bridge interface="sfp1"') for ln in a)
+    rv = r["revert"].splitlines()
+    k_add = next(i for i, ln in enumerate(rv) if ln.startswith('/interface bonding add name="bond-mtc1" slaves="ether2,sfp1"'))
+    assert rv.index('/interface bridge port remove [find bridge=bridge interface="sfp1"]') < k_add
+    assert k_add < min(i for i, ln in enumerate(rv) if "bridge vlan set" in ln)
+    assert k_add < next(i for i, ln in enumerate(rv) if ln.startswith('/interface bridge port add bridge=bridge interface="bond-mtc1"'))
+    assert "zrušit LACP bond-mtc1 (ether2, sfp1)" in r["changes"]
+    # LACP na uplinku: trunk, varování; přístupový režim je překážka
+    up = switchcfg.build(inv, INTENT, {"bonds": [{"name": "bond-mtc1", "ports": ["ether1", "ether4"]}]}, model_name="CRS326")
+    b = next(p for p in up["ports"] if p["port"] == "bond-mtc1")
+    assert b["trusted"] and b["mode"] == "trunk" and any("uplinku" in w for w in up["warnings"]) and not up["blockers"]
+    after_up = _bonded_inv(inv, up)
+    after_up["bridge_hosts"][0]["on-interface"] = "bond-mtc1"
+    assert switchcfg.mgmt_path(after_up)["uplink"] == "ether1"
+    bad = switchcfg.build(inv, INTENT, {"bonds": [{"name": "bond-mtc1", "ports": ["ether1", "ether4"], "mode": "access"}]},
+                          model_name="CRS326")
+    assert any("uplink" in x for x in bad["blockers"])
+    # převzetí načisto bond vytvoří před jeho portem v bridgi
+    body = switchcfg.config_body(m)
+    assert body.index("bonding add name=\"bond-mtc1\"") < body.index('port add bridge=bridge interface="bond-mtc1"')
+    assert 'interface="ether2"' not in body.split("bridge vlan add")[0].replace('slaves="ether2,sfp1"', "")
+    # přístupový bond (server ve VLAN hostů)
+    acc = switchcfg.build(inv, INTENT, {"bonds": [{"name": "bond-mtc1", "ports": ["ether2", "sfp1"], "mode": "access",
+                                                    "vlan": 20}]}, model_name="CRS326")
+    assert "bond-mtc1" in next(v for v in acc["vlans"] if v["vid"] == 20)["untagged"]
+    assert "edge=yes" in next(ln for ln in switchcfg.reconcile(inv, acc)["apply"].splitlines() if 'interface="bond-mtc1"' in ln
+                              and "port add" in ln)
+
+
 def test_basis_changes():
     inv = _managed_inv()
     b = switchcfg.basis(inv)

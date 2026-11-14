@@ -150,9 +150,11 @@ def store(db: Database, tenant_id: Any, site_id: Any, device_id: Any, found: lis
     with tenant_scope(db, tenant_id) as tx:
         macs, ssids = _site_context(tx, site_id)
         counts = {"own": 0, "rogue": 0, "neighbor": 0}
+        seen = []
         for b in found:
             kind = classify(b, macs, ssids)
             counts[kind] += 1
+            seen.append({**b, "kind": kind})
             tx.execute(
                 """INSERT INTO wifi_bss (tenant_id, site_id, bssid, ssid, frequency, signal, security, kind, seen_by)
                    VALUES (%(t)s, %(s)s, %(b)s, %(ssid)s, %(f)s, %(sig)s, %(sec)s, %(k)s, %(d)s)
@@ -161,6 +163,10 @@ def store(db: Database, tenant_id: Any, site_id: Any, device_id: Any, found: lis
                        seen_by = EXCLUDED.seen_by, last_seen = now()""",
                 {"t": str(tenant_id), "s": str(site_id), "b": b["bssid"], "ssid": b["ssid"], "f": b["frequency"],
                  "sig": b["signal"], "sec": b["security"], "k": kind, "d": str(device_id)})
+        # co slyší právě toto AP – podklad pro optimalizaci kanálů (rfopt)
+        from . import rfopt
+
+        rfopt.save_scan(tx, tenant_id, site_id, device_id, seen)
     return {"found": len(found), **counts}
 
 

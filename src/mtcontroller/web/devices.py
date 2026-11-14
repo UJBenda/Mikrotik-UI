@@ -529,6 +529,12 @@ async def device_bond(request: Request, p: Principal, tid: str) -> Response:
     ip = client_ip(request)
 
     def run():
+        from .. import autoapply
+
+        if kind != "site_vlans" and autoapply.is_managed(st.db, tid, did):
+            # řízené zařízení: bond jde do záměru zařízení a sladění ho rovnou nasadí
+            return autoapply.bond(st.db, st.settings, st.box, tid, did, kind, data, p.user_id, ip,
+                                  can_approve=p.can(tid, MANAGE))
         with tenant_scope(st.db, tid) as tx:
             up = _uplinks(tx, inventory.load(tx, did))
         res = plans.create_bond_plan(st.db, tid, did, kind, data, p.user_id, ip, up)
@@ -1356,6 +1362,27 @@ async def site_wifi_preview(request: Request, p: Principal, tid: str) -> Respons
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(OPERATE)
+async def site_wifi_optimize(request: Request, p: Principal, tid: str) -> Response:
+    """Optimalizace kanálů a výkonu podle měření okolí: náhled (GET), nasazení / zrušení (POST)."""
+    from .. import rfopt
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    if request.method == "GET":
+        lower = request.query_params.get("lower_tx", "1") != "0"
+        return json_response(await run_in_threadpool(rfopt.preview, st.db, tid, sid, lower))
+    data = await _json(request)
+    ip = client_ip(request)
+    if data.get("action") == "reset":
+        done = await run_in_threadpool(rfopt.reset, st.db, tid, sid, p.user_id, ip)
+        out: dict = {"reset": done}
+    else:
+        out = await run_in_threadpool(rfopt.apply, st.db, tid, sid, bool(data.get("lower_tx", True)), p.user_id, ip)
+    out["apply"] = await _autoapply(st, p, tid, sid, request, switches=False)
+    return json_response(out, 201)
+
+
 @endpoint(MANAGE)
 async def site_wifi_plan(request: Request, p: Principal, tid: str) -> Response:
     from .. import takeover
@@ -1800,6 +1827,7 @@ def routes() -> list[Route]:
         Route(T + "/mlag", mlag_create, methods=["POST"]),
         Route(s + "/ports", site_ports, methods=["GET"]),
         Route(s + "/wifi/rogue", site_rogue, methods=["GET", "POST"]),
+        Route(s + "/wifi/optimize", site_wifi_optimize, methods=["GET", "POST"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/plans/status", plan_status, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),

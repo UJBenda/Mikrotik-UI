@@ -1134,3 +1134,27 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   NTP sledovaných a příprava před montáží (výchozí konfigurace, Netinstall) jsou sbalené jako pokročilé.
 - **Design**: písmo 12 / 14 / 16 / 20 px (základ 14; drobné popisky jen v grafice), výchozí tlačítko neutrální a
   plné jen hlavní (`.primary`, odeslání formuláře), navigace s ikonami, první kroky v prázdné lokalitě.
+
+## LACP na řízených zařízeních a optimalizace kanálů (etapa 5)
+
+- **LACP v záměru zařízení** (`device_intent.bonds`, migrace 0026): `[{name, ports, mode trunk|access|hybrid, vlan,
+  tagged, lacp_rate, hash}]`. Členy jsou libovolné porty (nemusí sousedit), 2–8, každý nejvýš v jednom bondu; člen
+  nemá vlastní výjimku portu. `switchcfg.build` členy vyjme z portů bridge a přidá bond jako jeden port (položka
+  s klíčem `bond`); bond s uplinkem je vždy trunk a `trusted`. `mgmt_path` pozná uplink i přes bond (první člen).
+- **Sladění** (`switchcfg.reconcile`): bondy controlleru (komentář `mtc`) vznikají a mizí před VLAN tabulkou –
+  nové členy z bridge ven → `bonding add` → VLAN tabulka → port bondu do bridge; zrušení opačně. Návrat má pevné
+  pořadí: ostatní kroky pozpátku, obnova zrušených bondů, VLAN tabulka, zrušení nových bondů a členy zpět do bridge.
+  Převzetí načisto (`config_body`) bond vytvoří před jeho portem.
+- **API**: `POST …/devices/{id}/bonds` u řízeného zařízení zapíše bond do záměru (`autoapply.bond`, audit
+  `device.intent`) a rovnou sladí; VLAN bondu se bere z prvního portu, profilu nebo ručně a dál se mění editorem
+  portu (jde do záznamu bondu). U sledovaných zařízení zůstává plán `bondcfg`.
+- **Optimalizace kanálů** (`rfopt.py`): každý sken AP (`rogue.store`) uloží, co AP slyší, do `site_policy`
+  modul `wifi_scan` (nejvýš 80 sítí na AP, platnost 7 dní). `rfopt.plan` počítá rušení kanálu = cizí sítě vážené
+  signálem a překryvem + vlastní AP, která se slyší (dvojice bez měření se počítá odhadem). Hledá kanál a v 5 GHz
+  i šířku s nejmenším rušením (zúžení má cenu, strop šířky se zkouší pro celé pásmo), stávající kanál má přednost,
+  není-li znatelně horší. Volitelně sníží výkon rádia, které na stejném kanálu slyší vlastní AP silněji než
+  −70 dBm (1 dB za 3 dB, nejvýš 6 dB, ne když jsou klienti daleko).
+- **Nasazení**: `GET/POST …/sites/{id}/wifi/optimize` (náhled / připnutí / `action: reset`). Připnutí
+  (`site_policy` modul `wifi_rf`, audit `wifi.optimize`) má v `wificfg.manager` přednost před `channels.plan`
+  a `txpower.plan`, dokud vyhovuje politice (šířka, DFS); nasazuje se přes CAPsMAN jako každá změna Wi-Fi.
+  UI: Nastavení → Wi-Fi → „Optimalizovat kanály“ (měření AP po jednom, náhled před/po, nasazení).

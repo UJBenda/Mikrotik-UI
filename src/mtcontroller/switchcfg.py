@@ -102,9 +102,14 @@ def _to_default(inv: dict) -> dict[str, str]:
 
 def _phys(inv: dict, iface: Any) -> str | None:
     names = _to_default(inv)
+    bonds = {str(b.get("name")): _members(b.get("slaves")) for b in _rows(inv, "bonds")}
     for part in re.split(r"[,/]", str(iface or "")):
         if part in names:
             return names[part]
+        # bond (LACP): fyzicky jde o jeho členy – uplink je první z nich
+        for m in bonds.get(part, []):
+            if m in names:
+                return names[m]
     return None
 
 
@@ -313,6 +318,20 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
     names = _to_default(inv)
     # výjimky se ukládají pod současnými jmény portů; model pracuje s výchozími
     over = {names.get(k, k): v for k, v in over.items()}
+    # LACP: členy (libovolné, i nesousední porty) nahradí v bridgi jeden port – bond
+    bonds: list[dict] = []
+    in_bond: dict[str, str] = {}
+    known = {p["port"] for p in ports}
+    for b in dev_intent.get("bonds") or []:
+        members = [names.get(str(x), str(x)) for x in b.get("ports") or []]
+        missing = [m for m in members if m not in known]
+        if missing:
+            blockers.append(f"LACP {b.get('name')}: port {', '.join(missing)} na zařízení není")
+            continue
+        members.sort(key=_nat_key)
+        bonds.append({**b, "ports": members})
+        for m in members:
+            in_bond[m] = str(b["name"])
     neighbors: dict[str, str] = {}
     for n in _rows(inv, "neighbors"):
         p = _phys(inv, n.get("interface"))
@@ -321,6 +340,8 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
     out_ports: list[dict] = []
     for p in ports:
         port = p["port"]
+        if port in in_bond:
+            continue
         o = over.get(port) or {}
         if port == uplink:
             mode, reason = "trunk", f"uplink ({path['how']})"
@@ -354,6 +375,31 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         else:
             item.update(pvid=None, frame_types=None, loop=False)
         item["trusted"] = port == uplink
+        out_ports.append(item)
+    for b in bonds:
+        name, o = str(b["name"]), b
+        is_up = uplink in b["ports"]
+        mode = "trunk" if is_up else o.get("mode") or "trunk"
+        if is_up and (o.get("mode") or "trunk") != "trunk":
+            blockers.append(f"LACP {name} obsahuje uplink – musí být trunk")
+        item = {"port": name, "name": name, "mode": mode, "reason": "LACP" + (" (uplink)" if is_up else ""),
+                "comment": None, "trusted": is_up,
+                "bond": {"slaves": b["ports"], "lacp_rate": o.get("lacp_rate") or "30secs",
+                         "hash": o.get("hash") or "layer-2-and-3"}}
+        if is_up:
+            warnings.append(f"LACP {name} je na uplinku – protistrana musí mít LACP taky, jinak se zařízení odpojí "
+                            "a změna se za 5 min sama vrátí")
+        if mode == "trunk":
+            item.update(pvid=mg_vid if native else 1, frame_types=FT_ALL if native else FT_TRUNK_TAGGED, loop=False)
+        else:
+            vid = int(o.get("vlan") or intent["access_vlan"])
+            if vid not in vids:
+                blockers.append(f"LACP {name}: VLAN {vid} není v sítích lokality")
+            if mode == "access":
+                item.update(pvid=vid, frame_types=FT_ACCESS, loop=False)
+            else:
+                item.update(pvid=vid, tagged=[v for v in o.get("tagged") or [] if v in vids and v != vid],
+                            frame_types=FT_ALL, loop=False)
         out_ports.append(item)
     vlans = []
     for n in intent["networks"]:
@@ -423,6 +469,11 @@ def _port_line(it: dict) -> str:
             f"frame-types={it['frame_types']} ingress-filtering=yes{edge}{trusted}{c}")
 
 
+def _bond_line(name: str, bond: dict, slaves: list[str]) -> str:
+    return (f"/interface bonding add name={q(name)} slaves={q(','.join(slaves))} mode=802.3ad "
+            f"lacp-rate={bond['lacp_rate']} transmit-hash-policy={bond['hash']} comment=\"mtc\"")
+
+
 def config_body(model: dict) -> str:
     """Bridge, porty, VLAN tabulka, management, systém. Předpokládá čistou konfiguraci."""
     m = model["mgmt"]
@@ -433,6 +484,10 @@ def config_body(model: dict) -> str:
     for it in model["ports"]:
         if it["mode"] == "off":
             lines.append(f"/interface ethernet set [find default-name={q(it['port'])}] disabled=yes")
+            continue
+        if it.get("bond"):
+            lines.append(_bond_line(it["port"], it["bond"], it["bond"]["slaves"]))
+            lines.append(_port_line(it))
             continue
         lines.append(_port_line(it))
         # loop protect neumí každý port – chyba nesmí shodit celé převzetí
@@ -638,8 +693,9 @@ def reconcile(inv: dict, model: dict) -> dict:
     položky VLAN `mtc:v<vid>`, loop protect a vypnutí portů. `additive` = jen
     přibývají tagované VLAN (bezpečné i bez schválení)."""
     names = {p["port"]: p["name"] for p in physical_ports(inv)}
-    bports = {_phys(inv, b.get("interface")): b for b in _rows(inv, "bridge_ports")
-              if str(b.get("bridge")) == BRIDGE and not _true(b.get("dynamic"))}
+    inv_bonds = {str(b.get("name")): b for b in _rows(inv, "bonds")}
+    bports = {(str(b.get("interface")) if str(b.get("interface")) in inv_bonds else _phys(inv, b.get("interface"))): b
+              for b in _rows(inv, "bridge_ports") if str(b.get("bridge")) == BRIDGE and not _true(b.get("dynamic"))}
     eth = {str(e.get("default-name") or e.get("name")): e for e in _rows(inv, "ethernet")}
     cur_vlans = _vlan_entries(inv)
     to_cur = lambda ms: {names.get(x, x) for x in ms}  # noqa: E731
@@ -647,8 +703,60 @@ def reconcile(inv: dict, model: dict) -> dict:
     revert: list[str] = []
     changes: list[str] = []
     additive = True
+    # LACP: bondy vznikají a mizí před VLAN tabulkou (ta se na ně odkazuje jménem).
+    # Návrat: nejdřív ostatní kroky, pak obnova zrušených bondů, VLAN tabulka, nakonec zrušení nových bondů.
+    rv_vlan: list[str] = []
+    rv_restore: list[str] = []
+    rv_undo: list[str] = []
+    want_bonds = {it["port"]: it for it in model["ports"] if it.get("bond")}
+    cur_bonds = {n: b for n, b in inv_bonds.items() if str(b.get("comment") or "") == "mtc"}
+    cur_by_name = {str(b.get("interface")): b for b in _rows(inv, "bridge_ports")
+                   if str(b.get("bridge")) == BRIDGE and not _true(b.get("dynamic"))}
+
+    def _out_of_bridge(members: list[str]) -> None:
+        for m in members:
+            cb = cur_by_name.get(m)
+            if cb:
+                apply.append(f"/interface bridge port remove [find bridge={BRIDGE} interface={q(m)}]")
+                rv_undo.append(_port_line({**_cur_item(cb), "port": m}))
+
+    for bname, cb in sorted(cur_bonds.items()):
+        if bname in want_bonds:
+            continue
+        cur_s = _members(cb.get("slaves"))
+        old = {"lacp_rate": str(cb.get("lacp-rate") or "30secs"),
+               "hash": str(cb.get("transmit-hash-policy") or "layer-2-and-3")}
+        if bname in cur_by_name:
+            apply.append(f"/interface bridge port remove [find bridge={BRIDGE} interface={q(bname)}]")
+            rv_undo.append(_port_line({**_cur_item(cur_by_name[bname]), "port": bname}))
+        apply.append(f'/interface bonding remove [find name={q(bname)} comment="mtc"]')
+        rv_restore.append(_bond_line(bname, old, cur_s))
+        changes.append(f"zrušit LACP {bname} ({', '.join(cur_s)})")
+        additive = False
+    for bname, it in want_bonds.items():
+        slaves = [names.get(x, x) for x in it["bond"]["slaves"]]
+        cb = inv_bonds.get(bname)
+        if cb is None:
+            _out_of_bridge(slaves)
+            apply.append(_bond_line(bname, it["bond"], slaves))
+            rv_undo.insert(0, f'/interface bonding remove [find name={q(bname)} comment="mtc"]')
+            changes.append(f"LACP {bname}: {' + '.join(slaves)}")
+            additive = False
+            continue
+        cur_s = _members(cb.get("slaves"))
+        old = {"lacp_rate": str(cb.get("lacp-rate") or "30secs"),
+               "hash": str(cb.get("transmit-hash-policy") or "layer-2-and-3")}
+        if set(cur_s) != set(slaves) or old != {k: it["bond"][k] for k in ("lacp_rate", "hash")}:
+            _out_of_bridge([m for m in slaves if m not in cur_s])
+            apply.append(f"/interface bonding set [find name={q(bname)}] slaves={q(','.join(slaves))} "
+                         f"lacp-rate={it['bond']['lacp_rate']} transmit-hash-policy={it['bond']['hash']}")
+            rv_restore.append(f"/interface bonding set [find name={q(bname)}] slaves={q(','.join(cur_s))} "
+                              f"lacp-rate={old['lacp_rate']} transmit-hash-policy={old['hash']}")
+            changes.append(f"LACP {bname}: {' + '.join(slaves)} (dříve {', '.join(cur_s)})")
+            additive = False
+    bond_changed = bool(rv_restore or rv_undo)
     # VLAN tabulka (nejdřív přidat/rozšířit, porty potom)
-    phys_names = set(names.values()) | {BRIDGE}
+    phys_names = set(names.values()) | {BRIDGE} | set(want_bonds) | set(cur_bonds)
     for v in model["vlans"]:
         vid = v["vid"]
         want_t, want_u = set(v["tagged"]), set(v["untagged"])
@@ -660,7 +768,7 @@ def reconcile(inv: dict, model: dict) -> dict:
         if not cur:
             apply.append(f"/interface bridge vlan add bridge={BRIDGE} vlan-ids={vid} tagged={tag} untagged={untag} "
                          f"comment={q('mtc:v' + str(vid))}")
-            revert.append(f"/interface bridge vlan remove [find bridge={BRIDGE} vlan-ids={vid} dynamic=no]")
+            rv_vlan.append(f"/interface bridge vlan remove [find bridge={BRIDGE} vlan-ids={vid} dynamic=no]")
             changes.append(f"nová VLAN {vid} ({ascii_text(v['name'], 30)})")
             if want_u - {BRIDGE}:
                 additive = False
@@ -669,8 +777,8 @@ def reconcile(inv: dict, model: dict) -> dict:
         cu = {x for x in _members(cur.get("untagged")) if x in phys_names}
         if to_cur(want_t) != ct or to_cur(want_u) != cu:
             apply.append(f"/interface bridge vlan set [find bridge={BRIDGE} vlan-ids={vid} dynamic=no] tagged={tag} untagged={untag}")
-            revert.append(f"/interface bridge vlan set [find bridge={BRIDGE} vlan-ids={vid} dynamic=no] "
-                          f"tagged={q(','.join(sorted(ct) + extra_t))} untagged={q(','.join(sorted(cu)))}")
+            rv_vlan.append(f"/interface bridge vlan set [find bridge={BRIDGE} vlan-ids={vid} dynamic=no] "
+                           f"tagged={q(','.join(sorted(ct) + extra_t))} untagged={q(','.join(sorted(cu)))}")
             added = to_cur(want_t) - ct
             gone = (ct - to_cur(want_t)) | (cu ^ to_cur(want_u))
             changes.append(f"VLAN {vid}: " + ", ".join(
@@ -735,8 +843,9 @@ def reconcile(inv: dict, model: dict) -> dict:
     for vid, cur in sorted(cur_vlans.items()):
         if vid not in keep:
             apply.append(f"/interface bridge vlan remove [find bridge={BRIDGE} vlan-ids={vid} dynamic=no]")
-            revert.append(f"/interface bridge vlan add bridge={BRIDGE} vlan-ids={vid} tagged={q(str(cur.get('tagged') or ''))} "
-                          f"untagged={q(str(cur.get('untagged') or ''))} comment={q('mtc:v' + str(vid))}")
+            (rv_vlan if bond_changed else revert).append(
+                f"/interface bridge vlan add bridge={BRIDGE} vlan-ids={vid} tagged={q(str(cur.get('tagged') or ''))} "
+                f"untagged={q(str(cur.get('untagged') or ''))} comment={q('mtc:v' + str(vid))}")
             changes.append(f"odebrat VLAN {vid}")
             additive = False
     # adresa managementu: DHCP ↔ statická (s návratem, přeruší-li to správu)
@@ -802,8 +911,9 @@ def reconcile(inv: dict, model: dict) -> dict:
             revert.append("/interface wifi cap set enabled=yes")
             changes.append("CAP vypnout (role switch)")
             additive = False
-    # návrat v opačném pořadí
+    # návrat v opačném pořadí; VLAN tabulka až po obnově bondů, na které se odkazuje
     revert.reverse()
+    revert += rv_restore + rv_vlan[::-1] + rv_undo
     return {"apply": "\n".join(apply) + ("\n" if apply else ""), "revert": "\n".join(revert) + ("\n" if revert else ""),
             "changes": changes, "additive": additive and bool(changes),
             "summary": "; ".join(changes[:6]) + (f" (+{len(changes) - 6})" if len(changes) > 6 else "")}
@@ -871,6 +981,8 @@ def basis(inv: dict) -> str:
                                 for v in _rows(inv, "bridge_vlans") if not _true(v.get("dynamic"))), key=str),
         "ethernet": sorted(([str(e.get(k)) for k in ("default-name", "name", "loop-protect", "disabled")]
                             for e in _rows(inv, "ethernet")), key=str),
+        "bonds": sorted(([str(b.get(k)) for k in ("name", "slaves", "lacp-rate", "transmit-hash-policy", "comment")]
+                         for b in _rows(inv, "bonds")), key=str),
         "ntp": str((inv.get("ntp_client") or {}).get("servers") if isinstance(inv.get("ntp_client"), dict) else ""),
         "dns": str((inv.get("dns") or {}).get("servers") if isinstance(inv.get("dns"), dict) else ""),
     }

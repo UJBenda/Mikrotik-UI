@@ -86,12 +86,40 @@ def test_save_applies_and_port_edit_goes_to_intent():
         r = c.post(base + f"/devices/{sw}/ports/ether1/plan", json_body={"desired": {"pvid": 10, "tagged": []}, "apply": True})
         assert r.status_code == 400 and "uplink" in r.json()["detail"]
         # LACP a „Připravit VLAN“ na řízeném zařízení ne (porty určuje záměr)
-        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether2", "ether4"]})
+        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "site_vlans"})
         assert r.status_code == 400 and "řízené" in r.json()["detail"]
+        # LACP na řízeném zařízení: nesousední porty, bond jde do záměru a rovnou se nasadí
+        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether2", "sfp1"]})
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert out["managed"] and out["summary"] == "LACP bond-mtc1", out
+        d0 = out["apply"]["devices"][0]
+        assert d0["result"] == "applying" and "LACP bond-mtc1: ether2 + sfp1" in d0["summary"], out
+        with operator_scope(db) as tx:
+            row = tx.fetchone("SELECT ports, bonds FROM device_intent WHERE device_id = %(d)s", {"d": sw})
+            sc = tx.fetchone("SELECT script FROM config_plan WHERE id = %(i)s", {"i": d0["plan_id"]})["script"]
+        # VLAN bondu se převezme z prvního portu (ether2 = přístupový ve VLAN 10 podle inventury)
+        assert row["bonds"] == [{"name": "bond-mtc1", "ports": ["ether2", "sfp1"], "mode": "access", "vlan": 10,
+                                 "lacp_rate": "30secs", "hash": "layer-2-and-3"}]
+        assert "ether2" not in row["ports"], row  # člen bondu nemá vlastní výjimku
+        assert 'bonding add name="bond-mtc1" slaves="ether2,sfp1" mode=802.3ad' in sc
+        # port nesmí být ve dvou bondech; uplink s jiným režimem než trunk ne
+        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether2", "ether4"]})
+        assert r.status_code == 400 and "jiném bondu" in r.json()["detail"], r.text
+        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "lacp", "ports": ["ether4"]})
+        assert r.status_code == 400 and "2 až 8" in r.json()["detail"]
+        # zrušení bondu
+        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "bond_remove", "name": "bond-mtc1"})
+        assert r.status_code == 201 and r.json()["summary"] == "LACP zrušeno", r.text
+        with operator_scope(db) as tx:
+            assert tx.fetchone("SELECT bonds FROM device_intent WHERE device_id = %(d)s", {"d": sw})["bonds"] == []
+        r = c.post(base + f"/devices/{sw}/bonds", json_body={"kind": "bond_remove", "name": "bond-mtc1"})
+        assert r.status_code == 400
         assert c.get(base + f"/devices/{sw}").json()["site_vlans"] is None
         # čtyři oči: modul v seznamu → plán zůstane ke schválení jiným správcem
         settings.security.four_eyes_modules = ["switch"]
-        ap = c.put(base + f"/sites/{sid}/intent", json_body=INTENT_RAW).json()["apply"]
+        cams = dict(INTENT_RAW, networks=INTENT_RAW["networks"] + [{"name": "Sklad", "vlan_id": 40, "purpose": "lan"}])
+        ap = c.put(base + f"/sites/{sid}/intent", json_body=cams).json()["apply"]
         assert ap["devices"][0]["result"] == "draft" and "jiný uživatel" in ap["devices"][0]["reason"], ap
     finally:
         drop_db(name)
