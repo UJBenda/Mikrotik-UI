@@ -361,7 +361,8 @@ def sstp_username(serial: str) -> str:
 
 _SWITCH_MODEL = re.compile(r"^(CRS|CSS|netPower|netFiber|FiberBox)", re.I)
 _AP_ONLY_MODEL = re.compile(r"^(?:RB)?(cAP|wAP|Audience|wsAP|mAP|NetMetal|OmniTIK|BaseBox)", re.I)
-_HOME_ROUTER_MODEL = re.compile(r"^(hAP|Chateau)", re.I)
+# domácí routery s Wi-Fi – i podle kódu modelu z /system routerboard (hAP ax2 = C52iG…, hAP ac2 = RBD52G…)
+_HOME_ROUTER_MODEL = re.compile(r"^(hAP|Chateau|C52i|C53Ui|RBD5[23]|RB9[456][12]|L41G|L11UG|D53G|S53UG)", re.I)
 _PTP_MODEL = re.compile(r"^(?:RB)?(LHG|SXT|DISC|LDF|Wireless Wire|Cube|wAP 60G|nRAY|DynaDish|QRT|Groove|Metal)", re.I)
 _ROUTER_MODEL = re.compile(r"^(CCR|RB\d|hEX|L009|CHR|x86)", re.I)
 

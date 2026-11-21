@@ -150,6 +150,20 @@ def trust_ca_body(opts: FetchOpts) -> str:
 # --- adopce ------------------------------------------------------------------
 
 
+DEVICE_MODE_HINT = ("mtc: device-mode zarizeni blokuje fetch nebo scheduler. Spust: "
+                    "/system/device-mode/update mode=advanced  - a do 5 minut potvrd stiskem tlacitka reset/mode "
+                    "nebo odpojenim napajeni. Po nabehnuti vloz prikaz adopce znovu.")
+
+
+def device_mode_guard() -> str:
+    """RouterOS 7.17+: režimy home/basic zakazují /tool fetch a scheduler, bez kterých adopce ani check-in
+    nefungují. Změnu device-mode musí někdo fyzicky potvrdit (tlačítko / napájení), takže ji skript jen
+    srozumitelně ohlásí místo holého „not allowed by device-mode“. Starší verze položky nemají – projde."""
+    return (':local mtcdm true; :do { :set mtcdm ([/system device-mode get fetch] && [/system device-mode get scheduler]) } '
+            f'on-error={{}}; :if (!$mtcdm) do={{ :put {q(DEVICE_MODE_HINT)}; :log error {q(DEVICE_MODE_HINT)}; '
+            f':error {q(DEVICE_MODE_HINT)} }}')
+
+
 def net_bootstrap_body(ntp: list[str] | None = None) -> str:
     """Prázdné zařízení (smazaná konfigurace, žádná IP): bridge se všemi ethernety, DHCP klient
     na bridgi, počká na adresu a srovná čas přes NTP (bez RTC začíná v roce 1970 a ověření
@@ -190,7 +204,7 @@ def adopt_one_liner(base_url: str, token: str, opts: FetchOpts, ntp: list[str] |
             f"check-certificate={opts.check_certificate}; :delay 2s; "
             f"/import file-name=\"mtc-adopt.rsc\"")
     # příkazy na jednom řádku v bloku musí oddělit `;` (jinak RouterOS: bad parameter /tool)
-    parts = [_one_line(net_bootstrap_body(ntp))]
+    parts = [device_mode_guard(), _one_line(net_bootstrap_body(ntp))]
     if opts.ca_url:
         parts.append(_one_line(trust_ca_body(opts)))
     return "{ " + "; ".join(parts + [line]) + " }"

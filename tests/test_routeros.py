@@ -322,6 +322,11 @@ def test_one_liners_separate_statements():
 def test_net_bootstrap_only_for_blank_device():
     """Prázdný MikroTik (smazaná konfigurace): bridge + všechny ethernety + DHCP klient, čeká na
     adresu a NTP; zařízení s IP / DHCP klientem se nemění. Pořadí: síť → CA → adopce."""
+    # device-mode: adopce nejdřív ověří, že zařízení smí fetch a scheduler, a srozumitelně to ohlásí
+    g = routeros.device_mode_guard()
+    assert _balanced(g) and g.isascii() and "device-mode get fetch" in g and "mode=advanced" in g and "on-error={}" in g
+    line = routeros.adopt_one_liner("https://c.test", "tok", routeros.FetchOpts(check_certificate="yes"))
+    assert line.startswith("{ :local mtcdm true;") and line.index(":error") < line.index("/tool fetch") and _balanced(line)
     b = routeros.net_bootstrap_body(["tik.cesnet.cz", "x; /system reset"])
     assert b.startswith(':if ([:len [/ip address find]] = 0 && [:len [/ip dhcp-client find]] = 0) do={')
     assert 'comment="mtc bootstrap"' in b and "/ip dhcp-client add interface=bridge" in b

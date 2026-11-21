@@ -844,6 +844,9 @@
         <li>Vlož tento příkaz <span class="muted">(platí do <span id="token-exp"></span>, pro jedno zařízení)</span>:
           <div id="token-out" hidden>
             <pre id="token-cmd"></pre>
+            <p class="muted small">Hlásí zařízení „not allowed by device-mode“? Novější RouterOS na menších zařízeních blokuje
+              stahování a plánovač. Spusť <code>/system/device-mode/update mode=advanced</code>, do 5 minut potvrď stiskem
+              tlačítka reset/mode nebo odpojením napájení a příkaz vlož znovu.</p>
             <button id="token-copy" type="button" class="small primary">Kopírovat příkaz</button>
           </div></li>
         <li>Zařízení se tu do minuty objeví – vybereš jméno a roli, zbytek nastaví controller.</li>

@@ -192,6 +192,10 @@ def test_monitor_role_follows_model():
     assert r("CCR2004-16G-2S+", False) == "gateway" and r("hEX S", True) == "switch"
     assert r("hAP ax^2", False) == "gateway" and r("hAP ax^2", True) == "ap"
     assert r("LHG 5", False) == "ptp" and r("RBLHG-5nD", True) == "ptp" and r("SXTsq 5 ac", False) == "ptp"
+    # kódy modelů, jak je hlásí /system routerboard
+    assert r("RB960PGS", False) == "gateway" and r("RB960PGS", True) == "switch"          # hEX PoE
+    assert r("C52iG-5HaxD2HaxD", True) == "ap" and r("RBD52G-5HacD2HnD", False) == "gateway"  # hAP ax2, hAP ac2
+    assert r("cAPGi-5HaxD2HaxD", False) == "ap" and r("RBwAPG-5HacD2HnD", True) == "ap"
     assert r(None, False) == "unknown" and r("neco", True) == "unknown"
 
 
