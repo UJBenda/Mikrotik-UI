@@ -42,6 +42,10 @@ install -m 0644 "$SRC/deploy/nginx/mtcontroller.conf" "$SRC/deploy/nginx/mtcontr
 install -m 0644 "$SRC/deploy/systemd/mtc-worker-routes.conf" "$ROOT/usr/share/mtcontroller/"
 install -m 0644 "$SRC/config.toml.example" "$ROOT/usr/share/mtcontroller/config.toml.example"
 install -m 0644 "$SRC/README.md" "$ROOT/usr/share/doc/mtcontroller/README.md"
+# licence: Debian čeká soubor copyright
+{ printf 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: mtcontroller\n'
+  printf 'Source: https://github.com/UJBenda/Mikrotik-UI\n\nFiles: *\nCopyright: 2026 UJBenda and contributors\nLicense: AGPL-3.0-only\n\n'
+  printf 'License: AGPL-3.0-only\n'; sed 's/^$/./; s/^/ /' "$SRC/LICENSE"; } > "$ROOT/usr/share/doc/mtcontroller/copyright"
 [ -d "$SRC/docs" ] && cp -a "$SRC/docs/." "$ROOT/usr/share/doc/mtcontroller/"
 
 sed "s/@VERSION@/$VERSION/" "$SRC/packaging/debian/control.in" > "$ROOT/DEBIAN/control"

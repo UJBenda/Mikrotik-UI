@@ -13,6 +13,8 @@
 "E-mail": "E-mail",
 "Heslo": "Password",
 "Přihlásit": "Sign in",
+"Svobodný software pod licencí AGPL-3.0 ·": "Free software under the AGPL-3.0 licence ·",
+"zdrojový kód": "source code",
 "Ověření (MFA)": "Verification (MFA)",
 "Naskenuj QR kód v autentizační aplikaci (Aegis, Google Authenticator, Bitwarden…):": "Scan the QR code in your authenticator app (Aegis, Google Authenticator, Bitwarden…):",
 "QR kód pro autentizační aplikaci": "QR code for the authenticator app",

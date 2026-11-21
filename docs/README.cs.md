@@ -82,3 +82,8 @@ apt install python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
 sudo -u postgres tests/db/run.sh   # kontroly schématu (RLS, audit, tokeny)
 python3 -m pytest                  # unit + end-to-end testy (bez DB se přeskočí)
 ```
+
+## Licence
+
+GNU Affero General Public License verze 3 – viz [LICENSE](../LICENSE). Bez záruky. Kdo provozuje
+upravenou verzi jako síťovou službu, musí jejím uživatelům nabídnout zdrojový kód.

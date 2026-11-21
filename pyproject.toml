@@ -7,6 +7,7 @@ name = "mtcontroller"
 version = "0.1.0"
 description = "Multi-tenant management controller for MikroTik RouterOS v7"
 readme = "README.md"
+license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.11"
 # Produkce instaluje závislosti z Debian apt (deploy/install.sh); tento seznam
 # slouží pro vývoj mimo Debian.

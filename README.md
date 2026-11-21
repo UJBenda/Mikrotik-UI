@@ -81,6 +81,9 @@ pydantic, cryptography, vanilla JavaScript without a build step. Architecture no
 
 ## License
 
-A license has not been chosen yet. Until one is added to the repository, the usual
-default applies: you may read the code, but no rights to use, modify or redistribute
-it are granted.
+Copyright (C) 2026 UJBenda and contributors.
+
+This program is free software: you can redistribute it and/or modify it under the terms
+of the [GNU Affero General Public License, version 3](LICENSE). It comes without any
+warranty. If you run a modified version as a network service, the AGPL requires you to
+offer its source code to the users of that service.
