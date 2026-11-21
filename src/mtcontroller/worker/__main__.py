@@ -235,7 +235,7 @@ def reconcile_tunnels(db: Database, box: SecretBox, providers: list[TunnelProvid
 
 def run(settings: Settings, db: Database, box: SecretBox, providers: list[TunnelProvider],
         stop: threading.Event) -> None:
-    from .. import (adoptflow, alerts, clients, cloudbackup, heartbeat, inventory, notify, releases, rogue, routes,
+    from .. import (autoupdate, adoptflow, alerts, clients, cloudbackup, heartbeat, inventory, notify, releases, rogue, routes,
                     pkgmirror, sysalerts, takeover, upgrades)
 
     # -inf: monotonic() počítá od startu systému, 0.0 by po čerstvém bootu oddálilo první běh
@@ -251,6 +251,7 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                            ("inventory", lambda: poll_inventory(db, box, settings=settings)),
                            ("backup", lambda: run_backups(db, box)),
                            ("updates", lambda: check_updates(db, box)),
+                           ("autoupdate", lambda: autoupdate.run(db)),
                            ("upgrades", lambda: upgrades.advance(db)),
                            ("adopt", lambda: adoptflow.run_all(db, settings, box)),
                            ("pkgmirror", lambda: pkgmirror.run(db, settings)),

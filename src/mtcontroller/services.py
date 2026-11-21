@@ -661,6 +661,24 @@ def enqueue(tx: Tx, tenant_id: Any, device_id: Any, kind: str, params: dict,
     return row["id"]
 
 
+def _firmware_follow(tx: Tx, tenant_id: Any, dev: dict, version: str | None, state: str) -> None:
+    """RouterBOOT hned po aktualizaci RouterOS: jakmile zařízení po aktualizaci vyžádané controllerem
+    ohlásí novou verzi, dostane příkaz `firmware`. Ten si na zařízení sám ověří, jestli je co aktualizovat
+    (a jen tehdy restartuje), takže se sem nemusí čekat na inventuru."""
+    if not version or not dev["ros_version"] or version == dev["ros_version"] or state != "adopted":
+        return
+    up = tx.fetchone("""SELECT id FROM device_command WHERE device_id = %(d)s AND kind = 'upgrade' AND status = 'done'
+                        AND finished_at > now() - make_interval(hours => 6)
+                        AND coalesce(params->>'firmware', 'true') <> 'false' ORDER BY id DESC LIMIT 1""",
+                     {"d": str(dev["id"])})
+    if not up or tx.fetchone("""SELECT 1 FROM device_command WHERE device_id = %(d)s AND kind = 'firmware'
+                                AND (status IN ('queued', 'sent') OR id > %(u)s)""", {"d": str(dev["id"]), "u": up["id"]}):
+        return
+    enqueue(tx, tenant_id, dev["id"], "firmware", {"after_upgrade": up["id"]})
+    audit(tx, "device.firmware_follow", tenant_id=tenant_id, target=f"device:{dev['id']}",
+          after={"ros": version, "upgrade_command": up["id"]})
+
+
 def request_command(db: Database, tenant_id: Any, device_id: Any, kind: str,
                     user_id: Any = None, ip: str | None = None, params: dict | None = None) -> int:
     """Příkaz vyžádaný uživatelem (reboot, deprovision, opakovaný provision,
@@ -922,7 +940,8 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
     st = _parse_status(body)
     with tenant_scope(db, device_ref["tenant_id"]) as tx:
         dev = tx.fetchone(
-            """SELECT id, serial, state, api_cert_fingerprint, concentrator, last_status, host(tunnel_ip) AS tunnel_ip
+            """SELECT id, serial, state, api_cert_fingerprint, concentrator, last_status, ros_version,
+                      host(tunnel_ip) AS tunnel_ip
                FROM device WHERE id = %(d)s FOR UPDATE""",
             {"d": str(device_ref["id"])},
         )
@@ -960,6 +979,7 @@ def checkin(db: Database, settings: Settings, box: SecretBox, device_ref: dict, 
         )
         if new_state != dev["state"]:
             audit(tx, "device.online", tenant_id=device_ref["tenant_id"], target=f"device:{dev['id']}", ip=ip)
+        _firmware_follow(tx, device_ref["tenant_id"], dev, st["version"], new_state)
 
         # automatické přepnutí koncentrátoru, když tunel dlouho neběží
         if not settings.tunnel.local and down >= SSTP_FAILOVER_AFTER and len(settings.tunnel.concentrators) > 1 and dev["state"] != "provisioning":

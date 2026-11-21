@@ -1063,3 +1063,12 @@ a:hover { text-decoration: underline; }
 .sig i:nth-child(1) { height: 4px; } .sig i:nth-child(2) { height: 7px; } .sig i:nth-child(3) { height: 10px; } .sig i:nth-child(4) { height: 14px; }
 .sig i.on { background: var(--ok); } .sig-2 i.on { background: var(--warn); } .sig-1 i.on { background: var(--bad); }
 .clients-t td { vertical-align: middle; }
+/* aktualizace: plánování a automatika */
+.upg-sched { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+.upg-sched label { margin: 0; display: flex; align-items: center; gap: 6px; }
+.upg-autoform { margin: 14px 0 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.upg-autoform h4 { margin: 0 0 6px; }
+.au-opts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 8px 0; }
+.au-opts.off { opacity: .5; }
+.au-opts label { margin: 0; display: flex; align-items: center; gap: 6px; }
+.au-days { display: flex; gap: 8px; flex-wrap: wrap; }

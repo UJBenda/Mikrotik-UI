@@ -1191,3 +1191,18 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   obloukem, nespojené části pod sebou. Plátno má pevné rozměry a posouvá se, neškáluje.
 - **QR pro MFA** (`qr.py`): vlastní kodér QR (bajtový režim, úroveň M, verze 1–10, výběr masky) bez závislostí;
   `auth` vrací k otpauth URI matici `qr`, UI ji vykreslí jako SVG. Ruční klíč zůstává jako záloha.
+
+## RouterBOOT s RouterOS, automatické a naplánované aktualizace (etapa 8)
+
+- **RouterBOOT hned po RouterOS** (`services._firmware_follow`): když zařízení po aktualizaci vyžádané
+  controllerem (příkaz `upgrade` hotový v posledních 6 h) ohlásí v check-inu novou verzi, zařadí se mu příkaz
+  `firmware`. Ten si na zařízení sám ověří `current-firmware` ≠ `upgrade-firmware` a jen tehdy restartuje –
+  není potřeba čekat na inventuru. Ruční aktualizace mimo controller se nedotahuje (žádný nečekaný restart).
+- **Postupná úloha** (`upgrades`): krok RouterOS je hotový až po doběhnutí navazujícího `firmware` a check-inu
+  aspoň 75 s po jeho potvrzení (příkaz potvrzuje před restartem). Kandidáti zahrnují i zařízení s aktuálním
+  RouterOS a starším RouterBOOT – krok `kind: firmware` pošle jen příkaz `firmware`.
+- **Automatika a plánování** (`autoupdate.py`, `site_policy` modul `autoupdate`): v okně (dny + čas, místní čas
+  serveru) worker spustí postupnou úlohu pro zařízení, jejichž verze je nabízená aspoň `delay_days` dní
+  (`seen` = kdy byla verze poprvé viděna), nejvýš jednou za 20 h. `scheduled {at, order}` = jednorázový start,
+  volitelně jen vybraná zařízení; termín opožděný o víc než 6 h propadá. API `PUT …/sites/{id}/autoupdate`,
+  stav v `GET …/upgrade` (`auto`), audit `site.autoupdate`, `site.autoupdate_run`.

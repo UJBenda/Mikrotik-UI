@@ -53,7 +53,18 @@ def candidates(tx, site_id: Any) -> list[dict]:
             continue
         if any(i.severity == "critical" for i in ros_versions.issues_for(r["latest"])):
             continue
+        r["kind"] = "upgrade"
         out.append(r)
+    # zařízení s aktuálním RouterOS, ale starším RouterBOOT (firmware se po dřívější aktualizaci nedotáhl)
+    have = {str(r["id"]) for r in out}
+    for r in tx.fetchall(
+            """SELECT d.id, d.identity, d.serial, d.role::text AS role, d.ros_version,
+                      i.data->>'current-firmware' AS fw_from, i.data->>'upgrade-firmware' AS fw_to
+               FROM device d JOIN device_inventory i ON i.device_id = d.id AND i.section = 'routerboard'
+               WHERE d.site_id = %(s)s AND d.state = 'adopted'""", {"s": str(site_id)}):
+        if r["fw_from"] and r["fw_to"] and r["fw_from"] != r["fw_to"] and str(r["id"]) not in have:
+            r.update(kind="firmware", latest=(r["ros_version"] or "").split(" ")[0])
+            out.append(r)
     depth = depths(tx, site_id)
     for r in out:
         r["depth"] = depth.get(str(r["id"]))
@@ -112,7 +123,8 @@ def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: s
         if not devs:
             raise ServiceError("v lokalitě není žádné online zařízení s dostupnou aktualizací")
         steps = [{"device_id": str(d["id"]), "label": d["identity"] or d["serial"], "role": d["role"],
-                  "from": (d["ros_version"] or "").split(" ")[0], "version": d["latest"],
+                  "from": (d["ros_version"] or "").split(" ")[0], "version": d["latest"], "kind": d.get("kind", "upgrade"),
+                  **({"fw": f"{d['fw_from']} → {d['fw_to']}"} if d.get("kind") == "firmware" else {}),
                   "status": "pending", "command_id": None, "started_at": None, "message": None} for d in devs]
         if canary and len(steps) > 1:
             steps[0]["canary"] = canary
@@ -136,6 +148,28 @@ def cancel(db: Database, tenant_id: Any, job_id: int, user_id: Any = None, ip: s
         if not n:
             raise NotFound("běžící úloha neexistuje")
         audit(tx, "site.upgrade_cancel", tenant_id=tenant_id, user_id=user_id, target=f"upgrade_job:{job_id}", ip=ip)
+
+
+FW_MESSAGE = "RouterOS hotovo, aktualizuje se RouterBOOT (druhý restart)"
+FW_SETTLE = dt.timedelta(seconds=75)
+
+
+def _firmware_state(tx, step: dict, dev: dict | None, started: dt.datetime) -> str:
+    """Stav aktualizace RouterBOOT u kroku: "wait" (příkaz čeká / zařízení se po něm ještě neohlásilo) nebo "ok".
+    Příkaz `firmware` potvrzuje před restartem, proto se čeká na check-in aspoň FW_SETTLE po potvrzení."""
+    if step.get("kind") == "firmware":
+        fw = tx.fetchone("SELECT status::text AS status, finished_at FROM device_command WHERE id = %(c)s",
+                         {"c": step["command_id"]})
+    else:
+        fw = tx.fetchone("""SELECT status::text AS status, finished_at FROM device_command
+                            WHERE device_id = %(d)s AND kind = 'firmware' AND created_at >= %(t)s
+                            ORDER BY id DESC LIMIT 1""", {"d": step["device_id"], "t": started})
+    if not fw or fw["status"] == "failed":
+        return "ok"  # bez RouterBOARD (CHR) nebo příkaz selhal – RouterOS je aktuální, pokračuje se
+    if fw["status"] != "done" or not fw["finished_at"]:
+        return "wait"
+    seen = dev["last_checkin_at"] if dev else None
+    return "ok" if seen and seen >= fw["finished_at"] + FW_SETTLE else "wait"
 
 
 def _finish(tx, job: dict, steps: list[dict], status: str, message: str | None) -> None:
@@ -207,6 +241,12 @@ def _advance_one(db: Database, job: dict, now: dt.datetime) -> bool:
                 cur.update(status="failed", message="zařízení aktualizaci odmítlo (viz /log na zařízení)")
                 _finish(tx, job, steps, "stopped", f"{cur['label']}: {cur['message']}")
                 return True
+            fw = _firmware_state(tx, cur, dev, started) if cmd and cmd["status"] == "done" and on_target else None
+            if fw == "wait" and now - started <= STEP_TIMEOUT:
+                if cur.get("message") != FW_MESSAGE:
+                    cur["message"] = FW_MESSAGE
+                    tx.execute("UPDATE upgrade_job SET steps = %(st)s WHERE id = %(j)s", {"st": steps, "j": job["id"]})
+                return False
             if cmd and cmd["status"] == "done" and dev and dev["state"] == "adopted" and on_target:
                 if cur.get("canary"):
                     until = now + dt.timedelta(minutes=int(cur["canary"]))
@@ -227,7 +267,8 @@ def _advance_one(db: Database, job: dict, now: dt.datetime) -> bool:
             _finish(tx, job, steps, "done", None)
             return True
         dev = tx.fetchone("SELECT state, ros_version FROM device WHERE id = %(d)s", {"d": nxt["device_id"]})
-        if dev and ros_versions.parse(dev["ros_version"] or "") >= ros_versions.parse(nxt["version"]):
+        fw_only = nxt.get("kind") == "firmware"
+        if not fw_only and dev and ros_versions.parse(dev["ros_version"] or "") >= ros_versions.parse(nxt["version"]):
             nxt.update(status="skipped", message="už má cílovou verzi")
             tx.execute("UPDATE upgrade_job SET steps = %(st)s WHERE id = %(j)s", {"st": steps, "j": job["id"]})
             return True
@@ -237,8 +278,11 @@ def _advance_one(db: Database, job: dict, now: dt.datetime) -> bool:
             return True
     # příkaz mimo transakci výše – request_command si otevře vlastní (se stejnými kontrolami jako v UI)
     try:
-        cid = services.request_command(db, tid, nxt["device_id"], "upgrade", job["created_by"], None,
-                                       {"version": nxt["version"]})
+        if fw_only:
+            cid = services.request_command(db, tid, nxt["device_id"], "firmware", job["created_by"], None)
+        else:
+            cid = services.request_command(db, tid, nxt["device_id"], "upgrade", job["created_by"], None,
+                                           {"version": nxt["version"]})
     except ServiceError as e:
         nxt.update(status="failed", message=str(e))
         with tenant_scope(db, tid) as tx:

@@ -3459,6 +3459,7 @@ async function loadUpgrade() {
   upgAuto = u.candidates.map((c) => c.device_id);
   upgList = u.candidates.map((c) => ({ c, on: true }));
   renderUpgCands();
+  renderAutoUpdate(u.auto);
   const running = u.jobs.some((j) => j.status === "running");
   $("upg-start").hidden = !u.candidates.length || running;
   $("upg-auto").hidden = !u.candidates.length || running;
@@ -3476,13 +3477,70 @@ async function loadUpgrade() {
     }
     const steps = el("ol");
     for (const st of j.steps) {
-      steps.appendChild(el("li", `${st.label}: ${st.from || "?"} → ${st.version} – ${UPG_STEP[st.status] || st.status}` +
+      steps.appendChild(el("li", `${st.label}: ${st.kind === "firmware" ? "RouterBOOT " + (st.fw || "") : `${st.from || "?"} → ${st.version}`} – ${UPG_STEP[st.status] || st.status}` +
                                  (st.message ? ` (${st.message})` : ""), st.status === "failed" ? "sev-error" : ""));
     }
     li.appendChild(steps);
     ul.appendChild(li);
   }
 }
+
+// --- automatické a naplánované aktualizace --------------------------------------------------
+let auPol = null;
+const AU_DAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
+
+function renderAutoUpdate(a) {
+  auPol = a || { enabled: false, days: [1, 2, 3], from: "02:00", to: "05:00", delay_days: 7, canary: 10, scheduled: null, last: null };
+  const can = canManage();
+  $("upg-auto-form").hidden = !can; $("upg-sched-row").hidden = !can;
+  $("au-enabled").checked = !!auPol.enabled;
+  $("au-from").value = auPol.from; $("au-to").value = auPol.to; $("au-delay").value = String(auPol.delay_days);
+  const box = $("au-days"); box.textContent = "";
+  AU_DAYS.forEach((name, i) => {
+    const l = el("label", null, "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = auPol.days.includes(i);
+    cb.id = "au-day-" + i;
+    l.append(cb, " " + name); box.appendChild(l);
+  });
+  $("au-opts").className = "au-opts" + (auPol.enabled ? "" : " off");
+  $("au-last").textContent = auPol.last ? `Naposledy ${fmtTime(auPol.last.at)}: ${auPol.last.result}` : "";
+  const info = $("upg-sched-info"); info.textContent = "";
+  if (auPol.scheduled) {
+    const n = auPol.scheduled.order ? `${auPol.scheduled.order.length} vybraná zařízení` : "všechna zařízení s aktualizací";
+    info.append(`Naplánováno na ${new Date(auPol.scheduled.at).toLocaleString("cs-CZ", { dateStyle: "short", timeStyle: "short" })} (${n}) `);
+    const b = el("button", "Zrušit", "small secondary"); b.type = "button";
+    b.onclick = () => saveAutoUpdate({ scheduled: null }, "Naplánovaná aktualizace zrušena");
+    info.appendChild(b);
+  }
+}
+
+function autoUpdateForm() {
+  return { enabled: $("au-enabled").checked, days: AU_DAYS.map((_, i) => i).filter((i) => $("au-day-" + i).checked),
+           from: $("au-from").value, to: $("au-to").value, delay_days: Number($("au-delay").value),
+           canary: $("upg-canary").checked ? 10 : 0, scheduled: auPol ? auPol.scheduled : null };
+}
+
+async function saveAutoUpdate(change, done) {
+  try {
+    const r = await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/autoupdate`, { ...autoUpdateForm(), ...change });
+    renderAutoUpdate(r); msg(done);
+  } catch (e) { msg(e.message, true); }
+}
+
+$("au-enabled").addEventListener("change", () => { $("au-opts").className = "au-opts" + ($("au-enabled").checked ? "" : " off"); });
+$("upg-auto-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  saveAutoUpdate({}, $("au-enabled").checked ? "Automatické aktualizace zapnuty" : "Automatické aktualizace vypnuty");
+});
+$("upg-sched").addEventListener("click", async () => {
+  const v = $("upg-sched-at").value;
+  if (!v) return msg("Zadej datum a čas", true);
+  const chosen = upgList.filter((x) => x.on);
+  if (!chosen.length) return msg("Vyber aspoň jedno zařízení", true);
+  const when = new Date(v);
+  if (!(await ask(`Naplánovat aktualizaci ${chosen.length} zařízení na ${when.toLocaleString("cs-CZ", { dateStyle: "short", timeStyle: "short" })}?` +
+                  `\n\n${chosen.map((x, i) => `${i + 1}. ${x.c.label}`).join("\n")}`, "Naplánovat"))) return;
+  saveAutoUpdate({ scheduled: { at: when.toISOString(), order: chosen.map((x) => x.c.device_id) } }, "Aktualizace naplánována");
+});
 
 function upgManual() {
   const ids = upgList.filter((x) => x.on).map((x) => x.c.device_id);
@@ -3507,7 +3565,7 @@ function renderUpgCands() {
     const c = x.c;
     tr.append(tdc, el("td", x.on ? String(++n) : "–"), el("td", c.label), el("td", c.role),
               el("td", c.depth == null ? "?" : c.depth === 0 ? "brána" : `${c.depth} ${c.depth === 1 ? "skok" : c.depth < 5 ? "skoky" : "skoků"}`),
-              el("td", `${c.from} → ${c.version}`), tdm);
+              el("td", c.kind === "firmware" ? `jen RouterBOOT ${c.fw}` : `${c.from} → ${c.version}`), tdm);
     tb.appendChild(tr);
   });
   if (!upgList.length) {

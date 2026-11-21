@@ -350,10 +350,11 @@
           <div id="ntp-result" class="muted"></div>
           </details>
       <div id="upg-wrap" class="sub">
-        <h3>Postupná aktualizace RouterOS</h3>
+        <h3>Aktualizace RouterOS a RouterBOOT</h3>
         <p class="muted">Postupně po jednom zařízení, <b>od konce sítě</b>: nejdřív zařízení nejdál od brány (podle
-          sousedů MNDP/LLDP), gateway poslední – restart nikdy neodřízne cestu k ostatním. Další až po návratu
-          předchozího s novou verzí; při chybě se zastaví. Pořadí i výběr můžeš upravit ručně.</p>
+          sousedů MNDP/LLDP), gateway poslední – restart nikdy neodřízne cestu k ostatním. Po RouterOS se u zařízení
+          rovnou dotáhne i <b>RouterBOOT</b> (druhý krátký restart). Další zařízení až po návratu předchozího;
+          při chybě se zastaví. Pořadí i výběr můžeš upravit ručně.</p>
         <table class="upg"><thead><tr><th></th><th>#</th><th>Zařízení</th><th>Role</th><th>Od brány</th><th>Verze</th><th>Pořadí</th></tr></thead>
         <tbody id="upg-cands"></tbody></table>
         <label class="check" title="Když první zařízení po aktualizaci vypadne, hlásí jinou verzi nebo se u něj objeví kritický problém, úloha se zastaví">
@@ -363,6 +364,25 @@
           <button id="upg-auto" type="button" class="small secondary">Automatické pořadí</button>
           <span id="upg-mode" class="muted"></span>
         </div>
+        <div id="upg-sched-row" class="upg-sched">
+          <label>Nebo naplánovat na <input type="datetime-local" id="upg-sched-at"></label>
+          <button id="upg-sched" type="button" class="small secondary">Naplánovat vybraná</button>
+          <span id="upg-sched-info" class="muted"></span>
+        </div>
+        <form id="upg-auto-form" class="upg-autoform">
+          <h4>Automatické aktualizace</h4>
+          <label class="check"><input type="checkbox" id="au-enabled"> aktualizovat lokalitu automaticky v servisním okně</label>
+          <div id="au-opts" class="au-opts">
+            <div id="au-days" class="au-days" role="group" aria-label="Dny"></div>
+            <label>od <input type="time" id="au-from" value="02:00"></label>
+            <label>do <input type="time" id="au-to" value="05:00"></label>
+            <label title="Nová verze se nasadí až po tolika dnech od chvíle, kdy ji zařízení začala nabízet – čerstvá vydání mívají chyby">
+              odklad nové verze
+              <select id="au-delay"><option value="0">hned</option><option value="3">3 dny</option><option value="7" selected>7 dní</option>
+                <option value="14">14 dní</option><option value="30">30 dní</option></select></label>
+          </div>
+          <div class="intent-acts"><button type="submit" class="small">Uložit</button> <span id="au-last" class="muted"></span></div>
+        </form>
         <h4>Úlohy</h4>
         <ul id="upg-jobs"></ul>
       </div>

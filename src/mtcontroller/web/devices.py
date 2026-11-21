@@ -1149,7 +1149,7 @@ async def site_stp(request: Request, p: Principal, tid: str) -> Response:
 @endpoint(READ)
 async def site_upgrade(request: Request, p: Principal, tid: str) -> Response:
     """GET: náhled pořadí a poslední úlohy; POST (MANAGE): spustí postupnou aktualizaci."""
-    from .. import upgrades
+    from .. import autoupdate, upgrades
 
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
@@ -1167,10 +1167,28 @@ async def site_upgrade(request: Request, p: Principal, tid: str) -> Response:
             cands = upgrades.candidates(tx, sid)
             return {"candidates": [{"device_id": str(c["id"]), "label": c["identity"] or c["serial"],
                                     "role": c["role"], "from": (c["ros_version"] or "").split(" ")[0],
-                                    "version": c["latest"], "depth": c.get("depth")} for c in cands],
-                    "jobs": upgrades.jobs(tx, sid)}
+                                    "version": c["latest"], "depth": c.get("depth"), "kind": c["kind"],
+                                    "fw": f"{c['fw_from']} → {c['fw_to']}" if c["kind"] == "firmware" else None}
+                                   for c in cands],
+                    "jobs": upgrades.jobs(tx, sid), "auto": _auto_view(autoupdate.get(tx, sid))}
 
     return json_response(await run_in_threadpool(q))
+
+
+def _auto_view(pol: dict) -> dict:
+    return {k: pol.get(k) for k in ("enabled", "days", "from", "to", "delay_days", "canary", "scheduled", "last")}
+
+
+@endpoint(MANAGE)
+async def site_autoupdate(request: Request, p: Principal, tid: str) -> Response:
+    """Automatické a naplánované aktualizace lokality (PUT celé nastavení včetně `scheduled`)."""
+    from .. import autoupdate
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    data = await _json(request)
+    pol = await run_in_threadpool(autoupdate.set_policy, st.db, tid, sid, data, p.user_id, client_ip(request))
+    return json_response(_auto_view(pol))
 
 
 @endpoint(MANAGE)
@@ -1865,6 +1883,7 @@ def routes() -> list[Route]:
         Route(s + "/infra", site_infra, methods=["GET"]),
         Route(T + "/uplinks", uplinks, methods=["GET"]),
         Route(s + "/upgrade", site_upgrade, methods=["GET", "POST"]),
+        Route(s + "/autoupdate", site_autoupdate, methods=["PUT"]),
         Route(T + "/upgrade-jobs/{job_id}/cancel", upgrade_cancel, methods=["POST"]),
         Route(T + "/port-profiles", port_profiles, methods=["GET", "POST"]),
         Route(T + "/client-notes/{mac}", client_note, methods=["PUT"]),
