@@ -27,7 +27,7 @@ mtc-worker = "mtcontroller.worker.__main__:main"
 mtc-admin = "mtcontroller.cli:main"
 
 [tool.setuptools.package-data]
-mtcontroller = ["sql/*.sql", "web/static/*"]
+mtcontroller = ["sql/*.sql", "web/static/*", "i18n/*.json"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

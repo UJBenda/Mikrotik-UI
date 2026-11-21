@@ -1206,3 +1206,19 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   (`seen` = kdy byla verze poprvé viděna), nejvýš jednou za 20 h. `scheduled {at, order}` = jednorázový start,
   volitelně jen vybraná zařízení; termín opožděný o víc než 6 h propadá. API `PUT …/sites/{id}/autoupdate`,
   stav v `GET …/upgrade` (`auto`), audit `site.autoupdate`, `site.autoupdate_run`.
+
+## Překlady rozhraní (etapa 9)
+
+- **Zdrojový jazyk je čeština** a český text je zároveň klíč (jako gettext). V JS jdou texty přes `__("…")`
+  a tag `` __`… ${x}` `` (klíč má místo hodnot `{0}`, `{1}`); statické HTML se překládá při načtení po
+  textových uzlech a atributech `title` / `placeholder` / `aria-label` / `alt`.
+- **Zavaděč** `static/i18n.js`: jazyk z `localStorage mtc-lang`, jinak podle prohlížeče (cs/sk → čeština, jinak
+  angličtina). Pro jiný jazyk než češtinu stáhne `/i18n/<kód>.json`, přeloží DOM a teprve pak spustí `app.js`
+  (`window.MTC_DICT`, `MTC_LOCALE` pro formát dat). Chybějící slovník nebo text → čeština.
+- **Slovníky**: `src/mtcontroller/i18n/<kód>.json` (`language`, `code`, `locale`, `strings`), `template.json` je
+  prázdná šablona. Vlastní a upravené slovníky v `<data_dir>/i18n/` mají přednost text po textu a přežijí
+  upgrade. `GET /i18n/index.json` (seznam jazyků) a `/i18n/<kód>.json` jsou veřejné – potřebuje je i přihlášení.
+- **Nástroje**: `tools/i18n.py template | check <kód> | sync <kód>`; test `test_i18n.py` hlídá úplnost
+  angličtiny, shodu zástupných znaků a mezer na krajích. `tools/i18n_wrap.py` je jednorázový převod starého kódu.
+- **Zatím nepřeloženo**: průvodce instalací (`setup.html/js`) a texty generované serverem (chyby API, alerty,
+  notifikace, audit). Návod pro překladatele: `docs/TRANSLATING.md`.

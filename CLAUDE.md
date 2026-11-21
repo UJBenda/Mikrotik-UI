@@ -1,6 +1,8 @@
 # Pokyny pro práci v repu
 
 - Komunikace a komentáře v kódu česky, identifikátory anglicky.
+- Texty rozhraní v JS vždy přes `__("…")` / `` __`… ${x}` `` (čeština je zdrojový jazyk a klíč). Po přidání textů
+  `python3 tools/i18n.py template && python3 tools/i18n.py sync en` a doplnit angličtinu v `src/mtcontroller/i18n/en.json`.
 - Návrh je v `docs/architecture.md`; větší změny architektury do něj zapsat.
 - Cíl běhu: nativní Debian, systemd, bez Dockeru. RouterOS jen v7 (REST API).
 - Stack jen z Debian apt: Starlette, uvicorn, psycopg, pydantic, cryptography.

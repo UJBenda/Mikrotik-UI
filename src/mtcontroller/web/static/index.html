@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MikroTik Controller</title>
 <link rel="stylesheet" href="/static/style.css">
-<script src="/static/app.js" defer></script>
+<script src="/static/i18n.js" data-app="/static/app.js" defer></script>
 </head>
 <body>
 <header>
   <h1><span class="logo" aria-hidden="true"></span>MikroTik Controller</h1>
+  <label class="lang-pick" title="Jazyk rozhraní"><span class="sr-only">Jazyk</span><select id="lang-sel" aria-label="Jazyk"></select></label>
   <div id="hdr-tenant" class="hdr-tenant" hidden>
     <label>Tenant <select id="tenant"></select></label>
     <label id="nav-site" class="nav-site"><span>Lokalita</span><select id="site-sel"></select></label>

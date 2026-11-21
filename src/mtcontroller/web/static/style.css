@@ -1072,3 +1072,7 @@ a:hover { text-decoration: underline; }
 .au-opts.off { opacity: .5; }
 .au-opts label { margin: 0; display: flex; align-items: center; gap: 6px; }
 .au-days { display: flex; gap: 8px; flex-wrap: wrap; }
+/* výběr jazyka v horní liště */
+.lang-pick { margin: 0 0 0 auto; order: 5; }
+.lang-pick select { border-color: transparent; background: var(--hover); border-radius: 7px; padding: 5px 8px; font-size: 13px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

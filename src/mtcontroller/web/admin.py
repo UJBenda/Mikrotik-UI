@@ -666,11 +666,65 @@ async def static(request: Request) -> Response:
     return Response(path.read_bytes(), media_type=_STATIC_TYPES[path.suffix])
 
 
+# --- překlady ------------------------------------------------------------------------
+# Zdrojový jazyk rozhraní je čeština. Slovníky jsou v balíčku (mtcontroller/i18n/<kód>.json)
+# a vlastní / upravené v <data_dir>/i18n/<kód>.json (mají přednost, doplní i nový jazyk).
+
+I18N_DIR = Path(__file__).resolve().parent.parent / "i18n"
+_LANG_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
+
+
+def _i18n_load(settings, code: str) -> dict | None:
+    """Slovník jazyka: balíčkový, přes něj vlastní ze `<data_dir>/i18n`. None = jazyk neexistuje."""
+    out: dict | None = None
+    for base in (I18N_DIR, Path(settings.paths.data_dir) / "i18n"):
+        try:
+            j = json.loads((base / f"{code}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(j, dict) or not isinstance(j.get("strings"), dict):
+            continue
+        strings = {k: v for k, v in j["strings"].items() if isinstance(k, str) and isinstance(v, str) and v}
+        if out is None:
+            out = {"code": code, "language": str(j.get("language") or code), "locale": str(j.get("locale") or code),
+                   "strings": strings}
+        else:
+            out["strings"].update(strings)
+            out["language"] = str(j.get("language") or out["language"])
+            out["locale"] = str(j.get("locale") or out["locale"])
+    return out
+
+
+async def i18n_file(request: Request) -> Response:
+    """Veřejné (potřebuje je už přihlašovací stránka): seznam jazyků a slovník jazyka."""
+    settings = get_state(request).settings
+    name = request.path_params["name"]
+    if name == "index.json":
+        codes = set()
+        for base in (I18N_DIR, Path(settings.paths.data_dir) / "i18n"):
+            try:
+                codes |= {p.stem for p in base.glob("*.json") if _LANG_RE.match(p.stem)}
+            except OSError:
+                pass
+        langs = [{"code": "cs", "language": "Čeština"}]
+        for c in sorted(codes - {"cs", "template"}):
+            d = _i18n_load(settings, c)
+            if d:
+                langs.append({"code": c, "language": d["language"]})
+        return json_response({"source": "cs", "languages": langs})
+    code = name[:-5] if name.endswith(".json") else ""
+    if not _LANG_RE.match(code):
+        return _err(404, "nenalezeno")
+    d = _i18n_load(settings, code)
+    return json_response(d) if d else _err(404, "nenalezeno")
+
+
 def routes() -> list[Route]:
     t = "/api/admin/tenants/{tenant_id}"
     return [
         Route("/", static, methods=["GET"]),
         Route("/static/{name}", static, methods=["GET"]),
+        Route("/i18n/{name}", i18n_file, methods=["GET"]),
         Route("/api/admin/login", login, methods=["POST"]),
         Route("/api/admin/logout", logout, methods=["POST"]),
         Route("/api/admin/me", me, methods=["GET"]),

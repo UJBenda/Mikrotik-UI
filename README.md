@@ -1,82 +1,86 @@
 # MikroTik Controller
 
-Vlastní multi-tenant controller pro MikroTik RouterOS v7 ve stylu UniFi:
-centrální správa, topologická mapa, sledování klientů, VLAN, provoz,
-zálohy a firmware. Zařízení se připojují jen odchozím spojením na 443
-(SSTP tunel + HTTPS check-in), takže fungují i za NATem a CGNATem.
+A self-hosted, multi-tenant controller for MikroTik RouterOS v7 in the spirit of
+UniFi Network: central management of switches and access points, site topology,
+client tracking, VLANs, Wi-Fi through CAPsMAN, backups and updates.
 
-Návrh architektury: [docs/architecture.md](docs/architecture.md).
-Instalace na Debian: [docs/install.md](docs/install.md).
+Devices connect to the controller with outbound connections only (HTTPS check-in,
+optionally an SSTP tunnel on port 443), so they work behind NAT and CGNAT and need
+no public address.
 
-## Stav
+> Not affiliated with MikroTik or Ubiquiti. The project is young: it is developed and
+> tested mostly against a lab, so try it on non-critical devices first.
 
-Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](docs/test-plan.md)).
+Česká verze: [docs/README.cs.md](docs/README.cs.md).
 
-- [x] Instalace na Debian 13 jen z apt (`deploy/install.sh`), systemd sandbox, nginx
-- [x] Multi-tenant datový model, row-level security, append-only audit
-- [x] Admin UI + API: přihlášení, povinné TOTP MFA, zamykání účtu, CSRF, role per tenant, správa uživatelů, změna hesla, reset MFA
-- [x] Adopce jedním řádkem v terminálu MikroTiku, schválení v UI
-- [x] Check-in přes HTTPS, fronta příkazů s potvrzením (provisioning, restart, odebrání)
-- [x] SSTP tunel na každé zařízení, účty na koncentrátoru přes REST s pinningem certifikátu
-- [x] Ověření adopce přes REST v tunelu, offline detekce, failover mezi koncentrátory
-- [x] Generátor konfigurace koncentrátoru (`mtc-admin concentrator-script`)
-- [x] Inventura přes REST (jen čtení), metriky rozhraní (5 min / hodinové agregace), grafy provozu v UI
-- [x] Zálohy konfigurace (šifrovaně), drift, diff se skrytými hesly
-- [x] Analýza VLAN/bridge proti cílovému modelu + náhled migrace
-- [x] Modul NTP s plány změn (observe/manage, schválení, zneplatnění)
-- [x] Infrastruktura lokality jako v UniFi 10 (WAN → gateway → switche → AP, porty na spojích, STP root, CPU/RAM)
-- [x] Topologie lokality (MNDP/LLDP), dostupné aktualizace RouterOS, známé problémy verzí
-- [x] Aktualizace RouterOS a RouterBOOT z UI (potvrzená verze, blokace kritických verzí, kontrola výsledku)
-- [x] Postupná aktualizace lokality (okraj → gateway, po jednom, zastavení při chybě)
-- [x] Release notes: changelogy mezilehlých verzí, změny relevantní pro konkrétní zařízení
-- [x] `mtc-admin doctor` – kontrola instalace
-- [ ] Vlastní CA a klientské certifikáty pro SSTP
-- [x] Klienti lokality (DHCP/ARP/bridge host/wifi) s polohou na portu/AP, historie 90 dní, hledání napříč lokalitami
-- [x] Bezpečnostní audit konfigurace zařízení (hardening podle doporučení MikroTiku, kritické nálezy → alert)
-- [x] Sítě lokality (VLAN, podsítě, DHCP server/relay, leases) a nastavení bridgů
-- [x] DHCP leases a statické IP: rezervace, DHCP options per klient, výrobce podle MAC, poznámky, mapa adres, konflikty
-- [x] Ochrana proti cizím DHCP: DHCP snooping s trusted porty podle cesty k DHCP serveru, DHCP alert
-- [x] Plán kanálů Wi-Fi lokality (obdoba Channel AI, bez RF skenu) se skutečným kanálem rádií
-- [x] Loop protect: smyčky na portech (alert, skóre, editor portu)
-- [x] Panel portů jako UniFi: připojená zařízení s ikonou, tabulka portů, skóre anomálie za 24 h, jména a podsítě VLAN
-- [x] Změny portů jako Port Manager (PVID, tagované VLAN, PoE, edge, zapnutí, restart PoE) s automatickým návratem (commit-confirm) a profily portů
-- [x] Historie portů (Time Machine): linka, výpadky, rychlost, PoE, VLAN, STP, sousedé – 90 dní
-- [x] Porty (rychlost, duplex, SFP, PoE, VLAN, STP role) a STP lokality (root, blokované porty, rizika smyček)
-- [x] Wi-Fi lokality: rádia (wifi i wireless), SSID, kanály, klienti, signál, CAPsMAN AP, varování
-- [x] Alerty (offline, tunel, REST, certifikát, CPU/paměť, porty, zálohy, verze) a notifikace (webhook, Nextcloud Talk, e-mail)
-- [x] Firewall jako zóny (UniFi zone-based): matice zón, pravidla filtru a NAT s počty paketů – jen čtení
-- [ ] VLAN správa (aplikace migrace), správa SSID/CAPsMAN, PtP, úpravy firewallu
+## What it does
 
-Mapování funkcí UniFi: [docs/unifi-parity.md](docs/unifi-parity.md).
+- **Adoption in one step** – paste one command into the MikroTik terminal, pick a role
+  (switch, AP + switch, monitor only); optional automatic adoption of factory-default devices.
+- **Managed or monitored** – managed devices are configured from the site intent
+  (networks, port exceptions, LACP bonds, Wi-Fi); monitored devices are only read.
+- **Save = deploy, safely** – every change is applied with commit-confirm: if the device
+  does not report back within 5 minutes, it reverts by itself. Changes that would cut
+  off management are refused up front.
+- **Switching** – site networks (VLANs), port profiles, port editor, LACP (also on
+  non-adjacent ports), STP view, loop protect, PoE control and watchdog, port history.
+- **Wi-Fi** – one CAPsMAN per site, SSIDs with groups and per-password VLANs, roaming,
+  channel and power optimisation from measured surroundings, rogue AP scan.
+- **Clients** – where each client is connected, search across sites, connection history
+  with a time slider, DHCP reservations and options, vendor by MAC.
+- **Operations** – RouterOS and RouterBOOT updates one device at a time from the edge of
+  the network (canary, scheduling, automatic updates in a maintenance window),
+  encrypted configuration backups with diff, alerts with maintenance windows,
+  notifications (e-mail, webhook, Nextcloud Talk).
+- **Multi-tenant** – tenants are isolated in PostgreSQL with row-level security;
+  roles per tenant, mandatory TOTP MFA, append-only audit log.
+- **Languages** – the interface ships in Czech and English; other languages can be added
+  as a single JSON file, see [docs/TRANSLATING.md](docs/TRANSLATING.md).
 
-## Struktura
+## Requirements
 
-```
-src/mtcontroller/
-  config.py        konfigurace (config.toml + MTC_* proměnné)
-  db.py            psycopg, tenant_scope / operator_scope pro RLS
-  migrate.py       migrátor; SQL schéma v sql/NNNN_*.up.sql
-  services.py      tenanti, adopce, schválení, check-in, fronta příkazů
-  auth.py, totp.py přihlášení, MFA, relace, role
-  routeros.py      generování RouterOS skriptů (adopce, provisioning, příkazy)
-  rosapi.py        REST klient RouterOS s pinningem certifikátu
-  concentrator.py  konfigurace koncentrátoru
-  security.py      hesla, tokeny, šifrování tajemství
-  ipam.py          tunelové adresy
-  tunnel/          abstrakce koncentrátoru (MikroTik, později RADIUS)
-  web/             Starlette: admin UI + API, check-in (oddělené podle hostname)
-  worker/          offline detekce, ověření adopce, dorovnání koncentrátorů
-  cli.py           mtc-admin
-deploy/            install.sh, systemd unity, nginx
-tests/             pytest (i end-to-end proti Postgresu) + tests/db (kontroly schématu)
+- Debian 13 (native, systemd; no Docker), PostgreSQL, nginx – everything from Debian packages
+- MikroTik devices with RouterOS v7 (REST API)
+
+## Install
+
+The latest build is in [`packages/`](packages/).
+
+```sh
+sudo apt update && sudo apt install git
+git clone https://github.com/UJBenda/Mikrotik-UI.git
+sudo cp Mikrotik-UI/packages/mtcontroller_*_all.deb /tmp/
+sudo apt install /tmp/mtcontroller_*_all.deb
 ```
 
-## Vývoj
+Use `apt install`, not `dpkg -i`, so dependencies are pulled in. At the end the installer
+prints the address of the setup wizard and a one-time code; the wizard asks for the mode
+(local network or remote management), administrator account and first site, generates
+certificates and the backup password, and shows a recovery sheet to store safely.
+
+Afterwards check the installation with `sudo mtc-admin doctor`.
+
+The setup wizard, server-side messages (errors, alerts, notifications) and the design
+documents are currently in Czech only; the administration interface is fully translated.
+
+## Development
 
 ```sh
 apt install python3-starlette python3-uvicorn python3-psycopg python3-pydantic \
-            python3-cryptography python3-pytest postgresql ieee-data
-# testy s DB potřebují trust autentizaci na unix socketu (jen vývojový stroj!)
-sudo -u postgres tests/db/run.sh   # kontroly schématu (RLS, audit, tokeny)
-python3 -m pytest                  # unit + end-to-end testy (bez DB se přeskočí)
+            python3-cryptography python3-pytest postgresql ieee-data nodejs
+python3 -m pytest                  # unit and end-to-end tests (skipped without a database)
+sudo -u postgres tests/db/run.sh   # schema checks (row-level security, audit, tokens)
+node tests/ui/uitest.js src/mtcontroller/web/static/app.js \
+     src/mtcontroller/web/static/index.html tests/ui/api-fixture.json
+python3 tools/i18n.py check en     # every interface text has a translation
 ```
+
+The stack is deliberately small and comes from Debian only: Starlette, uvicorn, psycopg,
+pydantic, cryptography, vanilla JavaScript without a build step. Architecture notes
+(Czech): [docs/architecture.md](docs/architecture.md).
+
+## License
+
+A license has not been chosen yet. Until one is added to the repository, the usual
+default applies: you may read the code, but no rights to use, modify or redistribute
+it are granted.
