@@ -8,6 +8,10 @@ Ručně: technik vybere zařízení a pořadí sám.
 Při chybě nebo když se zařízení do STEP_TIMEOUT nevrátí, se úloha zastaví
 a zbytek lokality zůstane beze změny.
 
+Kanárek: první zařízení se po aktualizaci nechá `canary` minut běžet (stav „soak“).
+Když během té doby vypadne, hlásí jinou verzi nebo se u něj otevře kritický alert,
+úloha se zastaví dřív, než se nová verze dostane na zbytek lokality.
+
 Každý krok jde přes services.request_command(kind="upgrade"), tedy se stejnými
 kontrolami jako ruční aktualizace (verze nabízená zařízením, kritické problémy).
 """
@@ -26,6 +30,9 @@ log = logging.getLogger("mtc.upgrades")
 
 ROLE_ORDER = {"ap": 0, "ptp": 1, "unknown": 2, "switch": 3, "gateway": 4}
 STEP_TIMEOUT = dt.timedelta(minutes=30)
+CANARY_DEFAULT = 10   # minut sledování prvního zařízení (API); 0 = bez kanárka
+CANARY_MAX = 120
+CHECKIN_STALE = dt.timedelta(minutes=5)
 
 
 def _now() -> dt.datetime:
@@ -80,8 +87,13 @@ def depths(tx, site_id: Any) -> dict[str, int]:
 
 
 def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: str | None = None,
-          order: list[str] | None = None) -> dict:
-    """order = ruční výběr a pořadí (id zařízení); None = automaticky od konce sítě."""
+          order: list[str] | None = None, canary: int = 0) -> dict:
+    """order = ruční výběr a pořadí (id zařízení); None = automaticky od konce sítě.
+    canary = kolik minut sledovat první zařízení, než se pokračuje (0 = hned dál)."""
+    try:
+        canary = max(0, min(CANARY_MAX, int(canary or 0)))
+    except (TypeError, ValueError):
+        raise ServiceError("neplatná doba sledování prvního zařízení") from None
     with tenant_scope(db, tenant_id) as tx:
         if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": str(site_id)}):
             raise NotFound("lokalita neexistuje")
@@ -102,13 +114,16 @@ def start(db: Database, tenant_id: Any, site_id: Any, user_id: Any = None, ip: s
         steps = [{"device_id": str(d["id"]), "label": d["identity"] or d["serial"], "role": d["role"],
                   "from": (d["ros_version"] or "").split(" ")[0], "version": d["latest"],
                   "status": "pending", "command_id": None, "started_at": None, "message": None} for d in devs]
+        if canary and len(steps) > 1:
+            steps[0]["canary"] = canary
         job = tx.fetchone(
             """INSERT INTO upgrade_job (tenant_id, site_id, steps, created_by)
                VALUES (%(t)s, %(s)s, %(st)s, %(u)s) RETURNING id""",
             {"t": str(tenant_id), "s": str(site_id), "st": steps, "u": str(user_id) if user_id else None})
         audit(tx, "site.upgrade_start", tenant_id=tenant_id, user_id=user_id, target=f"site:{site_id}",
               after={"job_id": job["id"], "devices": [(s["label"], s["version"]) for s in steps],
-                     "order": "manual" if order is not None else "auto"}, ip=ip)
+                     "order": "manual" if order is not None else "auto",
+                     "canary_minutes": steps[0].get("canary", 0)}, ip=ip)
         return {"job_id": job["id"], "steps": steps}
 
 
@@ -154,9 +169,34 @@ def advance(db: Database, now: dt.datetime | None = None) -> int:
 def _advance_one(db: Database, job: dict, now: dt.datetime) -> bool:
     steps: list[dict] = list(job["steps"])
     tid = job["tenant_id"]
-    cur = next((s for s in steps if s["status"] == "running"), None)
+    cur = next((s for s in steps if s["status"] in ("running", "soak")), None)
     with tenant_scope(db, tid) as tx:
-        if cur:
+        if cur and cur["status"] == "soak":
+            # kanárek: po aktualizaci musí zůstat v pořádku, než se pokračuje
+            dev = tx.fetchone("SELECT state, ros_version, last_checkin_at FROM device WHERE id = %(d)s",
+                              {"d": cur["device_id"]})
+            bad = None
+            if not dev or dev["state"] != "adopted":
+                bad = f"po aktualizaci vypadlo ({dev['state'] if dev else 'odebráno'})"
+            elif ros_versions.parse(dev["ros_version"] or "") != ros_versions.parse(cur["version"]):
+                bad = f"po aktualizaci hlásí verzi {dev['ros_version']}"
+            elif dev["last_checkin_at"] and now - dev["last_checkin_at"] > CHECKIN_STALE and \
+                    now - (_ts(cur.get("soak_from")) or now) > CHECKIN_STALE:
+                bad = "po aktualizaci se přestalo hlásit"
+            else:
+                al = tx.fetchone("""SELECT message FROM alert WHERE device_id = %(d)s AND resolved_at IS NULL
+                                    AND severity = 'critical' AND opened_at >= %(t)s ORDER BY id LIMIT 1""",
+                                 {"d": cur["device_id"], "t": _ts(cur["started_at"]) or now})
+                if al:
+                    bad = f"po aktualizaci kritický problém: {al['message']}"
+            if bad:
+                cur.update(status="failed", message=bad)
+                _finish(tx, job, steps, "stopped", f"{cur['label']} (první zařízení): {bad} – zbytek lokality zůstal beze změny")
+                return True
+            if now < (_ts(cur.get("soak_until")) or now):
+                return False
+            cur.update(status="done", message=None)
+        elif cur:
             cmd = tx.fetchone("SELECT status::text AS status, finished_at FROM device_command WHERE id = %(c)s",
                               {"c": cur["command_id"]})
             dev = tx.fetchone("SELECT state, ros_version, last_checkin_at FROM device WHERE id = %(d)s",
@@ -168,6 +208,12 @@ def _advance_one(db: Database, job: dict, now: dt.datetime) -> bool:
                 _finish(tx, job, steps, "stopped", f"{cur['label']}: {cur['message']}")
                 return True
             if cmd and cmd["status"] == "done" and dev and dev["state"] == "adopted" and on_target:
+                if cur.get("canary"):
+                    until = now + dt.timedelta(minutes=int(cur["canary"]))
+                    cur.update(status="soak", soak_from=now.isoformat(), soak_until=until.isoformat(),
+                               message=f"sleduje se {cur['canary']} min, pak se pokračuje")
+                    tx.execute("UPDATE upgrade_job SET steps = %(st)s WHERE id = %(j)s", {"st": steps, "j": job["id"]})
+                    return True
                 cur.update(status="done", message=None)
             elif now - started > STEP_TIMEOUT:
                 cur.update(status="failed", message=f"do {int(STEP_TIMEOUT.total_seconds() // 60)} min se "

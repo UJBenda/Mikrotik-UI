@@ -1158,3 +1158,21 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   (`site_policy` modul `wifi_rf`, audit `wifi.optimize`) má v `wificfg.manager` přednost před `channels.plan`
   a `txpower.plan`, dokud vyhovuje politice (šířka, DFS); nasazuje se přes CAPsMAN jako každá změna Wi-Fi.
   UI: Nastavení → Wi-Fi → „Optimalizovat kanály“ (měření AP po jednom, náhled před/po, nasazení).
+
+## Bezpečnější změny a vzhled (etapa 6)
+
+- **Předpověď odříznutí** (`portcfg.lockout_risk`): změna portu sledovaného zařízení se před vytvořením plánu
+  porovná s cestou ke správě (`switchcfg.mgmt_path` – uplink a zda je správa na něm tagovaná). Vypnutí uplinku,
+  změna jeho PVID u netagované správy, PVID = VLAN správy a odebrání VLAN správy z uplinku se odmítnou
+  (`LockoutError`); správce je může vynutit (`desired.force`), commit-confirm zůstává pojistkou. U řízených
+  zařízení totéž hlídají překážky modelu (`switchcfg.build`).
+- **Kanárek při postupné aktualizaci** (`upgrades`): první zařízení úlohy má `canary` minut (API výchozí 10).
+  Po úspěšné aktualizaci přejde do stavu `soak`; když během sledování vypadne, hlásí jinou verzi, přestane se
+  hlásit nebo se u něj otevře kritický alert, úloha se zastaví a zbytek lokality zůstane beze změny.
+- **Servisní okna** (`maintenance.py`, `site_policy` modul `maintenance`): během okna `notify.deliver` neposílá
+  nové alerty z lokality; co po skončení trvá, odejde, co mezitím vzniklo i zaniklo, neodejde vůbec. Za okno se
+  počítá i běžící postupná aktualizace. API `GET/POST …/sites/{id}/maintenance`, `DELETE …/maintenance/{id}`,
+  audit `site.maintenance_add/_end`. UI: Aktivita → Alerty → „Servisní okno…“.
+- **Vzhled podle UniFi Network**: úzká ikonová lišta (76 px, popisek pod ikonou, celý název v tooltipu), výběr
+  lokality v horní liště vedle tenanta, dlaždice přehledu se stavovou tečkou, klidnější hlavičky tabulek, modrá
+  `#006fff`. Vše jako blok na konci `style.css` (původní pravidla zůstávají pod ním).

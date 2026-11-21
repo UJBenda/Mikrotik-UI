@@ -12,13 +12,13 @@
   <h1><span class="logo" aria-hidden="true"></span>MikroTik Controller</h1>
   <div id="hdr-tenant" class="hdr-tenant" hidden>
     <label>Tenant <select id="tenant"></select></label>
+    <label id="nav-site" class="nav-site"><span>Lokalita</span><select id="site-sel"></select></label>
   </div>
   <div id="who"></div>
 </header>
 
 <main>
   <nav id="nav" class="nav" aria-label="Sekce" hidden>
-    <label id="nav-site" class="nav-site"><span>Lokalita</span><select id="site-sel"></select></label>
     <div id="nav-items" class="nav-items"></div>
   </nav>
   <section id="login" hidden>
@@ -328,6 +328,8 @@
           předchozího s novou verzí; při chybě se zastaví. Pořadí i výběr můžeš upravit ručně.</p>
         <table class="upg"><thead><tr><th></th><th>#</th><th>Zařízení</th><th>Role</th><th>Od brány</th><th>Verze</th><th>Pořadí</th></tr></thead>
         <tbody id="upg-cands"></tbody></table>
+        <label class="check" title="Když první zařízení po aktualizaci vypadne, hlásí jinou verzi nebo se u něj objeví kritický problém, úloha se zastaví">
+          <input type="checkbox" id="upg-canary" checked> první zařízení po aktualizaci 10 min sledovat, teprve pak pokračovat</label>
         <div class="intent-acts">
           <button id="upg-start" type="button" class="small">Spustit postupnou aktualizaci</button>
           <button id="upg-auto" type="button" class="small secondary">Automatické pořadí</button>
@@ -384,7 +386,10 @@
           </div>
           <div id="alerts-wrap" class="pane">
       <h3>Alerty <span id="alerts-count" class="badge"></span>
-        <button id="alerts-refresh" type="button" class="small secondary">Obnovit</button></h3>
+        <button id="alerts-refresh" type="button" class="small secondary">Obnovit</button>
+        <button id="maint-btn" type="button" class="small secondary"
+                title="Během servisního okna se upozornění z lokality neposílají (e-mail, webhook). V rozhraní jsou vidět dál.">Servisní okno…</button></h3>
+      <div id="maint-bar" class="maint-bar" role="status" hidden></div>
       <table><thead><tr><th>Závažnost</th><th>Zařízení</th><th>Lokalita</th><th>Zpráva</th><th>Od</th><th></th></tr></thead>
       <tbody id="alerts"></tbody></table>
           </div>
@@ -725,6 +730,25 @@
       </div>
     </div>
   </section>
+
+  <div id="maint-dlg" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="maint-title">
+      <div class="sd-head"><h3 id="maint-title">Servisní okno</h3></div>
+      <p class="muted small">Po dobu okna se upozornění z této lokality neposílají. Co po skončení ještě trvá, se odešle;
+        co mezitím vzniklo i zaniklo, se neodešle vůbec. Postupná aktualizace si okno drží sama.</p>
+      <label>Délka
+        <select id="maint-len">
+          <option value="30">30 minut</option><option value="60" selected>1 hodina</option><option value="120">2 hodiny</option>
+          <option value="240">4 hodiny</option><option value="480">8 hodin</option><option value="1440">24 hodin</option>
+        </select></label>
+      <label>Poznámka <input id="maint-note" maxlength="120" placeholder="např. výměna switche"></label>
+      <ul id="maint-list" class="muted small"></ul>
+      <div class="modal-acts">
+        <button id="maint-close" type="button" class="secondary">Zavřít</button>
+        <button id="maint-start" type="button" class="primary">Zahájit teď</button>
+      </div>
+    </div>
+  </div>
 
   <div id="rfopt-dlg" class="modal" hidden>
     <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="rfopt-title">

@@ -120,7 +120,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     }
     // levá navigace: 5 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
     const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");
-    if (navBtns.length !== 8 || navBtns[0].textContent !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    if (navBtns.length !== 8 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
     if (byId["view-dash"].hidden || !byId["view-activity"].hidden) errors.push("navigace: výchozí pohled");
     await byId["nav-activity"].fire("click");
     if (byId["view-activity"].hidden || !byId["view-dash"].hidden || byId["nav-activity"].className !== "navbtn active") errors.push("navigace: přepnutí na aktivitu");
@@ -297,6 +297,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/wifi/plan"))) errors.push("wifi: plán");
       if (byId["wifi-result"].children.length < 5 || !byId["wifi-result"].textContent.includes("doladí")) errors.push("wifi: přehled rádií");
     }
+    if (byId["maint-bar"].hidden || !byId["maint-bar"].textContent.includes("výměna switche")) errors.push("servisní okno: lišta");
     // optimalizace kanálů: karta s tlačítkem, dialog s návrhem
     if (!byId["rfopt-card"].textContent.includes("Optimalizovat kanály")) errors.push("rfopt: karta");
     else {

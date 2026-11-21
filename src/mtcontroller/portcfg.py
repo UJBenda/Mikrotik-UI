@@ -33,6 +33,41 @@ class PortError(ValueError):
     pass
 
 
+class LockoutError(PortError):
+    """Změna by podle současného stavu zařízení přerušila cestu ke správě (jde vynutit: force)."""
+
+
+def lockout_risk(inv: dict, port: str, changes: list[dict]) -> str | None:
+    """Předpověď odříznutí: přeruší změna portu cestu, kterou zařízení dnes dosahuje brány (a controlleru)?
+
+    Vychází z `switchcfg.mgmt_path` (uplink a zda je správa na uplinku tagovaná). Vrací popis rizika nebo None."""
+    from .switchcfg import _members as members
+    from .switchcfg import mgmt_path
+
+    path = mgmt_path(inv)
+    up = path.get("uplink")
+    if not up:
+        return None
+    names = {str(e.get("default-name") or e.get("name")): str(e.get("name"))
+             for e in inv.get("ethernet") or [] if isinstance(e, dict)}
+    up_name = names.get(up, up)
+    bond = next((b for b in inv.get("bonds") or [] if isinstance(b, dict) and str(b.get("name")) == port), None)
+    if port != up_name and not (bond and up_name in members(bond.get("slaves"))):
+        return None
+    vid = path.get("tagged_vid")
+    for c in changes:
+        f, before, after = c["field"], c["before"], c["after"]
+        if f == "disabled" and after:
+            return f"{port} je uplink – vypnutím zařízení ztratí cestu ke správě."
+        if f == "pvid" and vid is None:
+            return f"Správa jde přes {port} bez tagu (PVID {before}) – změna PVID na {after} ji přesune do jiné VLAN."
+        if f == "pvid" and vid is not None and str(after) == str(vid):
+            return f"Správa jde přes {port} tagovaně ve VLAN {vid} – jako PVID by z portu odcházela bez tagu."
+        if f == "tagged" and vid is not None and str(vid) in map(str, before or []) and str(vid) not in map(str, after or []):
+            return f"Správa jde přes {port} tagovaně ve VLAN {vid} – odebráním VLAN z portu se přeruší."
+    return None
+
+
 def _rows(inv: dict, key: str) -> list[dict]:
     v = inv.get(key)
     return [r for r in v if isinstance(r, dict)] if isinstance(v, list) else []
@@ -297,7 +332,12 @@ def plan(inv: dict, port: str, desired: dict, uplinks: set[str] | None = None) -
     if (cur["pvid"] is not None or "tagged" in desired) and not cur["vlan_filtering"] and \
             any(c["field"] in ("pvid", "tagged") for c in changes):
         warn.append("bridge nemá zapnuté vlan-filtering – PVID a tagování se projeví až po jeho zapnutí")
-    if uplinks and port in uplinks:
+    risk = lockout_risk(inv, port, changes)
+    if risk and not desired.get("force"):
+        raise LockoutError(f"{risk} Zařízení by se odpojilo od controlleru a změna by se po 5 min sama vrátila.")
+    if risk:
+        warn.append(f"{risk} Vynuceno – při odpojení se změna po 5 min sama vrátí.")
+    elif uplinks and port in uplinks:
         warn.append(f"{port} je uplink (cesta ke správě) – při chybě se zařízení odpojí a změna se sama vrátí")
     labels = {"disabled": "vypnutí", "comment": "popis", "poe": "PoE", "pvid": "PVID", "edge": "STP edge",
               "tagged": "tagované VLAN", "loop_protect": "loop protect", "poe_watchdog": "PoE hlídač",

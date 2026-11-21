@@ -115,11 +115,14 @@ def deliver(db: Database, settings: Settings, post=_post, smtp=_smtp_send) -> in
     """Pošle čekající notifikace (otevření i uzavření). Vrací počet odeslaných."""
     if not settings.notify:
         return 0
+    from . import maintenance
+
     with operator_scope(db) as tx:
+        quiet = maintenance.quiet_sites(tx)
         pending = tx.fetchall(
             f"""SELECT a.id, a.tenant_id, a.device_id, a.kind, a.subject, a.severity::text AS severity,
-                       a.message, a.opened_at, a.resolved_at, a.notified_open, a.notified_close
-                FROM alert a
+                       a.message, a.opened_at, a.resolved_at, a.notified_open, a.notified_close, d.site_id
+                FROM alert a LEFT JOIN device d ON d.id = a.device_id
                 WHERE a.notify_attempts < {MAX_ATTEMPTS}
                   AND ((NOT a.notified_open AND a.resolved_at IS NULL)
                        OR (a.notified_open AND NOT a.notified_close AND a.resolved_at IS NOT NULL))
@@ -127,6 +130,9 @@ def deliver(db: Database, settings: Settings, post=_post, smtp=_smtp_send) -> in
     sent = 0
     for a in pending:
         resolved = a["resolved_at"] is not None
+        if not resolved and a["site_id"] is not None and str(a["site_id"]) in quiet:
+            # servisní okno lokality: nový alert se zatím neposílá (po skončení okna ano, pokud trvá)
+            continue
         targets = _targets_for(settings, a)
         ok = True
         for t in targets:

@@ -78,6 +78,66 @@ def test_rolling_upgrade_order_wait_and_stop():
         drop_db(name)
 
 
+def test_canary_soak():
+    """První zařízení se po aktualizaci sleduje; když není v pořádku, zbytek zůstane beze změny."""
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        gw = _dev(db, box, tid, sid, "GW1", "10.200.1.1", "gw", "gateway")
+        ap = _dev(db, box, tid, sid, "AP1", "10.200.1.3", "ap", "ap")
+        now = dt.datetime.now(dt.timezone.utc)
+        jid = upgrades.start(db, tid, sid, canary=10)["job_id"]
+        assert _job(db, jid)["steps"][0]["canary"] == 10 and "canary" not in _job(db, jid)["steps"][1]
+        upgrades.advance(db, now=now)
+        _finish_cmd(db, ap)
+        assert upgrades.advance(db, now=now) == 1
+        st = _job(db, jid)["steps"]
+        assert [s["status"] for s in st] == ["soak", "pending"] and "10 min" in st[0]["message"]
+        assert upgrades.advance(db, now=now + dt.timedelta(minutes=4)) == 0 and _cmd(db, gw) is None  # ještě se sleduje
+        # po uplynutí doby v pořádku → pokračuje bránou
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET last_checkin_at = %(t)s WHERE id = %(d)s", {"t": now + dt.timedelta(minutes=10), "d": ap})
+        assert upgrades.advance(db, now=now + dt.timedelta(minutes=11)) == 1
+        assert [s["status"] for s in _job(db, jid)["steps"]] == ["done", "running"] and _cmd(db, gw)
+        upgrades.cancel(db, tid, jid)
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device_command SET status = 'failed', finished_at = now() WHERE device_id = %(d)s", {"d": gw})
+            tx.execute("UPDATE device SET ros_version = '7.19 (stable)' WHERE id = %(d)s", {"d": ap})
+
+        # kanárek během sledování vypadne → stop, brána beze změny
+        jid = upgrades.start(db, tid, sid, canary=10)["job_id"]
+        upgrades.advance(db, now=now)
+        _finish_cmd(db, ap)
+        upgrades.advance(db, now=now)
+        with operator_scope(db) as tx:
+            n = tx.fetchone("SELECT count(*) AS n FROM device_command WHERE device_id = %(d)s AND kind = 'upgrade'", {"d": gw})["n"]
+            tx.execute("UPDATE device SET state = 'offline' WHERE id = %(d)s", {"d": ap})
+        assert upgrades.advance(db, now=now + dt.timedelta(minutes=2)) == 1
+        j = _job(db, jid)
+        assert j["status"] == "stopped" and "první zařízení" in j["message"] and "vypadlo" in j["message"]
+        assert [s["status"] for s in j["steps"]] == ["failed", "pending"]
+        with operator_scope(db) as tx:
+            assert tx.fetchone("SELECT count(*) AS n FROM device_command WHERE device_id = %(d)s AND kind = 'upgrade'", {"d": gw})["n"] == n
+            tx.execute("UPDATE device SET state = 'adopted', ros_version = '7.19 (stable)' WHERE id = %(d)s", {"d": ap})
+
+        # kritický alert otevřený po aktualizaci → stop
+        jid = upgrades.start(db, tid, sid, canary=10)["job_id"]
+        upgrades.advance(db, now=now)
+        _finish_cmd(db, ap)
+        upgrades.advance(db, now=now)
+        with operator_scope(db) as tx:
+            tx.execute("""INSERT INTO alert (tenant_id, device_id, kind, subject, severity, message, opened_at)
+                          VALUES (%(t)s, %(d)s, 'test', 'x', 'critical', 'ap: rádia neběží', %(o)s)""",
+                       {"t": tid, "d": ap, "o": now + dt.timedelta(minutes=1)})
+        upgrades.advance(db, now=now + dt.timedelta(minutes=2))
+        j = _job(db, jid)
+        assert j["status"] == "stopped" and "rádia neběží" in j["message"]
+        # jediné zařízení kanárka nepotřebuje; nesmyslná hodnota se odmítne
+        with pytest.raises(services.ServiceError):
+            upgrades.start(db, tid, sid, canary="x")
+    finally:
+        drop_db(name)
+
+
 def test_api_skip_cancel_and_isolation():
     db, name, settings, box, app, tid, sid = _env()
     try:

@@ -62,6 +62,36 @@ def test_plan_guards():
     assert w and "uplink" in w[0]
 
 
+def test_lockout_prediction():
+    """Změna, která by přerušila cestu ke správě, se odmítne (jde vynutit)."""
+    # správa tagovaně ve VLAN 10 přes ether1 (brána za ether1)
+    inv = dict(INV, vlans=[{"name": "vlan10", "vlan-id": "10", "interface": "bridge"}],
+               routes_default=[{"active": "true", "gateway": "10.0.10.1", "immediate-gw": "10.0.10.1%vlan10"}],
+               addresses=[{"address": "10.0.10.5/24", "interface": "vlan10"}],
+               arp=[{"address": "10.0.10.1", "mac-address": "AA:AA:AA:00:00:01"}],
+               bridge_hosts=[{"mac-address": "AA:AA:AA:00:00:01", "on-interface": "ether1"}])
+    for desired, msg in (({"disabled": True}, "vypnutím"), ({"tagged": ["40"]}, "odebráním VLAN"),
+                         ({"pvid": 10}, "bez tagu")):
+        with pytest.raises(portcfg.LockoutError) as e:
+            portcfg.plan(inv, "ether1", desired)
+        assert msg in str(e.value) and "odpojilo od controlleru" in str(e.value)
+    # neškodné změny uplinku a cokoli na jiném portu projde
+    assert portcfg.plan(inv, "ether1", {"comment": "uplink", "tagged": ["10", "40", "50"]})["changes"]
+    assert portcfg.plan(inv, "ether3", {"disabled": True, "pvid": 10})["changes"]
+    # vynucení: plán vznikne, s varováním
+    p = portcfg.plan(inv, "ether1", {"disabled": True, "force": True})
+    assert p["changes"] and any("Vynuceno" in w for w in p["warnings"])
+    # správa bez tagu (L3 na bridgi): změna PVID uplinku ji přesune jinam
+    flat = dict(inv, vlans=[], routes_default=[{"active": "true", "gateway": "10.0.10.1", "immediate-gw": "10.0.10.1%bridge"}],
+                addresses=[{"address": "10.0.10.5/24", "interface": "bridge"}])
+    with pytest.raises(portcfg.LockoutError) as e:
+        portcfg.plan(flat, "ether1", {"pvid": 20})
+    assert "bez tagu" in str(e.value)
+    assert portcfg.plan(flat, "ether1", {"tagged": ["10"]})["changes"]  # tagy správu neovlivní
+    # bez známé cesty ke správě se nic neodmítá (zůstává commit-confirm)
+    assert portcfg.plan(INV, "ether1", {"disabled": True})["changes"]
+
+
 def test_safe_scripts_are_valid():
     body = routeros.safe_apply_body("/interface ethernet set [find name=\"ether3\"] disabled=yes",
                                     "/interface ethernet set [find name=\"ether3\"] disabled=no",

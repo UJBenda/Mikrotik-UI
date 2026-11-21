@@ -1129,7 +1129,8 @@ async def site_upgrade(request: Request, p: Principal, tid: str) -> Response:
             return _err(403, "nedostatečná oprávnění")
         data = await _json(request)
         order = data.get("order") if isinstance(data, dict) else None
-        res = await run_in_threadpool(upgrades.start, st.db, tid, sid, p.user_id, client_ip(request), order)
+        canary = data.get("canary", upgrades.CANARY_DEFAULT) if isinstance(data, dict) else upgrades.CANARY_DEFAULT
+        res = await run_in_threadpool(upgrades.start, st.db, tid, sid, p.user_id, client_ip(request), order, canary)
         return json_response(res, 201)
 
     def q():
@@ -1360,6 +1361,26 @@ async def site_wifi_preview(request: Request, p: Principal, tid: str) -> Respons
         return w
 
     return json_response(await run_in_threadpool(q))
+
+
+@endpoint(OPERATE)
+async def site_maintenance(request: Request, p: Principal, tid: str) -> Response:
+    """Servisní okna lokality: GET stav, POST nové ({minutes} nebo {from, to}), DELETE ukončení / zrušení."""
+    from .. import maintenance
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    ip = client_ip(request)
+    if request.method == "GET":
+        def q():
+            with tenant_scope(st.db, tid) as tx:
+                return maintenance.status(tx, sid)
+        return json_response(await run_in_threadpool(q))
+    if request.method == "DELETE":
+        wid = str(request.path_params.get("window_id") or "")
+        return json_response(await run_in_threadpool(maintenance.end, st.db, tid, sid, wid, p.user_id, ip))
+    data = await _json(request)
+    return json_response(await run_in_threadpool(maintenance.add, st.db, tid, sid, data, p.user_id, ip), 201)
 
 
 @endpoint(OPERATE)
@@ -1828,6 +1849,8 @@ def routes() -> list[Route]:
         Route(s + "/ports", site_ports, methods=["GET"]),
         Route(s + "/wifi/rogue", site_rogue, methods=["GET", "POST"]),
         Route(s + "/wifi/optimize", site_wifi_optimize, methods=["GET", "POST"]),
+        Route(s + "/maintenance", site_maintenance, methods=["GET", "POST"]),
+        Route(s + "/maintenance/{window_id}", site_maintenance, methods=["DELETE"]),
         Route(T + "/plans", plan_list, methods=["GET"]),
         Route(T + "/plans/status", plan_status, methods=["GET"]),
         Route(T + "/clients", client_search, methods=["GET"]),

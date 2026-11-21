@@ -948,3 +948,70 @@ tr.rogue-row td { color: var(--bad); font-weight: 600; }
 .onboard li b { font-size: 16px; } .onboard li button { align-self: flex-start; margin-top: auto; }
 @media (max-width: 820px) { .onboard ol { grid-template-columns: 1fr; } }
 #rfopt-dlg table { width: 100%; }
+
+.maint-bar { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin: 8px 0;
+  padding: 8px 12px; border-radius: 6px; background: var(--warn-weak); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); font-size: 14px; }
+
+/* === Vzhled podle UniFi Network: úzká ikonová lišta, lokalita v horní liště, ploché karty a tabulky === */
+:root { --accent: #006fff; --accent-weak: #e6f0ff; --ok: #1a9f53; --bg: #f6f6f8; --line: #e6e8ec; --hover: #f3f6fb;
+        --rail: 76px; --shadow: none; }
+@media (prefers-color-scheme: dark) {
+  :root { --accent: #4797ff; --accent-weak: #16283f; --bg: #101216; --card: #191c21; --line: #2a2f36; --hover: #20252c; }
+}
+header { min-height: 48px; padding: 6px 16px 6px 14px; box-shadow: none; }
+.logo { border-radius: 7px; background: var(--accent); box-shadow: inset 0 0 0 5px rgba(255, 255, 255, .28); }
+/* lokalita vedle tenanta v horní liště */
+.hdr-tenant .nav-site { flex-direction: row; align-items: center; gap: 6px; margin: 0; padding: 0; text-transform: none;
+                        letter-spacing: 0; }
+.hdr-tenant .nav-site select { width: auto; max-width: 240px; font-size: 14px; }
+.hdr-tenant select { border-color: transparent; background: var(--hover); border-radius: 7px; padding: 5px 8px; }
+.hdr-tenant select:hover { border-color: var(--line); }
+/* ikonová lišta */
+main { grid-template-columns: var(--rail) 1fr; min-height: calc(100vh - 49px); }
+.nav { padding: 8px 6px; gap: 0; top: 49px; height: calc(100vh - 49px); }
+.nav-items { gap: 4px; }
+.navbtn { position: relative; flex-direction: column; justify-content: center; gap: 0; padding: 8px 2px 6px; border-radius: 9px;
+          color: var(--muted); }
+.navbtn .nlabel { flex-direction: column; gap: 4px; font-size: 10.5px; line-height: 1.15; font-weight: 500; text-align: center;
+                  letter-spacing: .01em; }
+.navbtn .nlabel svg { width: 20px; height: 20px; }
+.navbtn:hover { color: var(--text); }
+.navbtn.active { background: var(--accent-weak); color: var(--accent); font-weight: 500; }
+.navbtn.active::before { content: ""; position: absolute; left: -6px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0;
+                         background: var(--accent); }
+.navbtn .nbadge { position: absolute; top: 3px; right: 8px; font-size: 10px; line-height: 15px; min-width: 15px; padding: 0 4px; }
+.nav-sep { margin: 6px 10px 8px; }
+/* obsah: víc vzduchu, karty bez stínu */
+.content { padding: 16px 20px; }
+.card { border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+h2 { font-size: 16px; font-weight: 600; }
+/* dlaždice přehledu: číslo + stavová tečka místo barevného pruhu */
+.overview .tile, .overview .tile.bad, .overview .tile.warn { border-left: 1px solid var(--line); background: var(--card);
+  border-radius: 10px; padding: 12px 14px; }
+.overview .tile b { font-size: 24px; font-weight: 600; letter-spacing: -.01em; }
+.overview .tile span { font-size: 12px; margin-top: 2px; }
+.overview .tile span::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px;
+                               background: var(--ok); vertical-align: 1px; }
+.overview .tile.warn span::before { background: var(--warn); } .overview .tile.bad span::before { background: var(--bad); }
+.overview .tile:hover { transform: none; box-shadow: none; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.overview .tile.open { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-weak); }
+/* tabulky: klidná hlavička, vyšší řádky */
+th { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 500; padding-top: 7px; padding-bottom: 7px; }
+td { padding-top: 7px; padding-bottom: 7px; }
+table.kv th, table.kv td { padding-top: 2px; padding-bottom: 2px; }
+tbody tr:last-child td { border-bottom: 0; }
+/* tlačítka a pole */
+input, select, button { border-radius: 7px; }
+button.primary, form button:not([type="button"]):not(.secondary):not(.danger) { font-weight: 600; }
+@media (max-width: 820px) {
+  main { grid-template-columns: 1fr; }
+  .nav { top: 0; height: auto; padding: 4px 8px; }
+  .nav-items { gap: 2px; }
+  .navbtn { flex: none; min-width: 68px; padding: 6px 6px 5px; }
+  .navbtn.active::before { left: 10px; right: 10px; top: auto; bottom: -4px; width: auto; height: 3px; border-radius: 3px 3px 0 0; }
+  .hdr-tenant { flex-wrap: wrap; row-gap: 4px; }
+  .content { padding: 10px 10px; }
+}
+.overview { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }

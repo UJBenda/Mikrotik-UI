@@ -1019,6 +1019,7 @@ async function loadAlerts() {
   const crit = list.filter((a) => a.severity === "critical").length;
   $("alerts-count").textContent = list.length ? `${list.length}${crit ? ` (${crit} kritických)` : ""}` : "žádné";
   alertsOpen = [list.length, crit]; activityBadge();
+  loadMaint();
   for (const a of list) {
     const tr = el("tr");
     tr.append(el("td", SEV_LABEL[a.severity] || a.severity, "sev-" + (a.severity === "critical" ? "error" : a.severity)),
@@ -1036,6 +1037,54 @@ async function loadAlerts() {
   if (ovDrill) renderOverview();
 }
 $("alerts-refresh").addEventListener("click", () => loadAlerts());
+
+// --- servisní okno lokality (upozornění se během něj neposílají) -----------------------------
+let maintData = null;
+// konec okna je v budoucnu → vždy konkrétní čas, ne „před X min“
+const maintTime = (iso) => new Date(iso).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+
+async function loadMaint() {
+  const bar = $("maint-bar"); bar.textContent = ""; bar.hidden = true;
+  $("maint-btn").hidden = !siteId() || !canOperate();
+  if (!siteId()) return;
+  try { maintData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/maintenance`); } catch (e) { return; }
+  const a = maintData.active;
+  if (!a && !maintData.upgrade) return;
+  bar.hidden = false;
+  bar.appendChild(el("span", a ? `Servisní okno do ${maintTime(a.to)}${a.note ? ` – ${a.note}` : ""}. Upozornění z lokality se neposílají.`
+                               : "Běží postupná aktualizace – upozornění z lokality se zatím neposílají."));
+  if (a && canOperate()) {
+    const b = el("button", "Ukončit", "small secondary"); b.type = "button";
+    b.onclick = () => endMaint(a.id);
+    bar.appendChild(b);
+  }
+}
+
+async function endMaint(id) {
+  try { await api("DELETE", `/tenants/${tenantId}/sites/${siteId()}/maintenance/${id}`); msg("Servisní okno ukončeno"); loadMaint(); renderMaintList(); }
+  catch (e) { msg(e.message, true); }
+}
+
+function renderMaintList() {
+  const ul = $("maint-list"); ul.textContent = "";
+  for (const w of (maintData && maintData.windows) || []) {
+    const li = el("li", `${w.active ? "běží" : "od " + maintTime(w.from)} do ${maintTime(w.to)}${w.note ? ` – ${w.note}` : ""} `);
+    const b = el("button", w.active ? "Ukončit" : "Zrušit", "small secondary"); b.type = "button";
+    b.onclick = async () => { await endMaint(w.id); await loadMaint(); renderMaintList(); };
+    li.appendChild(b); ul.appendChild(li);
+  }
+}
+
+$("maint-btn").addEventListener("click", () => { $("maint-dlg").hidden = false; renderMaintList(); });
+$("maint-close").addEventListener("click", () => { $("maint-dlg").hidden = true; });
+$("maint-start").addEventListener("click", async () => {
+  try {
+    maintData = await api("POST", `/tenants/${tenantId}/sites/${siteId()}/maintenance`,
+                          { minutes: Number($("maint-len").value), note: $("maint-note").value.trim() });
+    $("maint-dlg").hidden = true; $("maint-note").value = "";
+    msg("Servisní okno zahájeno – upozornění z lokality se neposílají"); loadMaint();
+  } catch (e) { msg(e.message, true); }
+});
 
 let clientsCache = [];
 
@@ -1970,8 +2019,10 @@ function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(pre
 // --- navigace: levý panel se sekcemi, záložky lokality a detailu -----------------------------
 
 // lokalita: pět sekcí jako v UniFi; dole celý tenant (lokality, uživatelé, systém)
-const VIEWS = [["dash", "Přehled a topologie"], ["devices", "Zařízení"], ["clients", "Klienti"], ["settings", "Nastavení lokality"],
-  ["activity", "Aktivita a audit"], ["tenant", "Všechny lokality"], ["users", "Uživatelé"], ["system", "Systém"]];
+// [klíč, popisek v ikonové liště, celý název (tooltip)]
+const VIEWS = [["dash", "Přehled", "Přehled a topologie"], ["devices", "Zařízení"], ["clients", "Klienti"],
+  ["settings", "Nastavení", "Nastavení lokality"], ["activity", "Aktivita", "Aktivita a audit"],
+  ["tenant", "Lokality", "Všechny lokality"], ["users", "Uživatelé"], ["system", "Systém"]];
 const SITE_VIEWS = ["dash", "devices", "clients", "settings", "activity"];
 const navBadges = {};
 
@@ -1992,10 +2043,10 @@ function navIcon(key) {
 
 function buildNav() {
   const nav = $("nav-items"); nav.textContent = "";
-  for (const [key, label] of VIEWS) {
+  for (const [key, label, full] of VIEWS) {
     if (key === "system" && !(me && me.superadmin)) continue;
     if (key === "tenant") nav.appendChild(el("div", null, "nav-sep"));
-    const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key;
+    const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key; b.title = full || label;
     const lab = el("span", null, "nlabel");
     lab.append(navIcon(key), document.createTextNode(label));
     b.appendChild(lab);
@@ -2963,15 +3014,23 @@ async function loadPortEditor(port) {
     if (lockIn) d.lock = lockIn.value.trim();
     return d;
   };
-  const send = async (apply) => {
+  const send = async (apply, force) => {
     try {
-      const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(port)}/plan`, { desired: desired(), apply });
+      const r = await api("POST", `/tenants/${tenantId}/devices/${detailId}/ports/${encodeURIComponent(port)}/plan`,
+                          { desired: force ? { ...desired(), force: true } : desired(), apply });
       msg(apply || r.managed ? `Odesláno: ${r.summary}. Zařízení změnu provede do minuty; když se do 5 min neozve, samo ji vrátí.`
                 : `Plán uložen: ${r.summary} (čeká na schválení v Aktivitě → Změny)`);
       showApply(r.apply);
       for (const w of r.warnings || []) msg(w, true);
       loadPlans();
-    } catch (e) { msg(e.message, true); }
+    } catch (e) {
+      // předpověď odříznutí: změna by přerušila cestu ke správě – jde vynutit
+      if (!force && /odpojilo od controlleru/.test(e.message) && canManage()) {
+        if (await ask(`${e.message}\n\nPřesto provést?`, "Přesto provést")) return send(apply, true);
+        return;
+      }
+      msg(e.message, true);
+    }
   };
   const acts = el("div", null, "pe-acts");
   // řízené zařízení: Uložit = nasadit (VLAN podle sítí lokality), sledované: použít nebo jen plán
@@ -3199,7 +3258,7 @@ async function loadReleaseNotes(id) {
 
 // --- postupná aktualizace lokality -----------------------------------------------------------
 
-const UPG_STEP = { pending: "čeká", running: "probíhá", done: "hotovo", skipped: "přeskočeno", failed: "chyba" };
+const UPG_STEP = { pending: "čeká", running: "probíhá", soak: "sleduje se", done: "hotovo", skipped: "přeskočeno", failed: "chyba" };
 const UPG_JOB = { running: "běží", done: "dokončeno", stopped: "zastaveno", cancelled: "zrušeno" };
 
 let upgList = [];      // [{c, on}] v aktuálním pořadí
@@ -3278,11 +3337,15 @@ $("upg-start").addEventListener("click", async () => {
   const chosen = upgList.filter((x) => x.on);
   if (!chosen.length) return msg("Vyber aspoň jedno zařízení", true);
   const manual = upgManual();
+  const canary = $("upg-canary").checked ? 10 : 0;
   if (!(await ask(`Spustit postupnou aktualizaci ${chosen.length} zařízení (${manual ? "ruční pořadí" : "od konce sítě"})?\n` +
                   chosen.map((x, i) => `${i + 1}. ${x.c.label}`).join("\n") +
-                  "\n\nKaždé se restartuje (výpadek ~2–5 min na zařízení).", "Spustit"))) return;
+                  "\n\nKaždé se restartuje (výpadek ~2–5 min na zařízení)." +
+                  (canary && chosen.length > 1 ? `\nPrvní zařízení se po aktualizaci ${canary} min sleduje; když nebude v pořádku, zbytek zůstane beze změny.` : ""),
+                  "Spustit"))) return;
   try {
-    await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`, manual ? { order: chosen.map((x) => x.c.device_id) } : {});
+    await api("POST", `/tenants/${tenantId}/sites/${siteId()}/upgrade`,
+              { ...(manual ? { order: chosen.map((x) => x.c.device_id) } : {}), canary });
     msg("Postupná aktualizace spuštěna"); loadUpgrade();
   } catch (e) { msg(e.message, true); }
 });
