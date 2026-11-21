@@ -293,6 +293,14 @@ def test_upgrade_and_firmware_commands():
         assert len(found) == 1 and "7.20.5" in found[0].message
         _device_post(app, "/api/checkin", "key-GW1", {"version": "7.20.5 (stable)", "sstp": "up"})
         assert upgrade_alerts() == []
+        # s novou verzí se rovnou zařadí RouterBOOT (příkaz si sám ověří, jestli je co aktualizovat)
+        with operator_scope(db) as tx:
+            fw = tx.fetchone("SELECT id, params FROM device_command WHERE device_id = %(d)s AND kind = 'firmware'", {"d": gw})
+        assert fw and fw["params"]["after_upgrade"] == cid
+        r = c.post(url, json_body={"kind": "upgrade", "version": "7.24.2"})
+        assert r.status_code == 400 and "čeká" in r.json()["detail"]
+        _device_post(app, "/api/checkin", "key-GW1", {"version": "7.20.5 (stable)", "sstp": "up"})
+        _device_post(app, f"/api/checkin/ack?id={fw['id']}&status=done", "key-GW1")
 
         # verze s kritickým známým problémem se odmítne
         inv["update"] = {"channel": "stable", "installed-version": "7.20.5", "latest-version": "7.24.2"}
