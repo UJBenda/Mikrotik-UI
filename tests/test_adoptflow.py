@@ -180,3 +180,43 @@ def test_site_auto_adopt_approves_by_model():
         assert adoptflow.step(db, settings, box, tid, did) == "needs_confirm"
     finally:
         drop_db(name)
+
+
+def test_monitor_role_follows_model():
+    """„Jen sledovat“ nedělá ze všeho bránu: role podle modelu, brána je v lokalitě jedna."""
+    from mtcontroller.services import role_for_model as r
+
+    assert r("CRS326-24G-2S+", False) == "switch" and r("CSS610-8G-2S+", True) == "switch"
+    assert r("cAP ax", False) == "ap" and r("RBcAPGi-5acD2nD", False) == "ap" and r("wAP ac", True) == "ap"
+    assert r("RB5009UG+S+", False) == "gateway" and r("RB5009UG+S+", True) == "switch"
+    assert r("CCR2004-16G-2S+", False) == "gateway" and r("hEX S", True) == "switch"
+    assert r("hAP ax^2", False) == "gateway" and r("hAP ax^2", True) == "ap"
+    assert r("LHG 5", False) == "ptp" and r("RBLHG-5nD", True) == "ptp" and r("SXTsq 5 ac", False) == "ptp"
+    assert r(None, False) == "unknown" and r("neco", True) == "unknown"
+
+
+def test_monitor_approve_sets_role_by_model():
+    from helpers import drop_db
+    from test_flow import _login
+
+    db, name, settings, box, app, tid, sid, sw = _takeover_env()
+    try:
+        c = _login(app)
+        base = f"/api/admin/tenants/{tid}"
+        role = lambda: next(d["role"] for d in c.get(base + "/devices").json() if d["id"] == sw)  # noqa: E731
+        for model, has_gw, want in (("CRS326-24G-2S+", False, "switch"), ("cAP ax", False, "ap"),
+                                    ("RB5009UG+S+", False, "gateway"), ("RB5009UG+S+", True, "switch")):
+            with operator_scope(db) as tx:
+                tx.execute("UPDATE device SET state = 'pending', site_id = NULL, role = 'unknown', model = %(m)s WHERE id = %(d)s",
+                           {"m": model, "d": sw})
+            if has_gw:
+                from test_modules import _adopted
+
+                gw = _adopted(db, box, tid, sid, "GW-X", "10.200.1.9", "gw")
+                with operator_scope(db) as tx:
+                    tx.execute("UPDATE device SET role = 'gateway' WHERE id = %(d)s", {"d": gw})
+            r = c.post(base + f"/devices/{sw}/approve", json_body={"site_id": sid, "mode": "monitor"})
+            assert r.status_code == 200, r.text
+            assert role() == want, (model, has_gw, role())
+    finally:
+        drop_db(name)

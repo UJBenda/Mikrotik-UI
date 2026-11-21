@@ -359,6 +359,30 @@ def sstp_username(serial: str) -> str:
     return f"mtc-{serial}"
 
 
+_SWITCH_MODEL = re.compile(r"^(CRS|CSS|netPower|netFiber|FiberBox)", re.I)
+_AP_ONLY_MODEL = re.compile(r"^(?:RB)?(cAP|wAP|Audience|wsAP|mAP|NetMetal|OmniTIK|BaseBox)", re.I)
+_HOME_ROUTER_MODEL = re.compile(r"^(hAP|Chateau)", re.I)
+_PTP_MODEL = re.compile(r"^(?:RB)?(LHG|SXT|DISC|LDF|Wireless Wire|Cube|wAP 60G|nRAY|DynaDish|QRT|Groove|Metal)", re.I)
+_ROUTER_MODEL = re.compile(r"^(CCR|RB\d|hEX|L009|CHR|x86)", re.I)
+
+
+def role_for_model(model: str | None, site_has_gateway: bool) -> str:
+    """Role sledovaného zařízení podle modelu. Brána je v lokalitě jedna: další routery se berou jako switch,
+    domácí routery s Wi-Fi (hAP, Chateau) jako AP."""
+    m = str(model or "").strip()
+    if _PTP_MODEL.match(m):
+        return "ptp"
+    if _SWITCH_MODEL.match(m):
+        return "switch"
+    if _AP_ONLY_MODEL.match(m):
+        return "ap"
+    if _HOME_ROUTER_MODEL.match(m):
+        return "ap" if site_has_gateway else "gateway"
+    if _ROUTER_MODEL.match(m):
+        return "switch" if site_has_gateway else "gateway"
+    return "unknown"
+
+
 def approve_device(db: Database, settings: Settings, box: SecretBox, providers: list[TunnelProvider],
                    tenant_id: Any, device_id: Any, site_id: Any, role: str = "unknown",
                    user_id: Any = None, ip: str | None = None, identity: str | None = None,
@@ -373,16 +397,17 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
 
         if target not in TARGETS:
             raise ServiceError("role: switch, AP + switch, nebo jen sledovat")
-        role = {"switch": "switch", "ap": "ap"}.get(target, role if role in ("gateway", "ptp") else "gateway")
+        # „jen sledovat“: roli určí model a to, jestli lokalita už bránu má (níže), ne paušálně brána
+        role = {"switch": "switch", "ap": "ap"}.get(target, role if role in ("gateway", "ptp") else "auto")
     local = settings.tunnel.local
     if not local and not settings.tunnel.concentrators:
         raise ServiceError("v konfiguraci není žádný koncentrátor (tunnel.concentrators)")
-    if role not in DEVICE_ROLES:
+    if role != "auto" and role not in DEVICE_ROLES:
         raise ServiceError("neplatná role zařízení")
     identity = check_identity(identity) if identity not in (None, "") else None
     with tenant_scope(db, tenant_id) as tx:
         dev = tx.fetchone(
-            "SELECT id, serial, state, identity, host(tunnel_ip) AS tunnel_ip FROM device WHERE id = %(d)s FOR UPDATE",
+            "SELECT id, serial, state, identity, model, host(tunnel_ip) AS tunnel_ip FROM device WHERE id = %(d)s FOR UPDATE",
             {"d": str(device_id)},
         )
         if not dev:
@@ -391,6 +416,10 @@ def approve_device(db: Database, settings: Settings, box: SecretBox, providers: 
             raise ServiceError(f"zařízení není ve stavu pending (je {dev['state']})")
         if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": str(site_id)}):
             raise NotFound("lokalita neexistuje")
+        if role == "auto":
+            has_gw = tx.fetchone("SELECT 1 FROM device WHERE site_id = %(s)s AND role = 'gateway' AND state <> 'removed'",
+                                 {"s": str(site_id)}) is not None
+            role = role_for_model(dev["model"], has_gw)
         if local:
             # lokální režim: správa na adresu, ze které se zařízení hlásí (check-in ji aktualizuje)
             tunnel_ip = dev["tunnel_ip"]
