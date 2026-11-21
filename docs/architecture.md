@@ -1176,3 +1176,18 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
 - **Vzhled podle UniFi Network**: úzká ikonová lišta (76 px, popisek pod ikonou, celý název v tooltipu), výběr
   lokality v horní liště vedle tenanta, dlaždice přehledu se stavovou tečkou, klidnější hlavičky tabulek, modrá
   `#006fff`. Vše jako blok na konci `style.css` (původní pravidla zůstávají pod ním).
+
+## Klienti v čase, topologie jako strom, QR pro MFA (etapa 7)
+
+- **Relace klientů** (`client_session`, migrace 0027): worker při `clients.record` (co 5 min) přítomným klientům
+  otevře / potvrdí relaci (`seen_at`) a ostatním ji ukončí. Relace nepotvrzená déle než 20 min (worker stál,
+  lokalita offline) končí posledním potvrzením. Retence 90 dní spolu s historií klientů.
+- **Posun v čase**: `clients.timeline` (počty celkem / Wi-Fi po 5 min až 4 h podle období) a `clients.at`
+  (kdo byl připojený v daný okamžik). API `GET …/sites/{id}/clients/timeline?hours=` a `…/clients?at=ISO`.
+  UI Klienti: graf s posuvníkem (24 h / 7 dní / 30 dní), přepínač Vše / Wi-Fi / Kabel, hledání, filtr sítě
+  (VLAN, SSID) a zařízení, sloupec Připojení a síla signálu.
+- **Topologie**: strom zleva doprava (kostra BFS od řízeného zařízení s nejvíc spoji). Každý list má vlastní
+  řádek, popisek je v rámečku, porty spoje nad vodorovným úsekem u potomka; spoje mimo kostru čárkovaným
+  obloukem, nespojené části pod sebou. Plátno má pevné rozměry a posouvá se, neškáluje.
+- **QR pro MFA** (`qr.py`): vlastní kodér QR (bajtový režim, úroveň M, verze 1–10, výběr masky) bez závislostí;
+  `auth` vrací k otpauth URI matici `qr`, UI ji vykreslí jako SVG. Ruční klíč zůstává jako záloha.

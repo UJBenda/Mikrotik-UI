@@ -33,7 +33,9 @@
   <section id="mfa" hidden>
     <h2>Ověření (MFA)</h2>
     <div id="mfa-setup" hidden>
-      <p>Přidej účet do autentizační aplikace (Aegis, Google Authenticator, Bitwarden…) ručně tímto klíčem:</p>
+      <p>Naskenuj QR kód v autentizační aplikaci (Aegis, Google Authenticator, Bitwarden…):</p>
+      <div id="mfa-qr" class="mfa-qr" role="img" aria-label="QR kód pro autentizační aplikaci"></div>
+      <p>Nebo zadej klíč ručně:</p>
       <p><code id="mfa-secret"></code></p>
       <p class="muted">Nebo URI: <code id="mfa-uri"></code></p>
     </div>
@@ -144,12 +146,38 @@
 
       <div id="view-clients" class="view" hidden>
         <div class="card">
-          <h2>Klienti</h2>
+          <div class="site-head">
+            <h2>Klienti <span id="cl-count" class="badge"></span></h2>
+            <div id="cl-kind" class="seg" role="group" aria-label="Typ připojení">
+              <button id="cl-kind-all" type="button" class="active">Vše</button>
+              <button id="cl-kind-wifi" type="button">Wi-Fi</button>
+              <button id="cl-kind-wired" type="button">Kabel</button>
+            </div>
+          </div>
       <div id="clients-wrap" class="sub">
-        <input id="clients-filter" placeholder="Hledat MAC, IP, jméno, port…">
-        <label><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
-        <span class="ctx-hint" title="Klik na klienta = popisek, ikona, logo; pravé tlačítko = další akce">klik = upravit · pravé tlačítko = akce</span>
-        <table class="clients-t"><thead><tr><th></th><th>Jméno</th><th>IP</th><th>MAC</th><th>Zařízení</th><th>Port</th><th>VLAN</th><th>Wifi</th><th>Poprvé</th><th>Naposledy</th><th></th></tr></thead>
+        <div class="cl-time">
+          <div class="cl-time-head">
+            <b id="cl-time-label">Teď</b>
+            <span id="cl-time-sum" class="muted"></span>
+            <button id="cl-now" type="button" class="small primary" hidden>Zpět na teď</button>
+            <div id="cl-range" class="seg" role="group" aria-label="Období">
+              <button id="cl-range-24" type="button" class="active">24 h</button>
+              <button id="cl-range-168" type="button">7 dní</button>
+              <button id="cl-range-720" type="button">30 dní</button>
+            </div>
+          </div>
+          <div id="cl-chart" class="cl-chart" role="img" aria-label="Počet připojených klientů v čase"></div>
+          <input type="range" id="cl-slider" min="0" max="0" value="0" aria-label="Posun v čase">
+          <p id="cl-time-note" class="muted small"></p>
+        </div>
+        <div class="cl-filters">
+          <input id="clients-filter" type="search" placeholder="Hledat jméno, MAC, IP, port, výrobce…">
+          <select id="cl-f-net" aria-label="Síť"></select>
+          <select id="cl-f-dev" aria-label="Zařízení"></select>
+          <label class="check"><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
+          <span class="ctx-hint" title="Klik na klienta = popisek, ikona, logo; pravé tlačítko = další akce">klik = upravit · pravé tlačítko = akce</span>
+        </div>
+        <table class="clients-t"><thead><tr><th></th><th>Jméno</th><th>Připojení</th><th>IP</th><th>Síť</th><th>Signál</th><th>MAC</th><th>Poprvé</th><th>Naposledy</th><th></th></tr></thead>
         <tbody id="clients"></tbody></table>
       </div>
         </div>

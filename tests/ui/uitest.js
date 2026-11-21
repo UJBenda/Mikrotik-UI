@@ -404,6 +404,17 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (rows.length !== 2 || rows[0].children[0].children[0].textContent !== "🗄️" || !rows[1].textContent.includes("TP-LINK"))
         errors.push("klienti: avatar " + rows.length + " " + (rows[0] && rows[0].children[0].textContent));
       if (!find(rows[1], (n) => n.tagName === "IMG")) errors.push("klienti: logo výrobce");
+      // časová osa a filtry: posuvník na konci = teď, typ připojení filtruje řádky
+      if (byId["cl-slider"].max !== "96" || !byId["cl-time-sum"].textContent.includes("nejvíc za období")) errors.push("klienti: časová osa " + byId["cl-time-sum"].textContent);
+      if (!/^2 · \d Wi-Fi · \d kabel$/.test(byId["cl-count"].textContent)) errors.push("klienti: počty " + byId["cl-count"].textContent);
+      const nWifi = Number(byId["cl-count"].textContent.split(" · ")[1].split(" ")[0]);
+      await byId["cl-kind-wifi"].fire("click");
+      if (byId["clients"].children.length !== Math.max(1, nWifi) || byId["cl-kind-wifi"].className !== "active") errors.push("klienti: filtr Wi-Fi");
+      await byId["cl-kind-all"].fire("click");
+      byId["cl-slider"].value = "40"; await byId["cl-slider"].fire("input");
+      if (byId["cl-now"].hidden || !byId["cl-time-sum"].textContent.startsWith("připojeno")) errors.push("klienti: posun v čase " + byId["cl-time-sum"].textContent);
+      await byId["cl-now"].fire("click");
+      if (!byId["cl-now"].hidden || byId["cl-time-label"].textContent !== "Teď") errors.push("klienti: zpět na teď");
       await rows[1].fire("click", { target: rows[1] });
       if (byId["cl-dlg"].hidden || byId["cl-icons"].children.length < 20) errors.push("klienti: editor");
       byId["cl-label"].value = "Tiskárna";

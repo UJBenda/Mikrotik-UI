@@ -12,7 +12,7 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import totp
+from . import qr, totp
 from .db import Database, Tx
 from .security import SealedSecret, SecretBox, hash_password, new_token, token_hash, verify_password
 from .services import ServiceError, audit
@@ -156,7 +156,12 @@ def mfa_setup(db: Database, box: SecretBox, p: Principal) -> dict:
             "UPDATE app_user SET totp_wrapped_key = %(w)s, totp_ciphertext = %(c)s WHERE id = %(id)s",
             {"w": sealed.wrapped_key, "c": sealed.ciphertext, "id": p.user_id},
         )
-    return {"secret": secret, "uri": totp.provisioning_uri(secret, p.email)}
+    uri = totp.provisioning_uri(secret, p.email)
+    try:
+        code = qr.rows(uri)
+    except ValueError:  # extrémně dlouhý e-mail – zůstane ruční zadání klíče
+        code = None
+    return {"secret": secret, "uri": uri, "qr": code}
 
 
 def mfa_verify(db: Database, box: SecretBox, p: Principal, code: str, ip: str | None = None) -> None:

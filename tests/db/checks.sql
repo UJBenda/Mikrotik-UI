@@ -402,6 +402,37 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20b) relace klientů izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO client_session (tenant_id, site_id, mac)
+  SELECT tenant_id, id, 'AA:BB:CC:00:00:01' FROM site WHERE tenant_id = '00000000-0000-0000-0000-0000000000b1' LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM client_session) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí relace klientů tenanta B'; END IF;
+  UPDATE client_session SET ended_at = now();
+  BEGIN
+    INSERT INTO client_session (tenant_id, site_id, mac)
+      SELECT '00000000-0000-0000-0000-0000000000b1', id, 'AA:BB:CC:00:00:02' FROM site LIMIT 1;
+    INSERT INTO client_session (tenant_id, site_id, mac)
+      VALUES ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-00000000dead', 'AA:BB:CC:00:00:03');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal relaci klienta tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 20b relace klientů izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM client_session WHERE ended_at IS NULL) <> 1 THEN RAISE EXCEPTION 'FAIL: tenant A změnil relaci B'; END IF;
+  IF NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname = 'client_session') THEN
+    RAISE EXCEPTION 'FAIL: client_session bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

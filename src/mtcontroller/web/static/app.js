@@ -193,6 +193,21 @@ $("login-form").addEventListener("submit", async (ev) => {
   } catch (e) { msg(e.message, true); }
 });
 
+// QR kód z matice ze serveru (řádky znaků 1/0) jako SVG – vždy tmavý na bílém, s tichým okrajem
+function drawQr(box, rows) {
+  box.textContent = ""; box.hidden = !rows || !rows.length;
+  if (box.hidden || typeof document.createElementNS !== "function") return;
+  const NS = "http://www.w3.org/2000/svg", n = rows.length, q = 4;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${n + 2 * q} ${n + 2 * q}`); svg.setAttribute("shape-rendering", "crispEdges");
+  const bg = document.createElementNS(NS, "rect");
+  bg.setAttribute("width", "100%"); bg.setAttribute("height", "100%"); bg.setAttribute("fill", "#fff");
+  let d = "";
+  rows.forEach((row, r) => { for (let c = 0; c < n; c++) if (row[c] === "1") d += `M${c + q} ${r + q}h1v1h-1z`; });
+  const p = document.createElementNS(NS, "path"); p.setAttribute("d", d); p.setAttribute("fill", "#000");
+  svg.append(bg, p); box.appendChild(svg);
+}
+
 async function startMfa(setup) {
   show("mfa");
   $("mfa-setup").hidden = true;
@@ -201,6 +216,7 @@ async function startMfa(setup) {
       const s = await api("POST", "/mfa/setup");
       $("mfa-secret").textContent = s.secret.replace(/(.{4})/g, "$1 ").trim();
       $("mfa-uri").textContent = s.uri;
+      drawQr($("mfa-qr"), s.qr);
       $("mfa-setup").hidden = false;
     } catch (e) { /* MFA už nastavené – stačí kód */ }
   }
@@ -965,47 +981,86 @@ async function loadTopology() {
   } catch (e) { msg(e.message, true); }
 }
 
+// Topologie jako strom zleva doprava: každé zařízení má vlastní řádek, popisek je uvnitř rámečku
+// a porty spoje jsou nad vodorovným úsekem u potomka – nic se nepřekrývá ani při desítkách sousedů.
+const TOPO = { boxW: 190, boxH: 26, colW: 380, rowH: 36, pad: 16 };
+
 function drawTopology(t) {
   const svg = $("topo");
   svg.textContent = "";
   if (!t.nodes.length) { svg.appendChild(svgEl("text", { x: 20, y: 30 }, "Zatím žádná data o sousedech.")); return; }
-  // úrovně: BFS od uzlu s nejvíc spoji
+  const byId = Object.fromEntries(t.nodes.map((n) => [n.id, n]));
   const adj = {};
   for (const n of t.nodes) adj[n.id] = [];
-  for (const e of t.edges) { adj[e.a].push(e.b); adj[e.b].push(e.a); }
-  const root = t.nodes.filter((n) => n.managed).sort((a, b) => adj[b.id].length - adj[a.id].length)[0] || t.nodes[0];
-  const level = { [root.id]: 0 };
-  const queue = [root.id];
-  while (queue.length) {
-    const cur = queue.shift();
-    for (const nb of adj[cur]) if (!(nb in level)) { level[nb] = level[cur] + 1; queue.push(nb); }
+  for (const e of t.edges) { adj[e.a].push([e.b, e]); adj[e.b].push([e.a, e]); }
+  const nat = (a, b) => String(a.label).localeCompare(String(b.label), "cs", { numeric: true });
+  // kostra: BFS od řízeného zařízení s nejvíc spoji; nespojené části jako další stromy pod sebou
+  const parent = {}, kids = {}, via = {}, seen = new Set(), roots = [];
+  const starts = [...t.nodes].sort((x, y) => (y.managed ? 1 : 0) - (x.managed ? 1 : 0) || adj[y.id].length - adj[x.id].length || nat(x, y));
+  for (const r of starts) {
+    if (seen.has(r.id)) continue;
+    roots.push(r.id); seen.add(r.id);
+    const queue = [r.id];
+    while (queue.length) {
+      const cur = queue.shift();
+      kids[cur] = [];
+      const next = adj[cur].filter(([nb]) => !seen.has(nb)).sort((x, y) =>
+        (byId[y[0]].managed ? 1 : 0) - (byId[x[0]].managed ? 1 : 0) || nat(byId[x[0]], byId[y[0]]));
+      for (const [nb, e] of next) {
+        if (seen.has(nb)) continue;
+        seen.add(nb); parent[nb] = cur; via[nb] = e; kids[cur].push(nb); queue.push(nb);
+      }
+    }
   }
-  let maxL = Math.max(...Object.values(level));
-  for (const n of t.nodes) if (!(n.id in level)) level[n.id] = ++maxL;  // nespojené uzly dole
-  const rows = {};
-  for (const n of t.nodes) (rows[level[n.id]] = rows[level[n.id]] || []).push(n);
-  const nRows = Object.keys(rows).length;
-  const H = Math.max(200, nRows * 110 + 40);
-  svg.setAttribute("viewBox", `0 0 800 ${H}`);
+  // rozmístění: list = další volný řádek, rodič uprostřed svých potomků
   const pos = {};
-  for (const [l, ns] of Object.entries(rows)) {
-    ns.forEach((n, i) => { pos[n.id] = { x: (800 / (ns.length + 1)) * (i + 1), y: 50 + Number(l) * 110 }; });
+  let row = 0, depthMax = 0;
+  const place = (id, depth) => {
+    depthMax = Math.max(depthMax, depth);
+    if (!kids[id].length) { pos[id] = { d: depth, r: row++ }; return; }
+    for (const k of kids[id]) place(k, depth + 1);
+    pos[id] = { d: depth, r: (pos[kids[id][0]].r + pos[kids[id][kids[id].length - 1]].r) / 2 };
+  };
+  for (const r of roots) { place(r, 0); row += 0.5; }
+  const X = (id) => TOPO.pad + pos[id].d * TOPO.colW, Y = (id) => TOPO.pad + pos[id].r * TOPO.rowH + TOPO.boxH / 2;
+  const W = TOPO.pad * 2 + depthMax * TOPO.colW + TOPO.boxW, H = TOPO.pad * 2 + Math.max(1, row - 0.5) * TOPO.rowH;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W); svg.setAttribute("height", H);
+  const short = (v, n) => (String(v).length > n ? String(v).slice(0, n - 1) + "…" : String(v));
+  // spoje kostry: z pravé hrany rodiče po společné svislici k levé hraně potomka
+  for (const id of Object.keys(parent)) {
+    const p = parent[id], e = via[id];
+    const x1 = X(p) + TOPO.boxW, y1 = Y(p), x2 = X(id), y2 = Y(id), bus = x1 + 22;
+    svg.appendChild(svgEl("path", { d: `M${x1} ${y1}H${bus}V${y2}H${x2}`, class: "link" }));
+    // výpadek jen na úseku k potomkovi – společná svislice patří i ostatním
+    if (byId[id].state === "offline" || byId[p].state === "offline") svg.appendChild(svgEl("path", { d: `M${bus} ${y2}H${x2}`, class: "link down" }));
+    const pp = e.ports[p], pc = e.ports[id];
+    const label = [pp, pc].filter(Boolean).map((v) => short(v, 16)).join(" → ");
+    if (label) {
+      const tx = svgEl("text", { x: x2 - 8, y: y2 - 5, class: "port", "text-anchor": "end" }, label);
+      tx.appendChild(svgEl("title", {}, `${byId[p].label} ${pp || "?"} → ${byId[id].label} ${pc || "?"}`));
+      svg.appendChild(tx);
+    }
   }
+  // ostatní spoje (smyčky, záložní linky): čárkovaně obloukem
   for (const e of t.edges) {
-    const a = pos[e.a], b = pos[e.b];
-    svg.appendChild(svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
-    const pa = e.ports[e.a], pb = e.ports[e.b];
-    if (pa) svg.appendChild(svgEl("text", { x: a.x + (b.x - a.x) * 0.2 + 4, y: a.y + (b.y - a.y) * 0.2 - 4, class: "port" }, pa));
-    if (pb) svg.appendChild(svgEl("text", { x: b.x + (a.x - b.x) * 0.2 + 4, y: b.y + (a.y - b.y) * 0.2 - 4, class: "port" }, pb));
+    if (via[e.a] === e || via[e.b] === e || !pos[e.a] || !pos[e.b]) continue;
+    const xa = X(e.a) + TOPO.boxW, ya = Y(e.a), xb = X(e.b) + TOPO.boxW, yb = Y(e.b), out = Math.max(xa, xb) + 40;
+    const ln = svgEl("path", { d: `M${xa} ${ya}C${out} ${ya} ${out} ${yb} ${xb} ${yb}`, class: "link extra" });
+    ln.appendChild(svgEl("title", {}, `další spoj: ${byId[e.a].label} ${e.ports[e.a] || ""} ↔ ${byId[e.b].label} ${e.ports[e.b] || ""}`));
+    svg.appendChild(ln);
   }
   for (const n of t.nodes) {
-    const p = pos[n.id];
+    const x = X(n.id), y = Y(n.id) - TOPO.boxH / 2;
     const cls = !n.managed ? "ext" : n.state === "offline" ? "offline" : "managed";
-    const c = svgEl("circle", { cx: p.x, cy: p.y, r: 12, class: cls });
-    c.appendChild(svgEl("title", {}, `${n.label}${n.model ? " – " + n.model : ""}${n.address ? " – " + n.address : ""}`));
-    svg.appendChild(c);
-    svg.appendChild(svgEl("text", { x: p.x, y: p.y + 28, "text-anchor": "middle" }, n.label));
-    if (n.managed) c.addEventListener("click", () => openDetail(n.id));
+    const g = svgEl("g", { class: "node " + cls });
+    g.appendChild(svgEl("rect", { x, y, width: TOPO.boxW, height: TOPO.boxH, rx: 7 }));
+    g.appendChild(svgEl("circle", { cx: x + 12, cy: y + TOPO.boxH / 2, r: 4 }));
+    g.appendChild(svgEl("text", { x: x + 23, y: y + TOPO.boxH / 2 + 4 }, short(n.label, 24)));
+    g.appendChild(svgEl("title", {}, [n.label, n.model, n.address, n.managed ? (n.state === "offline" ? "offline" : "online") : "nespravované"]
+      .filter(Boolean).join(" – ")));
+    if (n.managed) g.addEventListener("click", () => openDetail(n.id));
+    svg.appendChild(g);
   }
 }
 
@@ -1087,15 +1142,118 @@ $("maint-start").addEventListener("click", async () => {
 });
 
 let clientsCache = [];
+// stav pohledu Klienti: typ připojení, období osy, vybraný okamžik (null = teď)
+const clView = { kind: "all", hours: 24, at: null, timeline: null };
+const clIsWifi = (c) => !!(c.wifi || c.ssid || c.signal || c.was_wifi);
+const clClock = (t) => new Date(t).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
 
 async function loadClients() {
+  if (clView.site !== siteId()) { clView.site = siteId(); clView.timeline = null; clView.at = null; }
   try {
-    const hist = $("clients-history").checked ? "?history=1" : "";
-    clientsCache = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients${hist}`);
+    const q = clView.at ? `?at=${encodeURIComponent(clView.at)}` : $("clients-history").checked ? "?history=1" : "";
+    clientsCache = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients${q}`);
+    clFilterOptions();
     renderClients();
   } catch (e) { msg(e.message, true); }
+  if (!clView.timeline) loadClientTimeline();
 }
 $("clients-history").addEventListener("change", () => loadClients());
+
+async function loadClientTimeline() {
+  try { clView.timeline = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients/timeline?hours=${clView.hours}`); }
+  catch (e) { clView.timeline = null; }
+  const tl = clView.timeline, sl = $("cl-slider");
+  const n = tl ? tl.points.length : 0;
+  sl.max = String(Math.max(0, n - 1));
+  if (!clView.at) sl.value = sl.max;
+  $("cl-time-note").textContent = !tl || !tl.since ? "Historie připojení se teprve začíná zaznamenávat (každých 5 minut)."
+    : new Date(tl.since) > new Date(tl.from) ? `Historie připojení se zaznamenává od ${clClock(tl.since)}.` : "";
+  drawClientChart();
+  clTimeLabel();
+}
+
+// sloupcový graf počtu klientů: Wi-Fi tmavší část, kabel světlejší; klik = skok na okamžik
+function drawClientChart() {
+  const box = $("cl-chart"); box.textContent = "";
+  const tl = clView.timeline;
+  if (!tl || !tl.points.length || typeof document.createElementNS !== "function") return;
+  const W = 1000, H = 120, n = tl.points.length, bw = W / n;
+  const max = Math.max(1, ...tl.points.map((p) => p.total));
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none" });
+  const sel = Number($("cl-slider").value);
+  tl.points.forEach((p, i) => {
+    const wifi = clView.kind === "wired" ? 0 : p.wifi, wired = clView.kind === "wifi" ? 0 : p.total - p.wifi;
+    const h1 = (wifi / max) * (H - 6), h2 = (wired / max) * (H - 6), x = i * bw;
+    const g = svgEl("g", { class: "bar" + (clView.at && i === sel ? " sel" : "") });
+    g.appendChild(svgEl("rect", { x, y: 0, width: bw, height: H, class: "hit" }));
+    if (h2) g.appendChild(svgEl("rect", { x: x + bw * 0.12, y: H - h1 - h2, width: bw * 0.76, height: h2, class: "wired" }));
+    if (h1) g.appendChild(svgEl("rect", { x: x + bw * 0.12, y: H - h1, width: bw * 0.76, height: h1, class: "wifi" }));
+    g.appendChild(svgEl("title", {}, `${clClock(p.t)} – ${p.total} klientů (${p.wifi} Wi-Fi, ${p.total - p.wifi} kabel)`));
+    g.addEventListener("click", () => { $("cl-slider").value = String(i); clSeek(); });
+    svg.appendChild(g);
+  });
+  box.appendChild(svg);
+}
+
+function clTimeLabel() {
+  const tl = clView.timeline, i = Number($("cl-slider").value);
+  const p = tl && tl.points[i];
+  $("cl-now").hidden = !clView.at;
+  $("cl-time-label").textContent = clView.at ? clClock(clView.at) : "Teď";
+  $("cl-time-sum").textContent = !p ? "" : clView.at
+    ? `připojeno ${p.total} klientů – ${p.wifi} Wi-Fi, ${p.total - p.wifi} kabel`
+    : `nejvíc za období: ${Math.max(...tl.points.map((x) => x.total))} klientů`;
+  $("clients-history").disabled = !!clView.at;
+}
+
+let clSeekTimer = null;
+function clSeek() {
+  const tl = clView.timeline, i = Number($("cl-slider").value);
+  if (!tl || !tl.points.length) return;
+  clView.at = i >= tl.points.length - 1 ? null : tl.points[i].t;   // úplně vpravo = teď
+  clTimeLabel(); drawClientChart();
+  clearTimeout(clSeekTimer);
+  clSeekTimer = setTimeout(() => loadClients(), 250);
+}
+$("cl-slider").addEventListener("input", clSeek);
+$("cl-now").addEventListener("click", () => { $("cl-slider").value = $("cl-slider").max; clSeek(); });
+for (const h of [24, 168, 720]) {
+  $("cl-range-" + h).addEventListener("click", () => {
+    clView.hours = h; clView.at = null;
+    for (const x of [24, 168, 720]) $("cl-range-" + x).className = x === h ? "active" : "";
+    loadClientTimeline(); loadClients();
+  });
+}
+for (const k of ["all", "wifi", "wired"]) {
+  $("cl-kind-" + k).addEventListener("click", () => {
+    clView.kind = k;
+    for (const x of ["all", "wifi", "wired"]) $("cl-kind-" + x).className = x === k ? "active" : "";
+    drawClientChart(); renderClients();
+  });
+}
+
+// nabídky filtrů (síť, zařízení) podle načtených klientů; výběr zůstává, pokud pořád existuje
+function clFilterOptions() {
+  const fill = (id, all, values) => {
+    const sel = $(id), cur = sel.value;
+    sel.textContent = "";
+    const o0 = el("option", all); o0.value = ""; sel.appendChild(o0);
+    for (const v of values) { const o = el("option", v[1]); o.value = v[0]; sel.appendChild(o); }
+    sel.value = values.some((v) => v[0] === cur) ? cur : "";
+  };
+  const nets = new Map(), devs = new Map();
+  for (const c of clientsCache) {
+    const ssid = c.wifi ? c.wifi.ssid : c.ssid;
+    if (c.vlan) nets.set("v:" + c.vlan, "VLAN " + c.vlan);
+    if (ssid) nets.set("s:" + ssid, "Wi-Fi " + ssid);
+    if (c.device) devs.set(c.device, c.device);
+  }
+  const srt = (m) => [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], "cs", { numeric: true }));
+  fill("cl-f-net", "Všechny sítě", srt(nets));
+  fill("cl-f-dev", "Všechna zařízení", srt(devs));
+}
+$("cl-f-net").addEventListener("change", () => renderClients());
+$("cl-f-dev").addEventListener("change", () => renderClients());
 
 function isNew(c) {
   return c.first_seen && Date.now() - new Date(c.first_seen).getTime() < 24 * 3600 * 1000;
@@ -1163,34 +1321,65 @@ function clientMenu(c) {
   ];
 }
 
+// síla signálu: čtyři dílky jako na telefonu
+function signalBars(dbm) {
+  const v = Number(dbm), lvl = !isFinite(v) ? 0 : v >= -60 ? 4 : v >= -67 ? 3 : v >= -75 ? 2 : 1;
+  const w = el("span", null, "sig sig-" + lvl);
+  for (let i = 1; i <= 4; i++) w.appendChild(el("i", null, i <= lvl ? "on" : ""));
+  w.title = `${dbm} dBm`;
+  return w;
+}
+
 function renderClients() {
   const q = $("clients-filter").value.trim().toLowerCase();
+  const net = $("cl-f-net").value, dev = $("cl-f-dev").value;
   const tb = $("clients");
   tb.textContent = "";
-  const list = clientsCache.filter((c) => !q || [c.label, c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, c.wifi && c.wifi.ssid, c.ssid,
-    c.vendor, c.note]
-    .some((v) => v && String(v).toLowerCase().includes(q)));
+  const list = clientsCache.filter((c) => {
+    const wifi = clIsWifi(c), ssid = c.wifi ? c.wifi.ssid : c.ssid;
+    if (clView.kind === "wifi" && !wifi) return false;
+    if (clView.kind === "wired" && wifi) return false;
+    if (dev && c.device !== dev) return false;
+    if (net && !(net === "v:" + c.vlan || net === "s:" + ssid)) return false;
+    return !q || [c.label, c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, ssid, c.vendor, c.note]
+      .some((v) => v && String(v).toLowerCase().includes(q));
+  });
+  const nWifi = list.filter(clIsWifi).length;
+  $("cl-count").textContent = `${list.length}${list.length !== clientsCache.length ? ` z ${clientsCache.length}` : ""}` +
+    (clView.kind === "all" && list.length ? ` · ${nWifi} Wi-Fi · ${list.length - nWifi} kabel` : "");
   for (const c of list.slice(0, 1000)) {
     const tr = el("tr", null, "clickable" + (c.online === false ? " muted" : ""));
     const ssid = c.wifi ? c.wifi.ssid : c.ssid, signal = c.wifi ? c.wifi.signal : c.signal;
-    const wifi = ssid || signal ? `${ssid || ""} ${signal ? signal + " dBm" : ""}` : "";
     const av = el("td", null, "cav-td"); av.appendChild(clientAvatar(c));
     const name = el("td");
     name.appendChild(el("b", clientName(c)));
     if (isNew(c)) name.appendChild(el("span", " nový", "badge"));
     if (c.label && c.hostname && c.label !== c.hostname) name.appendChild(el("div", c.hostname, "muted small"));
     if (c.note) name.appendChild(el("div", c.note, "muted small"));
+    // připojení: Wi-Fi = AP a síť, kabel = switch a port
+    const conn = el("td");
+    const wifi = clIsWifi(c);
+    conn.appendChild(el("span", wifi ? "Wi-Fi" : "Kabel", "cl-kind " + (wifi ? "wifi" : "wired")));
+    conn.appendChild(document.createTextNode(" " + (c.device || "?")));
+    conn.appendChild(el("div", wifi ? (ssid || "") : (c.port || "") + (c.uncertain ? " ?" : ""), "muted small"));
+    const sig = el("td");
+    if (signal) { sig.appendChild(signalBars(signal)); sig.appendChild(el("span", ` ${signal} dBm`, "muted small")); }
     const macTd = el("td", c.mac, "mono");
     if (c.vendor) macTd.appendChild(el("div", c.vendor, "muted small"));
     const more = el("td"); more.appendChild(moreButton(clientName(c), () => clientMenu(c)));
-    tr.append(av, name, el("td", c.ip || ""), macTd, el("td", c.device || "?"),
-              el("td", (c.port || "") + (c.uncertain ? " ?" : "")), el("td", c.vlan || ""), el("td", wifi),
-              el("td", c.first_seen ? fmtTime(c.first_seen) : "–"), el("td", c.online ? "teď" : fmtTime(c.last_seen)), more);
+    const last = clView.at ? (c.ended_at ? `do ${clClock(c.ended_at)}` : "stále připojen") : c.online ? "teď" : fmtTime(c.last_seen);
+    tr.append(av, name, conn, el("td", c.ip || ""), el("td", c.vlan ? `VLAN ${c.vlan}` : ""), sig, macTd,
+              el("td", c.first_seen ? fmtTime(c.first_seen) : "–"), el("td", last), more);
     tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "BUTTON") openClient(c); });
     withCtx(tr, clientName(c), () => clientMenu(c));
     tb.appendChild(tr);
   }
-  if (!list.length) { const tr = el("tr"); const td = el("td", "Žádní klienti (inventura klientů běží každých 5 min)", "muted"); td.colSpan = 11; tr.appendChild(td); tb.appendChild(tr); }
+  if (!list.length) {
+    const tr = el("tr");
+    const td = el("td", clientsCache.length ? "Filtru nic neodpovídá" : clView.at ? "V tu dobu nebyl připojený žádný klient (nebo se historie ještě nezaznamenávala)"
+      : "Žádní klienti (inventura klientů běží každých 5 min)", "muted");
+    td.colSpan = 10; tr.appendChild(td); tb.appendChild(tr);
+  }
 }
 
 // --- editor klienta ---

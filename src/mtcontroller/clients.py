@@ -17,6 +17,7 @@ from .db import Database, operator_scope, tenant_scope
 # sekce inventury, které korelace potřebuje (worker nenačítá zbytek)
 SECTIONS = ["interfaces", "neighbors", "dhcp_leases", "arp", "bridge_hosts", "wifi_clients", "wireless_clients"]
 RETENTION_DAYS = 90
+SESSION_STALE_MIN = 20  # relace nepotvrzená déle (worker stál, lokalita offline) končí posledním potvrzením
 
 
 def _rows(inv: dict, key: str) -> list[dict]:
@@ -181,12 +182,72 @@ def record(db: Database) -> int:
                     if present(c) and re.fullmatch(r"[0-9A-F]{2}(:[0-9A-F]{2}){5}", c["mac"])]
             if rows:
                 tx.execute(_UPSERT, {"t": str(s["tenant_id"]), "s": str(s["site_id"]), "rows": rows})
+            _sessions(tx, s["tenant_id"], s["site_id"], rows)
             n += len(rows)
+    with operator_scope(db) as tx:
+        # lokality, které se přestaly hlásit: relace končí, kdy byly naposledy potvrzené
+        tx.execute("""UPDATE client_session SET ended_at = seen_at
+                      WHERE ended_at IS NULL AND seen_at < now() - make_interval(mins => %(m)s)""", {"m": SESSION_STALE_MIN})
     return n
+
+
+def _sessions(tx, tenant_id: Any, site_id: Any, rows: list[dict]) -> None:
+    """Relace klientů lokality: přítomným otevřít / potvrdit, ostatním ukončit."""
+    macs = ",".join(r["mac"] for r in rows)
+    # worker stál déle než SESSION_STALE_MIN → staré relace skončily tehdy, ne teď
+    tx.execute("""UPDATE client_session SET ended_at = seen_at WHERE site_id = %(s)s AND ended_at IS NULL
+                  AND seen_at < now() - make_interval(mins => %(m)s)""", {"s": str(site_id), "m": SESSION_STALE_MIN})
+    tx.execute("""UPDATE client_session SET ended_at = now() WHERE site_id = %(s)s AND ended_at IS NULL
+                  AND NOT (mac = ANY(string_to_array(%(macs)s, ',')))""", {"s": str(site_id), "macs": macs})
+    if not rows:
+        return
+    tx.execute("""UPDATE client_session SET seen_at = now() WHERE site_id = %(s)s AND ended_at IS NULL
+                  AND mac = ANY(string_to_array(%(macs)s, ','))""", {"s": str(site_id), "macs": macs})
+    tx.execute(
+        """INSERT INTO client_session (tenant_id, site_id, mac, wifi, device, port, ssid, vlan)
+           SELECT %(t)s, %(s)s, x.mac, x.ssid IS NOT NULL OR x.signal IS NOT NULL, x.device, x.port, x.ssid, x.vlan
+           FROM jsonb_to_recordset(%(rows)s) AS x(mac text, device text, port text, vlan text, ssid text, signal text)
+           WHERE NOT EXISTS (SELECT 1 FROM client_session o WHERE o.site_id = %(s)s AND o.mac = x.mac AND o.ended_at IS NULL)""",
+        {"t": str(tenant_id), "s": str(site_id), "rows": rows})
+
+
+def timeline(tx, site_id: Any, hours: int = 24, now: Any = None) -> dict:
+    """Počet připojených klientů v čase: {from, to, step_min, points: [{t, total, wifi}]}."""
+    import datetime as dt
+
+    hours = max(1, min(24 * RETENTION_DAYS, int(hours)))
+    step = 5 if hours <= 6 else 15 if hours <= 24 else 60 if hours <= 24 * 7 else 240
+    now = now or dt.datetime.now(dt.timezone.utc)
+    end = now.replace(second=0, microsecond=0)
+    end -= dt.timedelta(minutes=end.minute % (step if step < 60 else 60))
+    if step > 60:
+        end -= dt.timedelta(hours=end.hour % (step // 60))
+    start = end - dt.timedelta(hours=hours)
+    rows = tx.fetchall(
+        """SELECT g AS t, count(s.mac) AS total, count(s.mac) FILTER (WHERE s.wifi) AS wifi
+           FROM generate_series(%(a)s::timestamptz, %(b)s::timestamptz, make_interval(mins => %(step)s)) g
+           LEFT JOIN client_session s ON s.site_id = %(s)s AND s.started_at <= g
+                AND (s.ended_at IS NULL OR s.ended_at > g)
+           GROUP BY g ORDER BY g""", {"a": start, "b": end, "step": step, "s": str(site_id)})
+    first = tx.fetchone("SELECT min(started_at) AS t FROM client_session WHERE site_id = %(s)s", {"s": str(site_id)})
+    return {"from": start, "to": end, "step_min": step, "since": first["t"] if first else None,
+            "points": [{"t": r["t"], "total": r["total"], "wifi": r["wifi"]} for r in rows]}
+
+
+def at(tx, site_id: Any, when: Any) -> list[dict]:
+    """Klienti připojení v daný okamžik (podle relací), s údaji z historie klientů."""
+    return tx.fetchall(
+        """SELECT s.mac, c.ip, c.hostname, c.device_id, s.device, s.port, s.vlan, s.ssid, NULL AS signal,
+                  c.first_seen, c.last_seen, s.wifi AS was_wifi, s.started_at, s.ended_at,
+                  s.ended_at IS NULL AS online
+           FROM client_session s LEFT JOIN client c ON c.site_id = s.site_id AND c.mac = s.mac
+           WHERE s.site_id = %(s)s AND s.started_at <= %(w)s AND (s.ended_at IS NULL OR s.ended_at > %(w)s)
+           ORDER BY s.device NULLS LAST, s.port, s.mac LIMIT 5000""", {"s": str(site_id), "w": when})
 
 
 def purge(db: Database, days: int = RETENTION_DAYS) -> int:
     with operator_scope(db) as tx:
+        tx.execute("DELETE FROM client_session WHERE ended_at < now() - make_interval(days => %(d)s)", {"d": days})
         return tx.execute("DELETE FROM client WHERE last_seen < now() - make_interval(days => %(d)s)", {"d": days})
 
 

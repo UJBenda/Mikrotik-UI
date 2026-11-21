@@ -964,9 +964,22 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
     sid = _uuid(request.path_params["site_id"])
 
     history = request.query_params.get("history") == "1"
+    when = None
+    if request.query_params.get("at"):
+        import datetime as dt
+
+        try:
+            when = dt.datetime.fromisoformat(str(request.query_params["at"]).replace("Z", "+00:00"))
+        except ValueError:
+            return _err(400, "neplatný čas")
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=dt.timezone.utc)
 
     def q():
         with tenant_scope(st.db, tid) as tx:
+            if when is not None:
+                # stav v daný okamžik (podle relací klientů)
+                return clientmeta.annotate(tx, [dict(r) for r in clients.at(tx, sid, when)])
             if history:
                 return clientmeta.annotate(tx, [dict(r) for r in clients.history(
                     tx, sid, _int(request.query_params.get("days"), 30, 1, 90))])
@@ -983,6 +996,22 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
             c["last_seen"] = h["last_seen"] if h else None
             c["online"] = True
         return out
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def site_clients_timeline(request: Request, p: Principal, tid: str) -> Response:
+    """Počet připojených klientů v čase (celkem a Wi-Fi) – podklad pro posun v čase."""
+    from .. import clients
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    hours = _int(request.query_params.get("hours"), 24, 1, 24 * 90)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return clients.timeline(tx, sid, hours)
 
     return json_response(await run_in_threadpool(q))
 
@@ -1829,6 +1858,7 @@ def routes() -> list[Route]:
         Route(T + "/factory-passwords/{serial}", factory_password_delete, methods=["DELETE"]),
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
+        Route(s + "/clients/timeline", site_clients_timeline, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),
