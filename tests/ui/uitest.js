@@ -125,7 +125,23 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["nav-activity"].fire("click");
     if (byId["view-activity"].hidden || !byId["view-dash"].hidden || byId["nav-activity"].className !== "navbtn active") errors.push("navigace: přepnutí na aktivitu");
     if (byId["nav-activity"].children[1].textContent !== "6") errors.push("navigace: odznak aktivity " + byId["nav-activity"].children[1].textContent);
-    if (byId["alerts-wrap"].hidden || !byId["plans-wrap"].hidden) errors.push("aktivita: výchozí podzáložka");
+    // výchozí podzáložka aktivity je časová osa: graf, dny, řádky; hledání a přechod na alerty
+    const tlTick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+    await tlTick();
+    if (byId["tl-wrap"].hidden || !byId["alerts-wrap"].hidden) errors.push("aktivita: výchozí podzáložka");
+    if (byId["tl-chart"].children.length !== 48) errors.push("časová osa: graf " + byId["tl-chart"].children.length);
+    {
+      const rows = byId["tl-list"].children.filter((x) => x.className.startsWith("tl-row"));
+      const days = byId["tl-list"].children.filter((x) => x.tagName === "H4");
+      if (rows.length !== 9 || days.length !== 2) errors.push(`časová osa: ${rows.length} řádků, ${days.length} dnů`);
+      if (!rows[4].className.includes("tl-s-critical") || !rows[4].textContent.includes("neozývá")) errors.push("časová osa: alert");
+      if (!rows[5].textContent.includes("tiskarna se odpojil")) errors.push("časová osa: klient " + rows[5].textContent);
+      byId["tl-q"].value = "ether2"; await byId["tl-q"].fire("input");
+      if (byId["tl-list"].children.filter((x) => x.className.startsWith("tl-row")).length !== 3) errors.push("časová osa: hledání");
+      byId["tl-q"].value = ""; await byId["tl-q"].fire("input");
+    }
+    await byId["alerts-btn"].fire("click"); await tlTick();
+    if (byId["alerts-wrap"].hidden || !byId["plans-wrap"].hidden) errors.push("aktivita: podzáložka alerty");
     await byId["plans-btn"].fire("click");
     if (byId["plans-wrap"].hidden || !byId["alerts-wrap"].hidden) errors.push("aktivita: přepnutí na změny");
     await byId["alerts-btn"].fire("click");

@@ -434,12 +434,26 @@
           <div class="site-head">
             <h2>Aktivita a audit</h2>
             <div id="act-tabs" class="seg">
+              <button id="tl-btn" type="button">Časová osa</button>
               <button id="alerts-btn" type="button">Alerty</button>
               <button id="plans-btn" type="button">Změny</button>
               <button id="audit-btn" type="button">Audit</button>
             </div>
           </div>
-          <div id="alerts-wrap" class="pane">
+          <div id="tl-wrap" class="pane">
+            <div class="tl-bar">
+              <div id="tl-range" class="seg"></div>
+              <select id="tl-device" aria-label="Zařízení"></select>
+              <input id="tl-q" type="search" placeholder="Hledat v událostech…" aria-label="Hledat v událostech">
+              <button id="tl-refresh" type="button" class="small secondary">Obnovit</button>
+              <span id="tl-chips" class="tl-chips"></span>
+            </div>
+            <div id="tl-cats" class="tl-cats"></div>
+            <div id="tl-chart" class="tl-chart" role="img" aria-label="Počet událostí v čase"></div>
+            <div class="tl-axis"><span id="tl-from"></span><span id="tl-info" class="muted"></span><span id="tl-to"></span></div>
+            <div id="tl-list" class="tl-list"></div>
+          </div>
+          <div id="alerts-wrap" class="pane" hidden>
       <h3>Alerty <span id="alerts-count" class="badge"></span>
         <button id="alerts-refresh" type="button" class="small secondary">Obnovit</button>
         <button id="maint-btn" type="button" class="small secondary"
@@ -591,6 +605,7 @@
     <div class="dd-head">
       <h2 id="d-title"></h2>
       <span class="grow"></span>
+      <button id="d-timeline" type="button" class="small secondary" title="Co se na zařízení dělo – události na časové ose">Časová osa</button>
       <button id="d-backup" type="button" class="small secondary">Zálohovat teď</button>
       <button id="d-upgrade" type="button" class="small primary" hidden></button>
       <button id="d-firmware" type="button" class="small secondary" hidden></button>
@@ -1015,6 +1030,7 @@
         <p id="cl-addr" class="small"></p>
         <div class="intent-acts">
           <button id="cl-fix" type="button" class="small">Pevná IP (rezervace)</button>
+          <button id="cl-timeline" type="button" class="small secondary" title="Připojení, odpojení a roaming klienta na časové ose">Časová osa</button>
           <button id="cl-dhcp" type="button" class="small secondary">DHCP options a další…</button>
         </div>
         <p id="cl-fix-res" class="muted small"></p>

@@ -2289,7 +2289,7 @@ const SUBTABS = {
   settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
-  activity: [["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
+  activity: [["tl", "tl-btn", "tl-wrap", () => loadTimeline()], ["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
              ["audit", "audit-btn", "audit-wrap", () => loadAudit()]],
 };
 function subOf(view) {
@@ -2339,6 +2339,7 @@ const GS_PLACES = [
   [__("Profily portů"), __("Nastavení"), "profily portu trunk access port profiles", "settings", "prof"],
   [__("Aktualizace RouterOS a firmware"), __("Nastavení"), "aktualizace upgrade update routerboot firmware automaticke", "settings", "sys"],
   [__("Přidat zařízení, výchozí konfigurace, NTP"), __("Nastavení"), "adopce pridat netinstall vychozi konfigurace ntp cas adopt defaults time", "settings", "sys"],
+  [__("Časová osa"), __("Aktivita"), "casova osa timeline udalosti historie co se stalo vypadek events", "activity", "tl"],
   [__("Alerty"), __("Aktivita"), "alerty upozorneni problemy alerts servisni okno maintenance", "activity", "alerts"],
   [__("Změny (plány ke schválení)"), __("Aktivita"), "zmeny plany schvaleni prevzeti changes plans approve", "activity", "plans"],
   [__("Audit"), __("Aktivita"), "audit log kdo co historie", "activity", "audit"],
@@ -2403,6 +2404,138 @@ $("gs-in").addEventListener("keydown", (e) => {
 });
 if (typeof document.addEventListener === "function") document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "k" && !$("gs").hidden) { e.preventDefault(); $("gs-in").focus(); $("gs-in").select(); }
+});
+
+// --- časová osa lokality: všechny události na jedné ose (hledání příčiny problému) ------------------------
+
+const TL_CATS = [["alert", __("Alerty")], ["port", __("Porty")], ["client", __("Klienti")], ["wifi", "Wi-Fi"],
+                 ["change", __("Změny konfigurace")], ["audit", __("Zásahy správce")]];
+const TL_RANGES = [[1, __("1 h")], [6, __("6 h")], [24, __("24 h")], [168, __("7 dní")], [720, __("30 dní")]];
+const tl = { hours: 24, until: null, minutes: null, cats: new Set(TL_CATS.map((c) => c[0])), device: "", mac: "", macName: "", q: "", data: null };
+
+function tlText(e) {
+  const dev = e.device || "";
+  if (e.cat === "alert") return (e.kind === "resolved" ? __("pominulo: ") : "") + (e.text || e.a || "");
+  if (e.cat === "port") return `${e.port}: ${e.text || ""}`;
+  if (e.cat === "client") {
+    const where = [e.via, e.port].filter(Boolean).join(" · ");
+    return (e.kind === "connected" ? __`${e.client} se připojil` : __`${e.client} se odpojil`) + (where ? ` – ${where}` : "");
+  }
+  if (e.cat === "wifi") return e.kind === "roamed" ? __`${e.client} přešel na ${dev}` + (e.a ? ` (${e.a} dBm)` : "")
+    : __`${e.client}: neúspěšné přihlášení k Wi-Fi` + (e.text ? ` (${e.text})` : "");
+  if (e.cat === "change") return (e.kind === "applied" ? __("změna provedena: ") : e.kind === "failed" ? __("změna selhala: ") : __("změna vrácena zpět: ")) + (e.text || "");
+  return `${e.user || ""}: ${e.kind}`;
+}
+
+async function loadTimeline() {
+  if (!tenantId || !siteId()) return;
+  const qs = [tl.minutes ? "minutes=" + tl.minutes : "hours=" + tl.hours];
+  if (tl.until) qs.push("until=" + encodeURIComponent(tl.until));
+  if (tl.cats.size < TL_CATS.length) qs.push("cats=" + ([...tl.cats].join(",") || "none"));
+  if (tl.device) qs.push("device=" + encodeURIComponent(tl.device));
+  if (tl.mac) qs.push("mac=" + encodeURIComponent(tl.mac));
+  try { tl.data = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/timeline?${qs.join("&")}`); }
+  catch (e) { return msg(e.message, true); }
+  renderTimeline();
+}
+
+function tlZoom(untilIso, minutes) { tl.until = untilIso; tl.minutes = minutes; loadTimeline(); }
+
+function renderTimeline() {
+  const d = tl.data; if (!d) return;
+  segmented($("tl-range"), TL_RANGES, tl.minutes ? null : tl.hours, (h) => { tl.hours = h; tl.minutes = null; tl.until = null; loadTimeline(); });
+  // zařízení
+  const ds = $("tl-device"); ds.textContent = "";
+  const all = el("option", __("všechna zařízení")); all.value = ""; ds.appendChild(all);
+  for (const x of d.devices) { const o = el("option", x.name); o.value = x.id; ds.appendChild(o); }
+  ds.value = tl.device;
+  // kategorie
+  const cb = $("tl-cats"); cb.textContent = "";
+  for (const [k, label] of TL_CATS) {
+    const b = el("button", label, "tl-cat tl-c-" + k + (tl.cats.has(k) ? " on" : "")); b.type = "button";
+    b.setAttribute("aria-pressed", tl.cats.has(k) ? "true" : "false");
+    b.addEventListener("click", () => { if (tl.cats.has(k)) tl.cats.delete(k); else tl.cats.add(k); loadTimeline(); });
+    cb.appendChild(b);
+  }
+  // štítky aktivních omezení (klient, výběr času)
+  const chips = $("tl-chips"); chips.textContent = "";
+  const chip = (text, off) => { const b = el("button", text + " ×", "tl-chip"); b.type = "button"; b.addEventListener("click", off); chips.appendChild(b); };
+  if (tl.mac) chip(__`klient ${tl.macName || tl.mac}`, () => { tl.mac = ""; tl.macName = ""; loadTimeline(); });
+  if (tl.minutes) chip(__("vybraný úsek"), () => { tl.minutes = null; tl.until = null; loadTimeline(); });
+  // graf: sloupec = úsek času, výška = počet událostí, barva = nejhorší závažnost; klik přiblíží
+  const ch = $("tl-chart"); ch.textContent = "";
+  const max = Math.max(1, ...d.buckets.map((b) => b.n));
+  const stepMin = Math.max(1, Math.round(d.step_seconds / 60));
+  d.buckets.forEach((b, i) => {
+    const col = el("button", null, "tl-col tl-s-" + b.sev + (b.n ? "" : " empty")); col.type = "button";
+    const bar = el("span"); bar.style.height = (b.n ? Math.max(8, Math.round(100 * b.n / max)) : 2) + "%"; col.appendChild(bar);
+    const t0 = new Date(b.at), t1 = new Date(t0.getTime() + d.step_seconds * 1000);
+    col.title = `${fmtTime(b.at)} – ${t1.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })}: ${b.n}`;
+    col.disabled = !b.n || stepMin <= 2;
+    col.addEventListener("click", () => tlZoom(t1.toISOString(), Math.max(2, stepMin)));
+    ch.appendChild(col);
+  });
+  $("tl-from").textContent = fmtTime(d.since); $("tl-to").textContent = fmtTime(d.until);
+  // seznam po dnech
+  const q = gsNorm(tl.q).trim();
+  const list = $("tl-list"); list.textContent = "";
+  let day = "", shown = 0;
+  for (const e of d.events) {
+    const text = tlText(e);
+    if (q && !gsNorm([text, e.device, e.client, e.mac, e.port, e.user].join(" ")).includes(q)) continue;
+    const at = new Date(e.at), dkey = at.toLocaleDateString(LOCALE, { weekday: "long", day: "numeric", month: "long" });
+    if (dkey !== day) { day = dkey; list.appendChild(el("h4", dkey, "tl-day")); }
+    const row = el("div", null, "tl-row tl-s-" + e.sev);
+    row.append(el("time", at.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit", second: "2-digit" })), el("span", "", "tl-dot"));
+    row.appendChild(el("span", (TL_CATS.find((c) => c[0] === e.cat) || [0, e.cat])[1], "tl-tag tl-c-" + e.cat));
+    const body = el("span", null, "tl-body");
+    if (e.device_id && e.cat !== "wifi") {
+      const a = el("a", e.device); a.href = "#"; a.title = __("Otevřít zařízení");
+      a.addEventListener("click", (ev) => { ev.preventDefault(); openDetail(e.device_id); });
+      body.append(a, document.createTextNode(" · "));
+    }
+    body.appendChild(document.createTextNode(text));
+    if (e.user && e.cat === "change") body.appendChild(el("small", " – " + e.user, "muted"));
+    row.appendChild(body);
+    const acts = el("span", null, "tl-acts");
+    if (e.mac && !tl.mac) {
+      const b = el("button", __("jen klient"), "small secondary"); b.type = "button"; b.title = __("Ukázat jen události tohoto klienta");
+      b.addEventListener("click", () => { tl.mac = e.mac; tl.macName = e.client || e.mac; loadTimeline(); });
+      acts.appendChild(b);
+    }
+    const around = el("button", __("okolí ±5 min"), "small secondary"); around.type = "button";
+    around.title = __("Co všechno se dělo 5 minut před a po – napříč zařízeními i klienty");
+    around.addEventListener("click", () => {
+      tl.device = ""; tl.mac = ""; tl.macName = ""; tl.q = ""; $("tl-q").value = ""; tl.cats = new Set(TL_CATS.map((c) => c[0]));
+      tlZoom(new Date(at.getTime() + 5 * 60000).toISOString(), 10);
+    });
+    acts.appendChild(around);
+    row.appendChild(acts);
+    list.appendChild(row);
+    shown++;
+  }
+  if (!shown) list.appendChild(el("p", __("V tomto úseku se nic nestalo."), "muted"));
+  $("tl-info").textContent = d.total > d.events.length ? __`zobrazeno posledních ${d.events.length} z ${d.total} událostí – zpřesni filtr nebo klikni na sloupec`
+    : __`${shown} událostí`;
+}
+
+$("tl-device").addEventListener("change", () => { tl.device = $("tl-device").value; loadTimeline(); });
+$("tl-q").addEventListener("input", () => { tl.q = $("tl-q").value; renderTimeline(); });
+$("tl-refresh").addEventListener("click", () => { if (!tl.minutes) tl.until = null; loadTimeline(); });
+// z detailu zařízení: časová osa jen pro toto zařízení
+function openTimelineFor(deviceId) {
+  tl.device = deviceId || ""; tl.mac = ""; tl.macName = ""; tl.minutes = null; tl.until = null;
+  if (!$("detail").hidden) closeDetail();
+  if ($("app").hidden) show("app");
+  openSub("activity", "tl");
+}
+$("d-timeline").addEventListener("click", () => openTimelineFor(detailId));
+$("cl-timeline").addEventListener("click", () => {
+  const c = clEdit && clEdit.c; if (!c) return;
+  $("cl-dlg").hidden = true;
+  openTimelineFor("");
+  tl.mac = c.mac; tl.macName = clientName(c); tl.hours = Math.max(tl.hours, 168);
+  loadTimeline();
 });
 
 let plansOpen = 0, alertsOpen = [0, 0];

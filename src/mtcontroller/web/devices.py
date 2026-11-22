@@ -1017,6 +1017,43 @@ async def site_clients_timeline(request: Request, p: Principal, tid: str) -> Res
 
 
 @endpoint(READ)
+async def site_timeline(request: Request, p: Principal, tid: str) -> Response:
+    """Časová osa lokality: alerty, porty, klienti, Wi-Fi, změny a zásahy na jedné ose."""
+    import datetime as dt
+    import re
+
+    from .. import timeline
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    qp = request.query_params
+    hours = _int(qp.get("hours"), 24, 1, timeline.MAX_HOURS)
+    until = None
+    if qp.get("until"):
+        try:
+            until = dt.datetime.fromisoformat(str(qp["until"]).replace("Z", "+00:00"))
+        except ValueError:
+            raise ServiceError("until: čas ve tvaru ISO 8601") from None
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=dt.timezone.utc)
+    minutes = _int(qp.get("minutes"), 0, 0, timeline.MAX_HOURS * 60)
+    cats = {c for c in str(qp.get("cats") or "").split(",") if c} or None
+    device = _uuid(qp["device"]) if qp.get("device") else None
+    mac = str(qp.get("mac") or "").upper() or None
+    if mac and not re.fullmatch(r"[0-9A-F]{2}(:[0-9A-F]{2}){5}", mac):
+        raise ServiceError("mac: neplatná adresa")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            return timeline.events(tx, sid, hours=hours, minutes=minutes or None, until=until, cats=cats,
+                                   device_id=device, mac=mac)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
 async def client_search(request: Request, p: Principal, tid: str) -> Response:
     """Hledání klienta ve všech lokalitách tenanta (historie, MAC/IP/jméno)."""
     from .. import clients
@@ -1908,6 +1945,7 @@ def routes() -> list[Route]:
         Route(s + "/plans/{module}", generate_plans, methods=["POST"]),
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients/timeline", site_clients_timeline, methods=["GET"]),
+        Route(s + "/timeline", site_timeline, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),

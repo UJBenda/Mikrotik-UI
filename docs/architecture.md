@@ -1254,3 +1254,18 @@ Navíc má model část `gw` (`gwcfg.py`):
 Rozhraní: detail zařízení má záložku **Řízení** (obecné údaje, převzetí, výjimky, brána) místo sbaleného
 bloku v Přehledu; nastavení lokality má sekce vlevo pod sebou; v záhlaví je rychlé hledání (Ctrl+K) přes
 sekce i zařízení.
+
+## Časová osa lokality (etapa 11)
+
+`timeline.py` skládá na jednu osu události, které controller už sbírá (nic nového se neukládá): alerty
+(vznik / pominutí), `port_event` (linka, rychlost, PoE, soused, smyčka), `client_session` (připojení /
+odpojení klienta), `wifi_event` (roaming, neúspěšné přihlášení), `config_plan` (provedeno / selhalo /
+vráceno) a zásahy člověka z auditu (cíl `site:` / `device:` lokality; bez přihlášení a plánů).
+API `GET …/sites/{id}/timeline?hours=|minutes=&until=&cats=&device=&mac=` vrací události od nejnovější
+(nejvýš 500) a 48 úseků pro graf (počet + nejhorší závažnost) počítaných ze všech událostí okna.
+
+UI: Aktivita → Časová osa (výchozí podzáložka). Graf nad seznamem – klik na sloupec přiblíží úsek;
+filtry kategorie, zařízení, klient, hledání v textu; u každé události „okolí ±5 min“ = všechno, co se
+dělo kolem, napříč zařízeními a klienty (hledání příčiny). Vstup i z detailu zařízení a klienta
+(tlačítko Časová osa). Texty událostí portů a alertů generuje server (zatím jen česky), akce auditu se
+zobrazují kódem.
