@@ -627,10 +627,40 @@ def _revert_source(reverted_url: str, auth_header: str, check_certificate: str, 
             f"/system backup load name=($p . {q(BACKUP_NAME + '.backup')}) password={q(backup_password)}\n")
 
 
+# Volné místo pro převzetí: záloha (.backup) + bootstrap. Na 16MB flash (hAP ac², cAP ac, starší CRS/hEX)
+# bývá volných jen 1–3 MB a RouterOS při plném disku zapíše uříznutý soubor bez chyby – návrat ze zálohy
+# by pak nefungoval. Controller proto převzetí nepustí (inventura), zařízení si místo ověří znovu
+# před zálohou a po zapsání obou souborů.
+TAKEOVER_MIN_FREE = 1024 * 1024       # inventura: aspoň 1 MiB
+DEVICE_MIN_FREE = 512 * 1024          # na zařízení těsně před zálohou
+DEVICE_LEFT_FREE = 64 * 1024          # po zápisu musí zbýt – jinak se disk zaplnil a soubory můžou být neúplné
+
+
+def free_space(inv: dict) -> int | None:
+    """Volné místo na disku zařízení v bajtech (z inventury), None když ho inventura nezná."""
+    r = inv.get("resource")
+    r = r[0] if isinstance(r, list) and r else r
+    try:
+        return int((r or {}).get("free-hdd-space"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def space_blocker(inv: dict, need: int = TAKEOVER_MIN_FREE, what: str = "převzetí (záloha a bootstrap)") -> str | None:
+    free = free_space(inv)
+    if free is None or free >= need:
+        return None
+    return (f"na zařízení je jen {free / 1048576:.1f} MiB volného místa – {what} potřebuje aspoň "
+            f"{need / 1048576:.1f} MiB; smaž na něm staré soubory (Files) a počkej na novou inventuru")
+
+
 def bootstrap(model: dict, adopt_body: str, checkin_install: str, *, reverted_url: str, auth_header: str,
               check_certificate: str, backup_password: str, secrets: dict | None = None) -> str:
-    """Skript pro `run-after-reset`: počká na porty, nastaví návrat ze zálohy,
+    """Skript pro `run-after-reset`: nejdřív nastaví návrat ze zálohy, pak počká na porty,
     nasadí konfiguraci a znovu založí správu controllerem (tunel, účet, check-in).
+
+    Návrat se zakládá úplně prvními příkazy, mimo hlavní blok: kdyby se zbytek skriptu zasekl,
+    spadl na chybě nebo byl soubor uříznutý, časovač už běží a záloha se obnoví.
 
     Návrat: tik každou minutu; po REVERT_TICKS bez potvrzení (CONFIRM_BODY smaže
     scheduler) se obnoví záloha pořízená těsně před resetem."""
@@ -647,18 +677,17 @@ def bootstrap(model: dict, adopt_body: str, checkin_install: str, *, reverted_ur
     from .routeros import SCRIPT_POLICY
 
     return f"""# MikroTik controller - prevzeti zarizeni (bootstrap po resetu)
+# --- navrat ze zalohy, kdyz controller prevzeti nepotvrdi: prvni prikazy, mimo hlavni blok ---
+/system script add name="mtc-revert" policy={SCRIPT_POLICY} comment="{TAKEOVER_MARK}" source={q_source(revert)}
+/system script add name="mtc-confirm-tick" policy={SCRIPT_POLICY} comment="mtc" source={q_source(tick)}
+:global mtcConfirmTicks 0
+# explicitni start (RouterOS 7.24-7.24.4 nespousti scheduler s vychozim startem; startup by cekal na dalsi boot)
+/system scheduler add name="mtc-confirm" interval=1m start-date=[/system clock get date] start-time=00:00:00 policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run mtc-confirm-tick"
 {{
 :local i 0
 :while ($i < 90 && [:len [/interface ethernet find]] < {n}) do={{ :delay 1s; :set i ($i + 1) }}
 :delay 5s
 :log warning "mtc: bootstrap prevzeti zacina"
-# --- navrat ze zalohy, kdyz controller prevzeti nepotvrdi ---
-/system script add name="mtc-revert" policy={SCRIPT_POLICY} comment="{TAKEOVER_MARK}" source={q_source(revert)}
-/system script add name="mtc-confirm-tick" policy={SCRIPT_POLICY} comment="mtc" source={q_source(tick)}
-:global mtcConfirmTicks
-:set mtcConfirmTicks 0
-# explicitni start (RouterOS 7.24-7.24.4 nespousti scheduler s vychozim startem; startup by cekal na dalsi boot)
-/system scheduler add name="mtc-confirm" interval=1m start-date=[/system clock get date] start-time=00:00:00 policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run mtc-confirm-tick"
 :local ok true
 :do {{
 {config_body(model, secrets).rstrip()}
@@ -688,12 +717,20 @@ def takeover_body(bootstrap_url: str, auth_header: str, check_certificate: str, 
 :if ([:len [/file find name="flash" type="directory"]] > 0) do={{ :set p "flash/" }}
 /file remove [find name=($p . "{BOOT_FILE}")]
 /file remove [find name=($p . "{BACKUP_NAME}.backup")]
+:delay 1s
+:if ([/system resource get free-hdd-space] < {DEVICE_MIN_FREE}) do={{ :error "mtc: malo mista na disku pro zalohu pred prevzetim" }}
 /system backup save name=($p . "{BACKUP_NAME}") password={q(backup_password)}
 :delay 3s
 :if ([:len [/file find name=($p . "{BACKUP_NAME}.backup")]] = 0) do={{ :error "mtc: zaloha pred prevzetim se nevytvorila" }}
 /tool fetch url={q(bootstrap_url)} http-method=post http-header-field={q(auth_header)} dst-path=($p . "{BOOT_FILE}") check-certificate={check_certificate}
 :delay 2s
 :if ([:len [/file find name=($p . "{BOOT_FILE}")]] = 0) do={{ :error "mtc: bootstrap se nestahl" }}
+# plny disk = RouterOS umi zapsat uriznuty soubor bez chyby; bez rezervy se reset nespusti
+:if ([/system resource get free-hdd-space] < {DEVICE_LEFT_FREE}) do={{
+  /file remove [find name=($p . "{BOOT_FILE}")]
+  /file remove [find name=($p . "{BACKUP_NAME}.backup")]
+  :error "mtc: disk je plny - zaloha nebo bootstrap mohou byt neuplne, prevzeti zruseno"
+}}
 :global mtcBoot ($p . "{BOOT_FILE}")
 :log warning "mtc: zaloha a bootstrap pripraveny, nasleduje reset konfigurace"
 """

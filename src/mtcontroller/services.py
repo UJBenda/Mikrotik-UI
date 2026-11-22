@@ -784,9 +784,13 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
             inv = inventory.load(tx, dev["id"], ["packages", "resource", "wifi", "wireless", "wifi_radios"])
             if kind == "upgrade":
                 version = str(cmd["params"].get("version", ""))
-                body = pkgmirror.upgrade_body(version, pkgmirror.upgrade_files(inv, version), base, key, opts.check_certificate)
+                files = pkgmirror.upgrade_files(inv, version)
+                body = pkgmirror.upgrade_body(version, files, base, key, opts.check_certificate,
+                                              need=pkgmirror.files_size(settings.paths.data_dir, files))
                 return routeros.wrap_command(ack_url, key, body, opts, tail=pkgmirror.upgrade_tail(version))
-            return routeros.wrap_command(ack_url, key, pkgmirror.wifi_body(inv, base, key, opts.check_certificate), opts,
+            return routeros.wrap_command(ack_url, key, pkgmirror.wifi_body(
+                inv, base, key, opts.check_certificate,
+                need=pkgmirror.files_size(settings.paths.data_dir, pkgmirror.wifi_files(inv))), opts,
                                          tail=packages_switch_tail())
     if kind == "upgrade":
         version = str(cmd["params"].get("version", ""))

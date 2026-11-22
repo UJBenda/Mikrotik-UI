@@ -1154,7 +1154,11 @@ a:hover { text-decoration: underline; }
 /* mapa lokality: okno s posunem a zoomem, skrývací seznam zařízení */
 .infra.nolist { grid-template-columns: 1fr; }
 .infra-bar .spacer { flex: 1; }
-#infra-list-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+/* úchyt na hraně mezi seznamem zařízení a mapou: skrýt / zobrazit seznam */
+.map-tab { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 22px; height: 64px; padding: 0; border: 1px solid var(--line);
+  border-left: 0; border-radius: 0 10px 10px 0; background: var(--card); color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, .08); }
+.map-tab:hover { color: var(--accent); background: var(--hover); }
 .mapbox { position: relative; overflow: hidden; height: min(74vh, 860px); min-height: 380px; max-height: none; cursor: grab; touch-action: none;
   user-select: none; -webkit-user-select: none; }
 .mapbox.grabbing { cursor: grabbing; }

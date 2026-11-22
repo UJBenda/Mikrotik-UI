@@ -28,6 +28,20 @@ def test_files_urls_and_scripts():
     assert '/api/checkin/pkg/routeros-7.20.5-arm.npk' in b and '"Authorization: Bearer K"' in b and 'flash/' in b
     assert b.isascii() and _balanced("{\n" + b + "}\n")
     assert "/system reboot" in pkgmirror.upgrade_tail("7.20.5")
+    # místo na disku: se známou velikostí balíčků kontrola předem (velikost + rezerva) a po stažení
+    assert "free-hdd-space] < 65536" in b and "potreba" not in b
+    files = pkgmirror.upgrade_files(INV, "7.20.5")
+    dd = Path(tempfile.mkdtemp())
+    assert pkgmirror.files_size(dd, files) is None                      # balíčky u controlleru ještě nejsou
+    pkgmirror.pkg_dir(dd).mkdir(parents=True)
+    for f in files:
+        (pkgmirror.pkg_dir(dd) / f).write_bytes(b"x" * 1048576)
+    need = pkgmirror.files_size(dd, files)
+    assert need == 1048576 * len(files)
+    b2 = pkgmirror.upgrade_body("7.20.5", files, "https://ctl.lan", "K", "yes-without-crl", need=need)
+    assert f"free-hdd-space] < {need + 262144}" in b2 and "malo mista na disku pro balicky" in b2
+    assert b2.index("malo mista") < b2.index("/tool fetch") < b2.index("disk je plny")
+    assert b2.isascii() and _balanced("{\n" + b2 + "}\n")
     # stažení: hotové soubory se nestahují znovu, prázdný soubor se zahodí
     d = Path(tempfile.mkdtemp())
     got = []

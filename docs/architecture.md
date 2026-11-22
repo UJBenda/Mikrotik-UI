@@ -1287,3 +1287,16 @@ sousedů). Od brány: uplink zařízení = port, kde vidí bránu; rodič = zař
 svém uplink portu a má za tím portem nejméně zařízení. Dá správně kaskádu (switch → spoj → switch → AP)
 i bez discovery a s neúplnými tabulkami; porty jsou známé na obou koncích spoje. Jméno VLAN rozhraní nebo
 bridge se jako port neukáže (port „?“). Bez brány v lokalitě zůstává původní párové porovnání sousedů.
+
+## Místo na disku a pořadí návratu při převzetí (etapa 13)
+
+Na 16MB flash bývá volných 1–3 MB a RouterOS při plném disku zapíše uříznutý soubor bez chyby. Proto:
+controller převzetí nepustí, když inventura hlásí méně než 1 MiB volného místa (`switchcfg.space_blocker`);
+zařízení si před zálohou ověří 512 KiB a po zapsání zálohy i bootstrapu musí zbýt 64 KiB, jinak oba soubory
+smaže a reset se nespustí. Stejná dvojí kontrola je u balíčků stahovaných z controlleru (`pkgmirror`,
+velikost balíčků + 256 KiB předem, 64 KiB po stažení). Aktualizace přes `/system package update` se
+neblokuje – tam si místo řeší RouterOS sám.
+
+Bootstrap po resetu zakládá `mtc-revert`, `mtc-confirm-tick` a časovač `mtc-confirm` úplně prvními příkazy,
+mimo hlavní blok `{ }` a bez lokálních proměnných – dřív než čekání na porty. Zaseknutý, chybný nebo
+uříznutý zbytek skriptu tak návrat ze zálohy nezastaví.

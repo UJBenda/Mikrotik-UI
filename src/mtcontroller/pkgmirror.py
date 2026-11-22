@@ -206,8 +206,31 @@ def fill_update(db: Database, settings, device_id: Any, data: dict) -> None:
 
 # --- skripty pro zařízení ------------------------------------------------------------------------------------
 
-def _fetch_lines(files: list[str], base: str, key: str, check_certificate: str) -> list[str]:
+SPACE_MARGIN = 256 * 1024     # rezerva nad velikost balíčků
+SPACE_LEFT = 64 * 1024        # po stažení musí zbýt – jinak se disk zaplnil a balíček může být neúplný
+
+
+def files_size(data_dir: Path, files: list[str]) -> int | None:
+    """Součet velikostí balíčků u controlleru; None, když některý chybí (velikost neznámá)."""
+    total = 0
+    for f in files:
+        try:
+            total += (pkg_dir(Path(data_dir)) / f).stat().st_size
+        except OSError:
+            return None
+    return total
+
+
+def _fetch_lines(files: list[str], base: str, key: str, check_certificate: str, need: int | None = None) -> list[str]:
+    """Stažení balíčků z controlleru. `need` = jejich velikost: zařízení si předem ověří místo (plný disk
+    umí RouterOS „vyřešit“ uříznutým souborem bez chyby) a po stažení, že nějaké zbylo."""
     lines = [':local p ""', ':if ([:len [/file find name="flash" type="directory"]] > 0) do={ :set p "flash/" }']
+    for f in files:
+        lines.append(f"/file remove [find name=($p . {q(f)})]")
+    if need:
+        mib = f"{(need + SPACE_MARGIN) / 1048576:.1f}"
+        lines.append(f":if ([/system resource get free-hdd-space] < {need + SPACE_MARGIN}) do={{ "
+                     f':error "mtc: malo mista na disku pro balicky (potreba {mib} MiB)" }}')
     for f in files:
         lines.append(f"/tool fetch url={q(base + '/api/checkin/pkg/' + f)} "
                      f"http-header-field={q('Authorization: Bearer ' + key)} dst-path=($p . {q(f)}) "
@@ -215,17 +238,23 @@ def _fetch_lines(files: list[str], base: str, key: str, check_certificate: str) 
     lines.append(":delay 2s")
     for f in files:
         lines.append(f':if ([:len [/file find name=($p . {q(f)})]] = 0) do={{ :error "mtc: balicek se nestahl" }}')
+    lines.append(f":if ([/system resource get free-hdd-space] < {SPACE_LEFT}) do={{")
+    for f in files:
+        lines.append(f"  /file remove [find name=($p . {q(f)})]")
+    lines.append('  :error "mtc: disk je plny - balicky mohou byt neuplne, aktualizace zrusena"')
+    lines.append("}")
     return lines
 
 
-def upgrade_body(version: str, files: list[str], base: str, key: str, check_certificate: str) -> str:
+def upgrade_body(version: str, files: list[str], base: str, key: str, check_certificate: str,
+                 need: int | None = None) -> str:
     """Aktualizace z balíčků u controlleru: stáhnout, restart nainstaluje (tail)."""
     if not routeros._VERSION.match(version):
         raise ValueError(f"neplatná verze {version!r}")
     v = q(version)
     body = [f':log info ("mtc: aktualizace z controlleru na " . {v})',
             f':if ([/system package update get installed-version] != {v}) do={{']
-    body += ["  " + ln for ln in _fetch_lines(files, base, key, check_certificate)]
+    body += ["  " + ln for ln in _fetch_lines(files, base, key, check_certificate, need)]
     body.append("}")
     return "\n".join(body) + "\n"
 
@@ -236,11 +265,11 @@ def upgrade_tail(version: str) -> str:
             f'}}\n')
 
 
-def wifi_body(inv: dict, base: str, key: str, check_certificate: str) -> str:
+def wifi_body(inv: dict, base: str, key: str, check_certificate: str, need: int | None = None) -> str:
     st = packages.wifi_status(inv)
     files = wifi_files(inv)
     lines = [f':log warning {q("mtc: vymena Wi-Fi ovladace na " + st["fix"]["install"] + " (z controlleru)")}']
-    lines += _fetch_lines(files, base, key, check_certificate)
+    lines += _fetch_lines(files, base, key, check_certificate, need)
     for r in st["fix"]["remove"]:
         lines.append(f"/system package uninstall {r}")
     return "\n".join(lines) + "\n"

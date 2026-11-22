@@ -4102,7 +4102,7 @@ function drawMlag() {
 // Obsah si drží své souřadnice (0..W × 0..H); mění se jen viewBox podle {x, y, k}. Pohled přežije
 // překreslení dat; nově se nastaví jen poprvé nebo tlačítkem „Vejít do okna“.
 function mapControl(box, svg) {
-  const st = { x: 0, y: 0, k: 1, W: 0, H: 0, set: false };
+  const st = { x: 0, y: 0, k: 1, W: 0, H: 0, set: false, user: false };   // user = člověk už pohledem hýbal
   if (!box || !svg || typeof box.getBoundingClientRect !== "function") return { content() {}, fit() {} };
   const size = () => { const r = box.getBoundingClientRect(); return [Math.max(50, r.width), Math.max(50, r.height)]; };
   const apply = () => {
@@ -4112,7 +4112,7 @@ function mapControl(box, svg) {
   };
   const clampK = (k) => Math.min(4, Math.max(0.15, k));
   const zoomAt = (px, py, k) => {            // px, py = bod v okně, který má zůstat na místě
-    k = clampK(k);
+    k = clampK(k); st.user = true;
     st.x += px / st.k - px / k; st.y += py / st.k - py / k; st.k = k; apply();
   };
   const fit = () => {
@@ -4131,7 +4131,7 @@ function mapControl(box, svg) {
   let drag = null, moved = false, pinch = null;
   box.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 && e.pointerType === "mouse") return;
-    if (e.target && e.target.closest && e.target.closest(".map-ctl")) return;
+    if (e.target && e.target.closest && e.target.closest(".map-ctl, .map-tab")) return;
     pts.set(e.pointerId, local(e));
     if (pts.size === 1) { drag = { p: local(e), x: st.x, y: st.y }; moved = false; }
     if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), k: st.k }; drag = null; }
@@ -4148,7 +4148,7 @@ function mapControl(box, svg) {
     const [px, py] = local(e), dx = px - drag.p[0], dy = py - drag.p[1];
     if (!moved && Math.hypot(dx, dy) < 5) return;       // drobný pohyb při kliknutí není tažení
     if (!moved) { moved = true; box.classList.add("grabbing"); try { box.setPointerCapture(e.pointerId); } catch (_e) { /* není nutné */ } }
-    st.x = drag.x - dx / st.k; st.y = drag.y - dy / st.k; apply();
+    st.x = drag.x - dx / st.k; st.y = drag.y - dy / st.k; st.user = true; apply();
   });
   const end = (e) => {
     pts.delete(e.pointerId);
@@ -4159,18 +4159,19 @@ function mapControl(box, svg) {
   // po tažení nesmí „kliknutí“ otevřít zařízení, nad kterým se tažení pustilo
   box.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
   box.addEventListener("dblclick", (e) => {
-    if (e.target && e.target.closest && e.target.closest(".map-ctl, .node, .ext")) return;
+    if (e.target && e.target.closest && e.target.closest(".map-ctl, .map-tab, .node, .ext")) return;
     const [px, py] = local(e); zoomAt(px, py, st.k * 1.6);
   });
   for (const b of box.querySelectorAll("[data-map]")) b.addEventListener("click", () => {
     const [w, h] = size(), m = b.dataset.map;
     if (m === "in") zoomAt(w / 2, h / 2, st.k * 1.3); else if (m === "out") zoomAt(w / 2, h / 2, st.k / 1.3);
-    else if (m === "fit") fit(); else one();
+    else if (m === "fit") { fit(); st.user = false; } else { one(); st.user = true; }
   });
-  if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (st.set) apply(); }).observe(box);
+  // změna velikosti okna (i první zobrazení skryté záložky): dokud člověk pohledem nehýbal, znovu vejít do okna
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (st.set) { if (st.user) apply(); else fit(); } }).observe(box);
   return {
     // po vykreslení obsahu o rozměrech W × H: poprvé vejít do okna, jinak pohled nechat
-    content(W, H) { st.W = W; st.H = H; if (!st.set) { st.set = true; fit(); } else apply(); },
+    content(W, H) { st.W = W; st.H = H; st.set = true; if (st.user) apply(); else fit(); },
     fit,
   };
 }
@@ -4183,7 +4184,9 @@ $("infra-list-btn").addEventListener("click", () => {
 });
 function setInfraList(show) {
   $("infra-list").hidden = !show;
-  $("infra-list-btn").setAttribute("aria-pressed", show ? "true" : "false");
+  const b = $("infra-list-btn"), label = show ? __("Skrýt seznam zařízení") : __("Zobrazit seznam zařízení");
+  b.setAttribute("aria-expanded", show ? "true" : "false");
+  b.textContent = show ? "‹" : "›"; b.title = label; b.setAttribute("aria-label", label);
   $("infra-list").parentNode.classList.toggle("nolist", !show);
 }
 try { if (localStorage.getItem("mtc.infraList") === "0") setInfraList(false); } catch (_e) { /* jen pohodlí */ }

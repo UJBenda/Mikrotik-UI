@@ -177,8 +177,24 @@ def test_bootstrap_script():
     assert "pvid=99" in s and 'untagged="bridge,ether1,ether3"' in s and "disabled=yes" in s
     assert "dhcp-client add interface=bridge" in s and 'mtc ether5-tiskarna' in s
     assert ':if (!$ok) do={ /system script run [find name="mtc-revert"] }' in s
-    _ascii(switchcfg.takeover_body("https://c.example/api/checkin/bootstrap?id=7", "Authorization: Bearer KEY",
-                                   "yes-without-crl", "PW"))
+    # návrat ze zálohy a jeho časovač jsou úplně první příkazy, mimo hlavní blok – dřív než čekání na
+    # porty; zaseknutý, chybný nebo uříznutý zbytek skriptu už návrat nezastaví
+    cmds = [ln for ln in s.splitlines() if ln and not ln.startswith("#")]
+    assert cmds[0].startswith('/system script add name="mtc-revert"') and cmds[1].startswith('/system script add name="mtc-confirm-tick"')
+    assert cmds[2] == ":global mtcConfirmTicks 0" and cmds[3].startswith('/system scheduler add name="mtc-confirm"') and cmds[4] == "{"
+    assert s.index('scheduler add name="mtc-confirm"') < s.index("[/interface ethernet find]") < s.index("/interface bridge add")
+    head = s[:s.index("\n{\n")]
+    assert head.count("{") == head.count("}") and ":local" not in "\n".join(c for c in cmds[:4] if c.startswith(":"))
+    t = switchcfg.takeover_body("https://c.example/api/checkin/bootstrap?id=7", "Authorization: Bearer KEY",
+                                "yes-without-crl", "PW")
+    _ascii(t)
+    # místo na disku: kontrola před zálohou a rezerva po zápisu obou souborů (plný disk = uříznutý soubor)
+    assert t.index("free-hdd-space] < 524288") < t.index("/system backup save") < t.index("/tool fetch") \
+        < t.index("free-hdd-space] < 65536") < t.index("nasleduje reset konfigurace")
+    assert t.count("{") == t.count("}") and "prevzeti zruseno" in t
+    assert switchcfg.space_blocker({"resource": {"free-hdd-space": "3145728"}}) is None
+    assert switchcfg.space_blocker({"resource": [{"free-hdd-space": 700000}]}).startswith("na zařízení je jen 0.7 MiB")
+    assert switchcfg.space_blocker({}) is None and switchcfg.space_blocker({"resource": {"free-hdd-space": "?"}}) is None
     _ascii(switchcfg.TAKEOVER_TAIL + switchcfg.TAKEOVER_CONFIRM)
 
 
@@ -525,5 +541,32 @@ def test_takeover_custom_needs_confirm():
         assert r.status_code == 400 and "potvrď" in r.json()["detail"]
         r = c.post(base + f"/devices/{sw}/takeover", json_body={"confirm_custom": True})
         assert r.status_code == 201 and "NAT: 1 pravidel" in r.json()["removed"]
+    finally:
+        drop_db(name)
+
+
+def test_takeover_needs_free_space():
+    """16MB flash: bez místa na zálohu a bootstrap se převzetí nepustí (uříznutá záloha = žádný návrat)."""
+    from helpers import drop_db
+    from test_flow import _login
+
+    from mtcontroller import inventory
+
+    db, name, settings, box, app, tid, sid, sw = _takeover_env()
+    try:
+        c = _login(app)
+        base = f"/api/admin/tenants/{tid}"
+        assert c.put(base + f"/sites/{sid}/intent", json_body=INTENT_RAW).status_code == 200
+        low = copy.deepcopy(INV)
+        low["resource"] = {**(low.get("resource") or {}), "free-hdd-space": "419430", "total-hdd-space": "16777216"}
+        inventory.store(db, tid, sw, low, [])
+        pv = c.get(base + f"/devices/{sw}/takeover").json()
+        assert any("0.4 MiB volného místa" in b for b in pv["blockers"]), pv["blockers"]
+        r = c.post(base + f"/devices/{sw}/takeover", json_body={})
+        assert r.status_code == 400 and "volného místa" in r.json()["detail"], r.text
+        low["resource"]["free-hdd-space"] = "2097152"
+        inventory.store(db, tid, sw, low, [])
+        assert not any("volného místa" in b for b in c.get(base + f"/devices/{sw}/takeover").json()["blockers"])
+        assert c.post(base + f"/devices/{sw}/takeover", json_body={}).status_code == 201
     finally:
         drop_db(name)

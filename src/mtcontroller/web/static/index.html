@@ -83,13 +83,12 @@
         <div class="infra-bar">
           <label class="check"><input type="checkbox" id="infra-clients"> klienti (MAC)</label>
           <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
-          <span class="spacer"></span>
-          <button id="infra-list-btn" type="button" class="small secondary" aria-pressed="true" title="Zobrazit nebo skrýt seznam zařízení vlevo">Seznam zařízení</button>
         </div>
         <div class="infra">
           <div id="infra-list" class="infra-list"></div>
           <div class="infra-canvas mapbox" id="infra-canvas">
             <svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg>
+            <button id="infra-list-btn" type="button" class="map-tab" aria-expanded="true" title="Skrýt seznam zařízení" aria-label="Skrýt seznam zařízení">‹</button>
             <div class="map-ctl" role="group" aria-label="Ovládání mapy">
               <button type="button" data-map="in" title="Přiblížit" aria-label="Přiblížit">+</button>
               <button type="button" data-map="out" title="Oddálit" aria-label="Oddálit">−</button>

@@ -343,6 +343,8 @@ def preview(db: Database, tenant_id: Any, device_id: Any, ctl: dict | None = Non
         return out
     cls = switchcfg.classify(inv, model["role"])
     blockers = list(model["blockers"])
+    if d["managed_at"] is None and switchcfg.space_blocker(inv):
+        blockers.append(switchcfg.space_blocker(inv))
     if not inv:
         blockers.insert(0, "inventura zařízení zatím neproběhla")
     elif not d["fresh"]:
@@ -383,6 +385,8 @@ def create_takeover_plan(db: Database, settings: Settings, box: SecretBox, tenan
             raise ServiceError("lokalita nemá záměr – nejdřív nadefinuj sítě")
         if model["blockers"]:
             raise ServiceError("převzetí nelze: " + "; ".join(model["blockers"]))
+        if switchcfg.space_blocker(inv):
+            raise ServiceError("převzetí nelze: " + switchcfg.space_blocker(inv))
         cls = switchcfg.classify(inv, model["role"])
         if cls["class"] == "custom" and not confirm_custom:
             raise ServiceError("zařízení má vlastní konfiguraci (" + ", ".join(cls["custom"]) +
