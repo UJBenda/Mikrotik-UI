@@ -107,6 +107,8 @@ def test_config_body():
     s = switchcfg.config_body(_build())
     _ascii(s)
     assert "interface=ether1" not in s.split("# --- brana")[0]          # WAN není port bridge
+    # rozhraní vlan<id> nad bridgem posílají tagované rámce – bridge je nesmí zahazovat
+    assert "/interface bridge add name=bridge" in s and "pvid=99 frame-types=admit-all" in s
     assert '/ip dhcp-client add interface="ether1" use-peer-dns=yes' in s and 'comment="mtc WAN"' in s
     assert '/interface vlan add name="vlan10" interface=bridge vlan-id=10' in s
     assert '/ip address add address="10.99.0.1/24" interface="bridge"' in s
@@ -171,6 +173,9 @@ def test_reconcile():
     inv = managed_inv()
     r = switchcfg.reconcile(inv, _build(inv))
     assert r["changes"] == [] and r["apply"] == "", r
+    strict = copy.deepcopy(inv)
+    strict["bridges"][0]["frame-types"] = "admit-only-untagged-and-priority-tagged"
+    assert "/interface bridge set bridge frame-types=admit-all" in switchcfg.reconcile(strict, _build(strict))["apply"]
     # nová síť s novou zónou + změna rozsahu DHCP + zrušení sítě hostů
     raw = copy.deepcopy(INTENT_RAW)
     raw["networks"][3]["subnet"] = "10.30.0.0/24"

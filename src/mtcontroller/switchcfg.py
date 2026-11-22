@@ -467,7 +467,8 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         blockers.append("pro statickou adresu managementu chybí brána (doplň ji v síti management)")
     if mgmt["mode"] == "static" and not mgmt.get("dns"):
         warnings.append("statický management bez DNS – doplň DNS v síti management (jinak se nespojí s controllerem)")
-    snooping = bool(HW_SNOOPING.match(model_name or ""))
+    # brána je sama DHCP server – snooping na ní nedává smysl (hlídá se na switchích)
+    snooping = bool(HW_SNOOPING.match(model_name or "")) and not is_gw
     if not snooping and not is_gw:
         warnings.append("DHCP snooping vynechán: čip nemá HW podporu (běžel by na CPU)")
     if path["mode"] == "dhcp" and mgmt["mode"] == "dhcp":
@@ -518,8 +519,9 @@ def config_body(model: dict, secrets: dict | None = None) -> str:
     `secrets` = tajemství, která model nenese (heslo PPPoE brány); bez nich maska (náhled)."""
     m = model["mgmt"]
     lines = [
+        # brána má nad bridgem rozhraní vlan<id> (tagované rámce z CPU portu) → bridge musí pustit i tagované
         f"/interface bridge add name={BRIDGE} vlan-filtering=no protocol-mode=rstp pvid={int(m['vid'])} "
-        f"frame-types={FT_ACCESS} ingress-filtering=yes igmp-snooping=no comment=\"mtc\"",
+        f"frame-types={FT_ALL if model.get('gw') else FT_ACCESS} ingress-filtering=yes igmp-snooping=no comment=\"mtc\"",
     ]
     for it in model["ports"]:
         if it["mode"] == "off":
@@ -837,6 +839,11 @@ def reconcile(inv: dict, model: dict) -> dict:
         apply.append(f"/interface bridge set {BRIDGE} pvid={want_pvid}")
         revert.append(f"/interface bridge set {BRIDGE} pvid={br.get('pvid') or 1}")
         changes.append(f"management bridge: VLAN {br.get('pvid') or 1} → {want_pvid}")
+        additive = False
+    if model.get("gw") and br is not None and str(br.get("frame-types") or FT_ALL) != FT_ALL:
+        apply.append(f"/interface bridge set {BRIDGE} frame-types={FT_ALL}")
+        revert.append(f"/interface bridge set {BRIDGE} frame-types={br.get('frame-types')}")
+        changes.append("bridge: pustit tagované rámce (rozhraní VLAN brány)")
         additive = False
     # porty
     for it in model["ports"]:
