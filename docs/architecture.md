@@ -1269,3 +1269,14 @@ filtry kategorie, zařízení, klient, hledání v textu; u každé události �
 dělo kolem, napříč zařízeními a klienty (hledání příčiny). Vstup i z detailu zařízení a klienta
 (tlačítko Časová osa). Texty událostí portů a alertů generuje server (zatím jen česky), akce auditu se
 zobrazují kódem.
+
+## Sousedé hlášení na VLAN rozhraní (etapa 12)
+
+Při VLAN filtrování na bridgi přijde MNDP/LLDP přes rozhraní VLAN a RouterOS pak u souseda neuvede port,
+ale jméno VLAN rozhraní (`93-bridge`, `vlan10`). Všechna zařízení téže VLAN tak vypadala jako sousedé na
+jednom „portu“ – mapa z toho udělala hvězdu nebo „nespravovaný switch“ a popisky nesly jméno VLAN.
+`inventory.resolve_neighbor_ports` proto port dohledá: podle MAC souseda v tabulce bridge hostů
+(`on-interface`), jinak podle jiného záznamu téhož souseda, a zapíše `<port>,<původní rozhraní>` (tvar,
+který RouterOS sám používá – `ether3,bridge`). Běží při sběru inventury i při čtení (`inventory.load`),
+takže se opraví i dříve uložená data; duplicitní záznamy téhož souseda na témž portu se sloučí. Soused,
+jehož MAC v tabulce hostů není, zůstane, jak byl.

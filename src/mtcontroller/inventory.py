@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -165,6 +166,7 @@ def collect(api: RosApi) -> tuple[dict[str, Any], list[str]]:
         close = getattr(api, "close", None)
         if close:
             close()
+    resolve_neighbor_ports(data)
     return data, errors
 
 
@@ -350,15 +352,86 @@ def store_error(db: Database, tenant_id: Any, device_id: Any, error: str) -> Non
                    {"e": error[:1000], "d": str(device_id)})
 
 
+# sekce, podle kterých se soused hlášený na VLAN rozhraní dohledá na fyzický port
+NEIGHBOR_HELP = ("bridge_hosts", "ethernet", "interfaces")
+_PHYS_TYPES = ("ether", "wlan", "wifi", "bond", "sfp", "qsfp", "combo")
+
+
+def resolve_neighbor_ports(inv: dict[str, Any]) -> None:
+    """Soused hlášený na VLAN rozhraní nebo bridgi (`93-bridge`, `vlan10`, `bridge`) → fyzický port.
+
+    Při VLAN filtrování na bridgi přijde MNDP/LLDP přes rozhraní VLAN a RouterOS pak v sousedech neuvede
+    port, ale jméno VLAN rozhraní. Port se dohledá podle MAC souseda v tabulce bridge hostů, jinak podle
+    jiného záznamu téhož souseda. Výsledek se zapíše jako `<port>,<původní rozhraní>` – tvar, který
+    RouterOS sám používá (`ether3,bridge`), takže mu rozumí vše, co sousedy čte. Duplicitní záznamy
+    (týž soused na témž portu přes víc VLAN) se sloučí."""
+    nb = inv.get("neighbors")
+    if not isinstance(nb, list):
+        return
+    phys = {str(e.get("name")) for e in inv.get("ethernet") or [] if isinstance(e, dict) and e.get("name")}
+    for i in inv.get("interfaces") or []:
+        if isinstance(i, dict) and i.get("name") and str(i.get("type") or "").startswith(_PHYS_TYPES):
+            phys.add(str(i["name"]))
+    hosts: dict[str, str] = {}
+    for h in inv.get("bridge_hosts") or []:
+        if not isinstance(h, dict) or str(h.get("local")) in ("true", "True"):
+            continue
+        port = str(h.get("on-interface") or "")
+        if port and (not phys or port in phys):
+            hosts.setdefault(str(h.get("mac-address") or "").upper(), port)
+
+    def parts(n: dict) -> list[str]:
+        return [x for x in re.split(r"[,/]", str(n.get("interface") or "")) if x]
+
+    def is_phys(x: str) -> bool:
+        return x in phys or (not phys and x.startswith(_PHYS_TYPES))
+
+    known: dict[str, str] = {}           # MAC / identita → port z řádků, které fyzický port mají
+    for n in nb:
+        if isinstance(n, dict):
+            port = next((x for x in parts(n) if is_phys(x)), None)
+            if port:
+                for k in (str(n.get("mac-address") or "").upper(), "id:" + str(n.get("identity") or "")):
+                    if k not in ("", "id:"):
+                        known.setdefault(k, port)
+    out: list[Any] = []
+    seen: set[tuple] = set()
+    for n in nb:
+        if not isinstance(n, dict):
+            out.append(n)
+            continue
+        ps = parts(n)
+        port = next((x for x in ps if is_phys(x)), None)
+        if not port and ps:
+            mac = str(n.get("mac-address") or "").upper()
+            port = hosts.get(mac) or known.get(mac) or known.get("id:" + str(n.get("identity") or ""))
+            if port:
+                n = {**n, "interface": ",".join([port] + ps), "via": ps[0]}
+        key = (port or ",".join(ps), str(n.get("mac-address") or "").upper() or str(n.get("identity") or ""),
+               str(n.get("discovered-by") or "") if not port else "")
+        if port and key in seen:
+            continue
+        seen.add(key)
+        out.append(n)
+    inv["neighbors"] = out
+
+
 def load(tx, device_id: Any, sections: list[str] | None = None) -> dict[str, Any]:
     if sections:
+        want = list(sections)
+        if "neighbors" in want:
+            want += [x for x in NEIGHBOR_HELP if x not in want]
         rows = tx.fetchall("""SELECT section, data FROM device_inventory WHERE device_id = %(d)s
                               AND section IN (SELECT jsonb_array_elements_text(%(s)s))""",
-                           {"d": str(device_id), "s": sections})
+                           {"d": str(device_id), "s": want})
     else:
         rows = tx.fetchall("SELECT section, data FROM device_inventory WHERE device_id = %(d)s",
                            {"d": str(device_id)})
-    return {r["section"]: r["data"] for r in rows}
+    inv = {r["section"]: r["data"] for r in rows}
+    resolve_neighbor_ports(inv)
+    if sections:
+        inv = {k: v for k, v in inv.items() if k in sections}
+    return inv
 
 
 ROLLUP_SQL = """
