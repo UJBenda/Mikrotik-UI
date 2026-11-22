@@ -1076,3 +1076,40 @@ a:hover { text-decoration: underline; }
 .lang-pick { margin: 0 0 0 auto; order: 5; }
 .lang-pick select { border-color: transparent; background: var(--hover); border-radius: 7px; padding: 5px 8px; font-size: 13px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* řízená brána (detail zařízení → Řízení) */
+.gw h4 { margin: 16px 0 6px; }
+.gw .pe-grid { margin-bottom: 10px; }
+.gw-nets { width: 100%; border-collapse: collapse; font-size: 14px; }
+.gw-nets th { text-align: left; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.gw-nets td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.gw-nets input:not([type=checkbox]) { padding: 4px 6px; }
+.gw-nets input[type=checkbox] { width: 18px; height: 18px; }
+
+/* rychlé hledání v záhlaví */
+.gs { position: relative; flex: 0 1 300px; min-width: 140px; }
+.gs input { width: 100%; border-color: transparent; background: var(--hover); border-radius: 7px; padding: 5px 10px; font-size: 13px; }
+.gs input:focus { border-color: var(--accent); background: var(--card); }
+.gs-list { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; width: max(100%, 380px); margin: 0; padding: 6px; list-style: none;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .18); }
+.gs-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 14px; }
+.gs-list li small { color: var(--muted); white-space: nowrap; }
+.gs-list li.sel, .gs-list li:hover { background: var(--accent-weak); }
+.gs-list li.muted { cursor: default; background: none; }
+@media (max-width: 760px) { .gs { order: 9; flex-basis: 100%; } .gs-list { width: 100%; } }
+
+/* nastavení lokality: sekce vlevo pod sebou (jako Settings v UniFi), obsah vpravo */
+@media (min-width: 1000px) {
+  #view-settings > .card { display: grid; grid-template-columns: 208px minmax(0, 1fr); column-gap: 24px; align-items: start; }
+  #view-settings > .card > .site-head { grid-column: 1; grid-row: 1 / span 40; flex-direction: column; align-items: stretch;
+    justify-content: flex-start; gap: 12px; margin: 0; position: sticky; top: 12px; }
+  #view-settings > .card > .site-head h2 { font-size: 15px; }
+  #view-settings > .card > :not(.site-head) { grid-column: 2; }
+  #view-settings > .card > .pane { border-top: 0; margin-top: 0; padding-top: 0; }
+  #view-settings #set-tabs { display: flex; flex-direction: column; border: 0; border-radius: 0; background: none; gap: 2px; overflow: visible; }
+  #view-settings #set-tabs button { text-align: left; padding: 8px 10px; border: 0; border-radius: 7px; font-size: 14px; }
+}
+
+/* detail zařízení: záložka Řízení */
+#dp-manage > h3:first-child { margin-top: 2px; }
+#dp-manage #d-edit { margin-bottom: 14px; }

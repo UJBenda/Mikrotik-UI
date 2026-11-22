@@ -13,6 +13,8 @@ a jde přes commit-confirm jako změna portů.
 
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 from . import dhcpguard, intent, inventory, ntp, regional, routeros, switchcfg
@@ -167,6 +169,111 @@ def set_device_intent(db: Database, tenant_id: Any, device_id: Any, data: dict, 
     return new
 
 
+# --- řízená brána: nastavení WAN a DHCP -------------------------------------------------------------------
+
+GATEWAY = "gateway"
+
+
+def load_gateway(tx: Tx, site_id: Any, device_id: Any = None) -> dict | None:
+    """Nastavení brány lokality (site_policy `gateway`); s `device_id` jen když patří tomuto zařízení."""
+    r = tx.fetchone("SELECT data FROM site_policy WHERE site_id = %(s)s AND module = %(m)s",
+                    {"s": str(site_id), "m": GATEWAY})
+    data = (r or {}).get("data")
+    if not data or (device_id is not None and str(data.get("device_id")) != str(device_id)):
+        return None
+    return data
+
+
+def _save_gateway(tx: Tx, tenant_id: Any, site_id: Any, data: dict, user_id: Any) -> None:
+    tx.execute("""INSERT INTO site_policy (tenant_id, site_id, module, data, updated_by)
+                  VALUES (%(t)s, %(s)s, %(m)s, %(d)s, %(u)s)
+                  ON CONFLICT (site_id, module) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by,
+                      updated_at = now()""",
+               {"t": str(tenant_id), "s": str(site_id), "m": GATEWAY, "d": data, "u": _s(user_id)})
+
+
+def gateway_view(db: Database, box: SecretBox, tenant_id: Any, device_id: Any) -> dict:
+    """Nastavení brány pro formulář: WAN, DHCP po sítích, porty zařízení, navržené zóny."""
+    with tenant_scope(db, tenant_id) as tx:
+        d = _device(tx, device_id)
+        if not d["site_id"]:
+            raise ServiceError("zařízení není v lokalitě")
+        inv = inventory.load(tx, device_id)
+        site_intent = load_intent(tx, d["site_id"])
+        other = load_gateway(tx, d["site_id"])
+        mine = other if other and str(other.get("device_id")) == str(device_id) else None
+        has_pw = get_secret(tx, box, device_id, "wan_password") is not None
+        taken = None
+        if other and not mine:
+            o = tx.fetchone("SELECT identity, serial FROM device WHERE id = %(d)s", {"d": str(other.get("device_id"))})
+            taken = (o["identity"] or o["serial"]) if o else None
+    gw = mine or {"wan": {"port": None, "mode": "dhcp", "vlan": None}, "dhcp": {}}
+    path = switchcfg.mgmt_path(inv) if inv else {"uplink": None}
+    out: dict[str, Any] = {
+        "configured": mine is not None, "role": d["role"], "managed": d["managed_at"] is not None,
+        "wan": {**gw["wan"], "has_password": has_pw}, "dhcp": gw.get("dhcp") or {},
+        "ports": [{"name": p["name"], "port": p["port"]} for p in switchcfg.physical_ports(inv)] if inv else [],
+        "wan_guess": path.get("uplink"), "other_gateway": taken, "networks": [], "zones": {}, "policies": [],
+    }
+    if site_intent:
+        from . import gwcfg
+
+        part, _b, _w = gwcfg.plan(site_intent, gw, gw["wan"].get("port") or path.get("uplink"),
+                                  int(site_intent["mgmt_vlan"]))
+        out["networks"] = [{"vid": n["vlan_id"], "name": n["name"], "purpose": n.get("purpose"), "subnet": n.get("subnet"),
+                            "plan": next((x for x in part["nets"] if x["vid"] == int(n["vlan_id"])), None)}
+                           for n in site_intent["networks"]]
+        out["zones"], out["policies"] = part["zones"], part["policies"]
+    return out
+
+
+def set_gateway(db: Database, box: SecretBox, tenant_id: Any, device_id: Any, data: dict, user_id: Any = None,
+                ip: str | None = None) -> dict:
+    """Uloží nastavení brány (WAN, DHCP). Heslo PPPoE jde do tajemství zařízení, ne do nastavení."""
+    from . import gwcfg
+
+    with tenant_scope(db, tenant_id) as tx:
+        d = _device(tx, device_id)
+        if not d["site_id"]:
+            raise ServiceError("zařízení není v lokalitě")
+        if d["role"] != "gateway":
+            raise ServiceError("zařízení nemá roli brána – nejdřív mu ji nastav")
+        cur = load_gateway(tx, d["site_id"])
+        if cur and str(cur.get("device_id")) != str(device_id):
+            o = tx.fetchone("SELECT managed_at FROM device WHERE id = %(d)s AND site_id = %(s)s",
+                            {"d": str(cur.get("device_id")), "s": str(d["site_id"])})
+            if o and o["managed_at"] is not None:
+                raise ServiceError("lokalita už řízenou bránu má – brána může být jen jedna")
+            cur = None
+        try:
+            new = gwcfg.validate(data, cur)
+        except gwcfg.GatewayError as e:
+            raise ServiceError(str(e)) from e
+        new["device_id"] = str(device_id)
+        inv = inventory.load(tx, device_id, ["ethernet"])
+        known = {p["name"]: p["port"] for p in switchcfg.physical_ports(inv)} | \
+                {p["port"]: p["port"] for p in switchcfg.physical_ports(inv)}
+        if new["wan"]["port"]:
+            if known and new["wan"]["port"] not in known:
+                raise ServiceError(f"WAN port {new['wan']['port']} na zařízení není")
+            new["wan"]["port"] = known.get(new["wan"]["port"], new["wan"]["port"])
+        if d["managed_at"] is not None and cur and (cur.get("wan") or {}) != new["wan"]:
+            raise ServiceError("WAN řízené brány zatím změnit nejde (jen při převzetí) – změna WAN za provozu přijde "
+                               "s druhou linkou (dual-WAN)")
+        pw = (data.get("wan") or {}).get("password")
+        if new["wan"]["mode"] == "pppoe":
+            if pw:
+                if not re.fullmatch(r"[\x20-\x7e]{1,128}", str(pw)):
+                    raise ServiceError("heslo PPPoE: jen znaky ASCII, max 128")
+                put_secret(tx, box, tenant_id, device_id, "wan_password", str(pw))
+            elif get_secret(tx, box, device_id, "wan_password") is None:
+                raise ServiceError("zadej heslo PPPoE")
+        _save_gateway(tx, tenant_id, d["site_id"], new, user_id)
+        audit(tx, "gateway.set", tenant_id=tenant_id, user_id=user_id, target=f"device:{device_id}",
+              before=cur, after=new, ip=ip)
+    return new
+
+
 # --- model a náhled převzetí ---------------------------------------------------------------------------
 
 def _device(tx: Tx, device_id: Any) -> dict:
@@ -189,6 +296,10 @@ def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None, ctl: dict
     ntp_pol = (pol or {}).get("data") or {"upstream": regional.ntp_servers(), "timezone": regional.timezone()}
     dev_intent = dev_intent if dev_intent is not None else load_device_intent(tx, d["id"])
     role = dev_intent.get("role") or (d["role"] if d["role"] in ("switch", "ap") else "switch")
+    gw = None
+    if d["role"] == "gateway":
+        role = "gateway"
+        gw = load_gateway(tx, d["site_id"], d["id"]) or {}
     if ctl:
         ntp_pol = {**ntp_pol, "upstream": ctl["ntp"]}
     model = switchcfg.build(inv, site_intent, dev_intent, model_name=d["model"] or "",
@@ -196,7 +307,7 @@ def _model(tx: Tx, d: dict, inv: dict, dev_intent: dict | None = None, ctl: dict
                             cap_manager=capsman_identity(tx, site_intent),
                             dns=(ctl or {}).get("dns") or None, ntp_ctl=bool(ctl),
                             isolate=(ctl["ntp"] + ctl["dns"]) if ctl and ctl.get("isolate") and not dev_intent.get("internet")
-                            else None)
+                            and gw is None else None, gateway=gw)
     return model, dev_intent
 
 
@@ -238,17 +349,14 @@ def preview(db: Database, tenant_id: Any, device_id: Any, ctl: dict | None = Non
         blockers.insert(0, "inventura je starší než 15 minut – počkej na novou")
     if d["state"] != "adopted":
         blockers.insert(0, "zařízení není online")
-    if d["role"] == "gateway":
-        blockers.append("zařízení má roli gateway – řízený režim zatím umí jen switch")
     from .wificfg import supports_wifi
 
     out.update(model=model, classification=cls, blockers=blockers, warnings=model["warnings"],
                wifi=supports_wifi(inv), capsman=cap_host, capsman_here=cap_id == str(device_id),
                site_id=str(d["site_id"]) if d["site_id"] else None)
-    if d["managed_at"] is not None and d["role"] == "gateway":
-        out["blockers"] = ["firewall/router: konfiguraci nastavila výchozí konfigurace (zóny WAN/LAN); "
-                           "správa sítí a matice zón routeru přijde v další fázi"]
-        out.pop("model", None)
+    if d["managed_at"] is not None and d["role"] == "gateway" and not model["gw"]["wan"].get("configured"):
+        out["blockers"] = ["brána běží na výchozí konfiguraci (WAN/LAN) – ulož její nastavení (WAN, DHCP) "
+                           "a controller ji začne řídit podle sítí lokality"]
         return out
     if d["managed_at"] is not None:
         r = switchcfg.reconcile(inv, model)
@@ -270,8 +378,6 @@ def create_takeover_plan(db: Database, settings: Settings, box: SecretBox, tenan
         inv = inventory.load(tx, device_id)
         if not inv or not d["fresh"]:
             raise ServiceError("inventura chybí nebo je starší než 15 minut – počkej na novou")
-        if d["role"] == "gateway":
-            raise ServiceError("zařízení má roli gateway – řízený režim zatím umí jen switch")
         model, _di = _model(tx, d, inv, ctl=ctl)
         if model is None:
             raise ServiceError("lokalita nemá záměr – nejdřív nadefinuj sítě")
@@ -288,7 +394,18 @@ def create_takeover_plan(db: Database, settings: Settings, box: SecretBox, tenan
                       AND module = 'takeover' AND status = 'draft'""", {"d": str(device_id)})
         put_secret(tx, box, tenant_id, device_id, "takeover_backup", random_password())
         preview_script = _bootstrap(settings, model, "<sstp>", "<api>", "<klic>", PLACEHOLDER, 0, preview=True)
-        summary = (f"Převzetí do řízení ({cls['class']}): {len(model['vlans'])} sítí, "
+        if model.get("gw"):
+            w = model["gw"]["wan"]
+            if w["mode"] == "pppoe" and get_secret(tx, box, device_id, "wan_password") is None:
+                raise ServiceError("brána: chybí heslo PPPoE (Nastavení brány)")
+            # WAN port zapsat do nastavení brány – po převzetí už se neodvozuje z dnešní výchozí routy
+            cur_gw = load_gateway(tx, d["site_id"], device_id) or {"wan": {"mode": "dhcp", "vlan": None}, "dhcp": {}}
+            _save_gateway(tx, tenant_id, d["site_id"],
+                          {**cur_gw, "device_id": str(device_id), "wan": {**cur_gw["wan"], "port": w["port"]}}, user_id)
+        summary = (f"Převzetí brány do řízení ({cls['class']}): WAN {model['gw']['wan']['port']} "
+                   f"({model['gw']['wan']['mode']}), {len(model['gw']['nets'])} sítí s DHCP/směrováním, "
+                   f"zóny {', '.join(model['gw']['zones'])}" if model.get("gw") else
+                   f"Převzetí do řízení ({cls['class']}): {len(model['vlans'])} sítí, "
                    f"uplink {model['uplink']}, trunky {sum(1 for p in model['ports'] if p['mode'] == 'trunk')}, "
                    f"přístupové {sum(1 for p in model['ports'] if p['mode'] == 'access')}")
         row = tx.fetchone(
@@ -314,7 +431,7 @@ def _urls(settings: Settings, command_id: int) -> dict:
 
 
 def _bootstrap(settings: Settings, model: dict, sstp_pw: str, api_pw: str, key: str, backup_pw: str,
-               command_id: int, *, serial: str = "SERIAL", preview: bool = False) -> str:
+               command_id: int, *, serial: str = "SERIAL", preview: bool = False, secrets: dict | None = None) -> str:
     from .services import mgmt_params
 
     opts = routeros.fetch_opts(settings)
@@ -328,7 +445,7 @@ def _bootstrap(settings: Settings, model: dict, sstp_pw: str, api_pw: str, key: 
         install = "# skript a scheduler mtc-checkin (jako pri adopci)"
     return switchcfg.bootstrap(model, adopt, install, reverted_url=u["ack"] + "&status=reverted",
                                auth_header="Authorization: Bearer " + key, check_certificate=opts.check_certificate,
-                               backup_password=backup_pw)
+                               backup_password=backup_pw, secrets=secrets)
 
 
 def render_takeover(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: dict, ack_url: str, key: str) -> str:
@@ -355,7 +472,9 @@ def bootstrap_script(db: Database, settings: Settings, box: SecretBox, device_re
         did = device_ref["id"]
         script = _bootstrap(settings, row["changes"]["model"], get_secret(tx, box, did, "sstp_password") or "",
                             get_secret(tx, box, did, "api_password") or "", get_secret(tx, box, did, "checkin_key") or "",
-                            get_secret(tx, box, did, "takeover_backup") or "", command_id, serial=row["serial"])
+                            get_secret(tx, box, did, "takeover_backup") or "", command_id, serial=row["serial"],
+                            secrets={"wan_password": get_secret(tx, box, did, "wan_password")}
+                            if row["changes"]["model"].get("gw") else None)
         audit(tx, "device.bootstrap_fetch", tenant_id=device_ref["tenant_id"], target=f"device:{did}",
               after={"command_id": command_id}, ip=ip)
     return script
@@ -375,7 +494,7 @@ def finished(tx: Tx, tenant_id: Any, plan_id: int, ok: bool) -> None:
     if ok:
         role = ((p["changes"] or {}).get("model") or {}).get("role") or "switch"
         tx.execute("UPDATE device SET managed_at = now(), role = %(r)s, inventory_at = NULL WHERE id = %(d)s",
-                   {"d": str(did), "r": role if role in ("switch", "ap") else "switch"})
+                   {"d": str(did), "r": role if role in ("switch", "ap", "gateway") else "switch"})
         audit(tx, "device.takeover_done", tenant_id=tenant_id, target=f"device:{did}", after={"plan_id": plan_id})
     else:
         tx.execute("""UPDATE config_plan SET status = 'rolled_back', finished_at = now()
@@ -418,8 +537,8 @@ def generate_switch_plans(db: Database, settings: Settings, tenant_id: Any, site
                 continue
             did = str(d["id"])
             item = {"device_id": did, "device": d["identity"] or d["serial"]}
-            if d["role"] == "gateway":
-                out.append(item | {"result": "skipped", "reason": "firewall/router – sladění zón přijde s řízením routeru"})
+            if d["role"] == "gateway" and not load_gateway(tx, site_id, did):
+                out.append(item | {"result": "skipped", "reason": "brána nemá uložené nastavení (WAN, DHCP)"})
                 continue
             dd = _device(tx, did)
             inv = inventory.load(tx, did)

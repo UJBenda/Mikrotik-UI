@@ -15,6 +15,10 @@
     <label>Tenant <select id="tenant"></select></label>
     <label id="nav-site" class="nav-site"><span>Lokalita</span><select id="site-sel"></select></label>
   </div>
+  <div id="gs" class="gs" hidden>
+    <input id="gs-in" type="search" autocomplete="off" placeholder="Hledat zařízení, nastavení…  (Ctrl+K)" aria-label="Hledat">
+    <ul id="gs-list" class="gs-list" hidden></ul>
+  </div>
   <div id="who"></div>
 </header>
 
@@ -202,7 +206,7 @@
           <summary>Sítě lokality (VLAN) <span id="intent-state" class="muted"></span></summary>
           <p class="muted">Sítě, které na lokalitě chceš mít. Řízená zařízení z nich controller nastaví sám: porty ke switchům
             a AP jsou trunky se všemi sítěmi, ostatní porty jsou přístupové ve výchozí síti. Zařízení převezmeš v jeho
-            panelu (Zařízení → Přehled → Řízení zařízení).</p>
+            panelu (Zařízení → klik na zařízení → Řízení).</p>
           <table class="intent-nets"><thead><tr><th>Jméno</th><th>VLAN</th><th>Účel</th><th>Podsíť</th><th>Brána</th><th>DNS</th><th></th></tr></thead>
           <tbody id="intent-rows"></tbody></table>
           <div class="intent-opts">
@@ -607,23 +611,34 @@
       <div id="d-tabs" class="seg dtabs">
         <button id="dt-over" type="button">Přehled</button>
         <button id="dt-ports" type="button">Porty</button>
+        <button id="dt-manage" type="button">Řízení</button>
         <button id="dt-wifi" type="button">Wi-Fi</button>
         <button id="dt-diag" type="button">Diagnostika a logy</button>
       </div>
       <div id="dp-over" class="dpane">
         <div id="d-quick" class="d-quick"></div>
       <div class="dgrid">
-        <div><h3>Přehled</h3><table class="kv kv2"><tbody id="d-summary"></tbody></table>
-             <form id="d-edit" class="inline">
-               <input id="d-edit-name" maxlength="63" size="16" aria-label="Jméno zařízení">
-               <select id="d-edit-site" aria-label="Lokalita"></select>
-               <select id="d-edit-role" aria-label="Role"></select>
-               <input id="d-edit-note" maxlength="500" placeholder="Poznámka (umístění, kontakt…)">
-               <button type="submit" class="small">Uložit</button>
-             </form></div>
+        <div><h3>Přehled</h3><table class="kv kv2"><tbody id="d-summary"></tbody></table></div>
         <div><h3>NTP</h3><table class="kv"><tbody id="d-ntp"></tbody></table></div>
       </div>
-        <details class="fold" id="d-ctl-fold"><summary>Řízení zařízení <span id="ctl-badge" class="badge"></span></summary>
+        <details class="fold"><summary>Zálohy a historie změn</summary>
+      <h3>Zálohy</h3>
+      <table><thead><tr><th>Čas</th><th>Důvod</th><th>Velikost</th><th>Změna</th><th></th></tr></thead><tbody id="d-backups"></tbody></table>
+      <pre id="d-diff" hidden></pre>
+      <h3>Plány a příkazy</h3>
+      <table><thead><tr><th>Čas</th><th>Co</th><th>Stav</th></tr></thead><tbody id="d-history"></tbody></table>
+        </details>
+      </div>
+      <div id="dp-manage" class="dpane">
+        <h3>Obecné</h3>
+        <form id="d-edit" class="inline">
+          <input id="d-edit-name" maxlength="63" size="16" aria-label="Jméno zařízení">
+          <select id="d-edit-site" aria-label="Lokalita"></select>
+          <select id="d-edit-role" aria-label="Role"></select>
+          <input id="d-edit-note" maxlength="500" placeholder="Poznámka (umístění, kontakt…)">
+          <button type="submit" class="small">Uložit</button>
+        </form>
+        <div id="d-ctl-fold"><h3>Řízení zařízení <span id="ctl-badge" class="badge"></span></h3>
         <div id="dp-ctl">
       
       <p id="ctl-intro" class="muted"></p>
@@ -632,14 +647,41 @@
       <details id="ctl-removed-d" class="fold" hidden><summary>Co převzetí odstraní <span id="ctl-removed-n" class="muted"></span></summary>
         <ul id="ctl-removed"></ul></details>
       <div id="ctl-body" hidden>
+        <div id="ctl-gw" class="gw" hidden>
+          <h4>Internet (WAN)</h4>
+          <p id="gw-note" class="muted"></p>
+          <div class="pe-grid">
+            <label class="pe-field">WAN port <select id="gw-port" aria-label="WAN port"></select></label>
+            <label class="pe-field">Připojení <select id="gw-mode" aria-label="Připojení">
+              <option value="dhcp">DHCP (adresu přidělí poskytovatel)</option>
+              <option value="static">statická adresa</option>
+              <option value="pppoe">PPPoE (jméno a heslo)</option></select></label>
+            <label class="pe-field">VLAN poskytovatele <input id="gw-vlan" inputmode="numeric" placeholder="bez VLAN" size="8" aria-label="VLAN poskytovatele"></label>
+          </div>
+          <div class="pe-grid" id="gw-static" hidden>
+            <label class="pe-field">Adresa <input id="gw-addr" placeholder="203.0.113.10/24" aria-label="Adresa"></label>
+            <label class="pe-field">Brána poskytovatele <input id="gw-gate" placeholder="203.0.113.1" aria-label="Brána poskytovatele"></label>
+            <label class="pe-field">DNS servery <input id="gw-dns" placeholder="1.1.1.1, 8.8.8.8" aria-label="DNS servery"></label>
+          </div>
+          <div class="pe-grid" id="gw-pppoe" hidden>
+            <label class="pe-field">Jméno PPPoE <input id="gw-user" autocomplete="off" aria-label="Jméno PPPoE"></label>
+            <label class="pe-field">Heslo PPPoE <input id="gw-pass" type="password" autocomplete="new-password" aria-label="Heslo PPPoE"></label>
+          </div>
+          <h4>Sítě na bráně</h4>
+          <div class="ptable-wrap"><table class="gw-nets"><thead><tr><th>Síť</th><th>Zóna</th><th>Adresa brány</th><th>DHCP</th><th>Rozsah od</th><th>Rozsah do</th><th>Zápůjčka</th></tr></thead><tbody id="gw-nets"></tbody></table></div>
+          <h4>Firewall – kdo kam smí</h4>
+          <p class="muted">Výchozí pravidla podle účelu sítě. Úprava matice přijde v dalším kroku.</p>
+          <div id="gw-matrix" class="fw"></div>
+          <div class="intent-acts"><button id="gw-save" type="button" class="small secondary">Uložit nastavení brány</button></div>
+        </div>
         <h4>Porty</h4>
         <table class="ptable"><thead><tr><th>Port</th><th>Nastavení</th><th>Výsledek</th><th>Proč</th></tr></thead><tbody id="ctl-ports"></tbody></table>
         <h4>VLAN</h4>
         <table><thead><tr><th>VLAN</th><th>Síť</th><th>Tagované</th><th>Netagované</th></tr></thead><tbody id="ctl-vlans"></tbody></table>
-        <div class="inline ctl-mgmt"><span>Role:</span>
+        <div class="inline ctl-mgmt" id="ctl-role-row"><span>Role:</span>
           <select id="ctl-role" aria-label="Role"></select>
           <span id="ctl-role-why" class="muted"></span></div>
-        <div class="inline ctl-mgmt"><span>Management:</span>
+        <div class="inline ctl-mgmt" id="ctl-mgmt-row"><span>Management:</span>
           <select id="ctl-mgmt-mode" aria-label="Management"><option value="">jak je dnes</option><option value="dhcp">DHCP</option><option value="static">statická adresa</option></select>
           <input id="ctl-mgmt-addr" placeholder="192.168.99.11/24" size="18" hidden aria-label="Adresa managementu">
           <span id="ctl-mgmt-now" class="muted"></span></div>
@@ -653,14 +695,7 @@
           <h4>Moduly (pokročilé)</h4>
           <table class="kv"><tbody id="d-modules"></tbody></table>
         </div>
-        </details>
-        <details class="fold"><summary>Zálohy a historie změn</summary>
-      <h3>Zálohy</h3>
-      <table><thead><tr><th>Čas</th><th>Důvod</th><th>Velikost</th><th>Změna</th><th></th></tr></thead><tbody id="d-backups"></tbody></table>
-      <pre id="d-diff" hidden></pre>
-      <h3>Plány a příkazy</h3>
-      <table><thead><tr><th>Čas</th><th>Co</th><th>Stav</th></tr></thead><tbody id="d-history"></tbody></table>
-        </details>
+        </div>
       </div>
       <div id="dp-ports" class="dpane">
       <div class="ports-head">

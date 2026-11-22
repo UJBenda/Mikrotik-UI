@@ -1286,6 +1286,35 @@ async def site_intent_reconcile(request: Request, p: Principal, tid: str) -> Res
 
 
 @endpoint(READ)
+async def device_gateway_get(request: Request, p: Principal, tid: str) -> Response:
+    """Nastavení řízené brány (WAN, DHCP po sítích, navržené zóny)."""
+    from .. import takeover
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    return json_response(await run_in_threadpool(takeover.gateway_view, st.db, st.box, tid, did))
+
+
+@endpoint(MANAGE)
+async def device_gateway_put(request: Request, p: Principal, tid: str) -> Response:
+    from .. import takeover
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    new = await run_in_threadpool(takeover.set_gateway, st.db, st.box, tid, did, data, p.user_id, client_ip(request))
+
+    def site_of():
+        with tenant_scope(st.db, tid) as tx:
+            r = tx.fetchone("SELECT site_id, managed_at FROM device WHERE id = %(d)s", {"d": did})
+        return r if r and r["site_id"] and r["managed_at"] else None
+
+    r = await run_in_threadpool(site_of)
+    apply = await _autoapply(st, p, tid, str(r["site_id"]), request, only={did}) if r else None
+    return json_response({"ok": True, "gateway": new, "apply": apply})
+
+
+@endpoint(READ)
 async def device_takeover_get(request: Request, p: Principal, tid: str) -> Response:
     from .. import takeover
 
@@ -1839,6 +1868,8 @@ def routes() -> list[Route]:
         Route(d + "/takeover", device_takeover_get, methods=["GET"]),
         Route(d + "/takeover", device_takeover_post, methods=["POST"]),
         Route(d + "/intent", device_intent_put, methods=["PUT"]),
+        Route(d + "/gateway", device_gateway_get, methods=["GET"]),
+        Route(d + "/gateway", device_gateway_put, methods=["PUT"]),
         Route(d + "/internet", device_internet_put, methods=["PUT"]),
         Route(d + "/backup", request_backup, methods=["POST"]),
         Route(d + "/backups/{backup_id}/diff", backup_diff, methods=["GET"]),

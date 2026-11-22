@@ -117,6 +117,8 @@ SECTIONS: list[Section] = [
             "chain,action,disabled,dynamic,in-interface,in-interface-list,out-interface,out-interface-list,"
             "src-address,src-address-list,dst-address,dst-address-list,protocol,dst-port,to-addresses,to-ports,"
             "comment,bytes,packets,invalid"),
+    # řízená brána: kdo smí spravovat router (address-list mtc-admin z fwmatrix)
+    Section("fw_admin", "/ip/firewall/address-list", "list,address,dynamic,disabled", (("list", "mtc-admin"),)),
     Section("if_lists", "/interface/list", "name,builtin,include,exclude,comment"),
     Section("if_list_members", "/interface/list/member", "list,interface,disabled,dynamic"),
     # WAN: výchozí routy (jen 0.0.0.0/0) a DHCP klient – pro pohled Infrastruktura

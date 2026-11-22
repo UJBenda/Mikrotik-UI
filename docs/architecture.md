@@ -1222,3 +1222,35 @@ restart, nová inventura) → `takeover` → `takeover_wait` → `wifi` → `don
   angličtiny, shodu zástupných znaků a mezer na krajích. `tools/i18n_wrap.py` je jednorázový převod starého kódu.
 - **Zatím nepřeloženo**: průvodce instalací (`setup.html/js`) a texty generované serverem (chyby API, alerty,
   notifikace, audit). Návod pro překladatele: `docs/TRANSLATING.md`.
+
+## Řízená brána – gateway mode, krok 1 (etapa 10)
+
+Brána je řízené zařízení jako switch: stejné převzetí (záloha → reset → bootstrap → návrat ze zálohy,
+když controller do 12 min nepotvrdí), stejný bridge s VLAN filtrováním, stejné sladění s commit-confirm.
+Navíc má model část `gw` (`gwcfg.py`):
+
+- **WAN**: port mimo bridge (zadaný, jinak port dnešní výchozí routy); DHCP / statická adresa / PPPoE,
+  volitelně ve VLAN poskytovatele (`wan-vlan`, `pppoe-wan`). Heslo PPPoE je tajemství zařízení
+  (`secret_kind` `wan_password`, migrace 0028) – model ani plán ho nenesou, do bootstrapu se doplní až při
+  vydání zařízení; v náhledu je maska.
+- **Sítě lokality**: každá síť s podsítí dostane na bráně adresu (síť managementu na `bridge`, ostatní na
+  `vlan<id>` nad bridgem – bridge je tagovaný člen VLAN), DHCP server `mtc-v<id>` (rozsah a zápůjčka jdou
+  přepsat) a DNS (brána sama, nebo DNS sítě). Síť bez podsítě zůstává jen L2.
+- **Zóny** podle účelu sítě: mgmt→MGMT, lan→LAN, hoste→GUEST, iot→IOT, kamery→CAM, voip→VOIP, jine→OTHER,
+  plus WAN. Výchozí politiky: každá zóna do internetu, MGMT a LAN do všech vnitřních sítí, ostatní mezi sebou
+  ne; správa routeru (`mtc-admin`) jen ze sítí MGMT (jinak LAN). Pravidla rendruje `fwmatrix` (komentáře
+  `mtc-fw: …`), maškaráda na WAN. Pravidla správy controllerem (`mtc: …`) vznikají až po firewallu a přesunou
+  se nad něj.
+- **Nastavení brány** je v `site_policy` modul `gateway` (`{device_id, wan, dhcp}`), jedna brána na lokalitu;
+  API `GET/PUT …/devices/{id}/gateway`. UI: detail zařízení → záložka Řízení.
+- **Sladění** (`gwcfg.reconcile`, voláno ze `switchcfg.reconcile`): přidání/zrušení/změna sítě (rozhraní,
+  adresa, DHCP), členství v zónách, nová zóna (služby routeru, provoz uvnitř zóny), politiky mezi zónami
+  a seznam `mtc-admin` (sekce inventury `fw_admin`). Zrušené DHCP servery se odebírají dřív, než vzniknou
+  nové (na rozhraní smí být jeden). Brána z výchozí konfigurace role firewall (`mtc-lan`, 192.168.88.0/24)
+  se sladěním převede na sítě lokality – ale až po uložení nastavení brány; bez něj se nesladí.
+- **Zatím neumí**: změnu WAN za provozu (jen při převzetí), úpravu matice zón v UI (krok 2), druhou linku
+  (krok 3), port-forwardy, IPv6 prefixy, VPN. Neověřeno na skutečném hardwaru.
+
+Rozhraní: detail zařízení má záložku **Řízení** (obecné údaje, převzetí, výjimky, brána) místo sbaleného
+bloku v Přehledu; nastavení lokality má sekce vlevo pod sebou; v záhlaví je rychlé hledání (Ctrl+K) přes
+sekce i zařízení.

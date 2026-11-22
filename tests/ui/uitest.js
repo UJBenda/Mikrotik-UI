@@ -547,8 +547,8 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // řízení: náhled převzetí, výjimka portu, plán přes vlastní dialog
     {
       const tick = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
-      await byId["dt-over"].fire("click"); await tick();
-      if (byId["dp-over"].hidden || byId["ctl-ports"].children.length !== 6) errors.push("řízení: porty " + byId["ctl-ports"].children.length);
+      await byId["dt-manage"].fire("click"); await tick();
+      if (byId["dp-manage"].hidden || !byId["dp-over"].hidden || byId["ctl-ports"].children.length !== 6) errors.push("řízení: porty " + byId["ctl-ports"].children.length);
       if (!byId["ctl-ports"].textContent.includes("ether5-tiskarna (ether5)") || !byId["ctl-ports"].textContent.includes("uplink"))
         errors.push("řízení: jména/důvody portů");
       if (byId["ctl-vlans"].children.length !== 3 || byId["ctl-badge"].textContent !== "sledované") errors.push("řízení: VLAN/stav");
@@ -567,6 +567,14 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       else { byId["ask-ok"].onclick(); await p; }
       if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/takeover"))) errors.push("řízení: plán převzetí");
       await byId["dt-ports"].fire("click");
+      // rychlé hledání: sekce podle klíčového slova (bez diakritiky) i zařízení podle jména
+      byId["gs-in"].value = "kanaly"; await byId["gs-in"].fire("input");
+      if (byId["gs-list"].hidden || byId["gs-list"].children.length !== 1) errors.push("hledání: sekce Wi-Fi " + byId["gs-list"].children.length);
+      byId["gs-in"].value = "gw"; await byId["gs-in"].fire("input");
+      if (byId["gs-list"].children.length < 1) errors.push("hledání: zařízení gw");
+      byId["gs-in"].value = "xyzxyz"; await byId["gs-in"].fire("input");
+      if (byId["gs-list"].children[0].className !== "muted") errors.push("hledání: nic nenalezeno");
+      byId["gs-in"].value = ""; await byId["gs-in"].fire("input");
     }
     // historie portů: dva dny, výběr portu filtruje
     const ph = byId["d-ph"].children;

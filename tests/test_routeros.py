@@ -235,6 +235,40 @@ def test_takeover_scripts():
     assert 'comment="mtc-takeover"' in routeros.checkin_source("https://c.example/api/checkin", "KEY", OPTS)
 
 
+def test_gateway_scripts():
+    """Řízená brána (gwcfg): bootstrap (DHCP, PPPoE ve VLAN, statická WAN) a sladění – ASCII a vyvážené."""
+    import copy
+
+    import test_gwcfg as t
+
+    from mtcontroller import intent, switchcfg
+
+    out = []
+    for wan in ({"mode": "dhcp", "vlan": None}, {"mode": "pppoe", "vlan": 848, "user": "isp@isp"},
+                {"mode": "static", "vlan": None, "address": "203.0.113.10/29", "gateway": "203.0.113.9", "dns": ["8.8.8.8"]}):
+        m = t._build(gw={"device_id": "x", "wan": wan, "dhcp": {}})
+        assert m["blockers"] == []
+        out.append(switchcfg.bootstrap(m, routeros.provision_body(P, OPTS),
+                                       routeros.checkin_install("https://c.example/api/checkin", "KEY", OPTS),
+                                       reverted_url="https://c.example/api/checkin/ack?id=9&status=reverted",
+                                       auth_header="Authorization: Bearer KEY", check_certificate="yes-without-crl",
+                                       backup_password="PW", secrets={"wan_password": 'he"slo $x'}))
+    raw = copy.deepcopy(t.INTENT_RAW)
+    raw["networks"][3]["subnet"] = "10.30.0.0/24"
+    raw["networks"].pop(2)
+    inv = t.managed_inv()
+    rec = switchcfg.reconcile(inv, t._build(inv, it=intent.validate(raw)))
+    assert rec["changes"]
+    for s in out + [rec["apply"], rec["revert"]]:
+        assert _balanced(s), s
+        s.encode("ascii")
+    # vše, co brána vytvoří, nese značku mtc (komentář nebo jméno)
+    body = switchcfg.config_body(t._build())
+    for ln in body.splitlines():
+        if " add " in ln and not ln.startswith("#"):
+            assert "mtc" in ln, ln
+
+
 def test_default_config_scripts():
     """Výchozí konfigurace podle role a zónový firewall (defaults, fwmatrix) – ASCII a vyvážené."""
     from mtcontroller import defaults

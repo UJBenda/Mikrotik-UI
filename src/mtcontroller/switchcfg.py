@@ -153,7 +153,8 @@ def classify(inv: dict, role: str = "switch") -> dict:
              [w for w in _rows(inv, "wireless") if not _true(w.get("disabled"))]
     if radios:
         removed.append(f"Wi-Fi: {len(radios)} rozhraní – " + (
-            "rádia převezme CAPsMAN lokality" if role == "ap" else "vypne se (role switch)"))
+            "rádia převezme CAPsMAN lokality" if role == "ap" else
+            "rádia převezme CAPsMAN lokality, jinak se vypnou" if role == "gateway" else "vypne se (role switch)"))
     if any(not defconf(r) for r in fw):
         custom.append("vlastní pravidla firewallu")
     if any(not defconf(r) for r in nat):
@@ -270,9 +271,13 @@ def _infra_neighbor(n: dict) -> bool:
 
 def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name: str = "",
           identity: str = "", ntp: dict | None = None, role: str = "switch", cap_manager: str | None = None,
-          dns: list[str] | None = None, ntp_ctl: bool = False, isolate: list[str] | None = None) -> dict:
+          dns: list[str] | None = None, ntp_ctl: bool = False, isolate: list[str] | None = None,
+          gateway: dict | None = None, admin_extra: list[str] | None = None) -> dict:
     """Model cílové konfigurace. `blockers` = převzetí/sladění nelze provést.
-    role "ap" = AP + switch: rádia řídí CAPsMAN lokality (`cap_manager` = jeho identita)."""
+    role "ap" = AP + switch: rádia řídí CAPsMAN lokality (`cap_manager` = jeho identita).
+    role "gateway" (`gateway` = nastavení brány, viz gwcfg): WAN port mimo bridge, brána směruje
+    sítě lokality – model má navíc část `gw`."""
+    is_gw = role == "gateway"
     from .wificfg import supports_wifi
 
     dev_intent = dev_intent or {}
@@ -295,17 +300,33 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         if not cap_manager:
             blockers.append("lokalita nemá CAPsMAN – vyber ho v záměru lokality (Wi-Fi)")
         cap = {"manager": ascii_text(cap_manager, 60) if cap_manager else ""}
+    if is_gw and cap_manager and supports_wifi(inv):
+        # brána s rádii (hAP, Chateau…): rádia řídí CAPsMAN lokality stejně jako u AP; bez podpory zůstanou vypnutá
+        from .packages import wifi_status
+
+        if wifi_status(inv)["ok"]:
+            cap = {"manager": ascii_text(cap_manager, 60)}
     ports = physical_ports(inv)
     if not ports:
         blockers.append("inventura neobsahuje žádné ethernet/SFP porty")
     path = mgmt_path(inv)
     uplink = path["uplink"]
-    if not uplink:
+    wan_port = None
+    if is_gw:
+        # brána nemá uplink: port do internetu (zadaný, jinak ten, kudy jde dnes výchozí routa) je WAN
+        want = str(((gateway or {}).get("wan") or {}).get("port") or "")
+        known_now = {p["port"]: p["port"] for p in ports} | {p["name"]: p["port"] for p in ports}
+        wan_port = known_now.get(want) if want else uplink
+        if want and not wan_port:
+            blockers.append(f"WAN port {want} na zařízení není")
+        ports = [p for p in ports if p["port"] != wan_port]
+        uplink = None
+    elif not uplink:
         blockers.append("nepodařilo se zjistit uplink (port k bráně) – zařízení musí mít výchozí routu "
                         "a bránu v ARP; zkus to po další inventuře")
     mg_vid = int(intent["mgmt_vlan"])
     native = bool(intent.get("mgmt_native", True))
-    if path["l3"] and uplink:
+    if path["l3"] and uplink and not is_gw:
         if native and path["tagged_vid"] is not None:
             blockers.append(f"zařízení dnes dosahuje brány přes VLAN {path['tagged_vid']} tagovaně, záměr chce "
                             "management bez tagu – po převzetí by se neozvalo")
@@ -325,6 +346,9 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
     for b in dev_intent.get("bonds") or []:
         members = [names.get(str(x), str(x)) for x in b.get("ports") or []]
         missing = [m for m in members if m not in known]
+        if wan_port and wan_port in members:
+            blockers.append(f"LACP {b.get('name')}: {wan_port} je WAN port")
+            continue
         if missing:
             blockers.append(f"LACP {b.get('name')}: port {', '.join(missing)} na zařízení není")
             continue
@@ -401,12 +425,23 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
                 item.update(pvid=vid, tagged=[v for v in o.get("tagged") or [] if v in vids and v != vid],
                             frame_types=FT_ALL, loop=False)
         out_ports.append(item)
+    gw_part = None
+    if is_gw:
+        from . import gwcfg
+
+        gw_part, gb, gwarn = gwcfg.plan(intent, gateway, wan_port, mg_vid, admin_extra)
+        blockers += gb
+        warnings += gwarn
+    l3_vids = {n["vid"] for n in gw_part["nets"]} if gw_part else set()
     vlans = []
     for n in intent["networks"]:
         vid = n["vlan_id"]
         tagged, untagged = [], []
         if vid == mg_vid:
             untagged.append(BRIDGE)
+        elif vid in l3_vids:
+            # brána: síť má adresu na rozhraní vlan<id> nad bridgem → bridge je tagovaný člen
+            tagged.append(BRIDGE)
         for it in out_ports:
             if it["mode"] == "trunk":
                 (untagged if native and vid == mg_vid else tagged).append(it["port"])
@@ -417,7 +452,9 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         vlans.append({"vid": vid, "name": n["name"], "tagged": tagged, "untagged": untagged})
     mnet = intentmod.network(intent, mg_vid) or {}
     dm = (dev_intent.get("mgmt") or {})
-    if dm.get("mode") == "static":
+    if is_gw:
+        mgmt = {"mode": "gateway"}
+    elif dm.get("mode") == "static":
         mgmt = {"mode": "static", "address": dm["address"], "gateway": mnet.get("gateway"), "dns": mnet.get("dns") or []}
     elif dm.get("mode") == "dhcp" or path["mode"] != "static":
         mgmt = {"mode": "dhcp"}
@@ -431,7 +468,7 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
     if mgmt["mode"] == "static" and not mgmt.get("dns"):
         warnings.append("statický management bez DNS – doplň DNS v síti management (jinak se nespojí s controllerem)")
     snooping = bool(HW_SNOOPING.match(model_name or ""))
-    if not snooping:
+    if not snooping and not is_gw:
         warnings.append("DHCP snooping vynechán: čip nemá HW podporu (běžel by na CPU)")
     if path["mode"] == "dhcp" and mgmt["mode"] == "dhcp":
         warnings.append("management přes DHCP – doporučuji rezervaci adresy na DHCP serveru")
@@ -450,12 +487,14 @@ def build(inv: dict, intent: dict, dev_intent: dict | None = None, *, model_name
         "dns_servers": [x for x in dns or [] if re.fullmatch(r"[0-9A-Fa-f.:]{2,45}", x)] or None,
         # izolace (lokální režim): zařízení samo jen do privátních sítí + tyto adresy (controller, DNS)
         "isolate": sorted({x for x in isolate if re.fullmatch(r"[0-9.]{7,15}", x)}) if isolate is not None else None,
-        "blockers": blockers, "warnings": warnings,
+        "gw": gw_part, "blockers": blockers, "warnings": warnings,
     }
 
 
 def model_sha(model: dict) -> str:
     keep = {k: model.get(k) for k in ("ports", "vlans", "mgmt", "snooping", "identity", "cap")}
+    if model.get("gw"):
+        keep["gw"] = model["gw"]
     return hashlib.sha256(json.dumps(keep, sort_keys=True).encode()).hexdigest()
 
 
@@ -474,8 +513,9 @@ def _bond_line(name: str, bond: dict, slaves: list[str]) -> str:
             f"lacp-rate={bond['lacp_rate']} transmit-hash-policy={bond['hash']} comment=\"mtc\"")
 
 
-def config_body(model: dict) -> str:
-    """Bridge, porty, VLAN tabulka, management, systém. Předpokládá čistou konfiguraci."""
+def config_body(model: dict, secrets: dict | None = None) -> str:
+    """Bridge, porty, VLAN tabulka, management, systém. Předpokládá čistou konfiguraci.
+    `secrets` = tajemství, která model nenese (heslo PPPoE brány); bez nich maska (náhled)."""
     m = model["mgmt"]
     lines = [
         f"/interface bridge add name={BRIDGE} vlan-filtering=no protocol-mode=rstp pvid={int(m['vid'])} "
@@ -502,7 +542,12 @@ def config_body(model: dict) -> str:
     # filtrování zapnout až s hotovou VLAN tabulkou
     lines.append(f"/interface bridge set {BRIDGE} vlan-filtering=yes")
     dns = model.get("dns_servers")
-    if m["mode"] == "static":
+    gw = model.get("gw")
+    if gw:
+        from . import gwcfg
+
+        lines += gwcfg.config_lines(model, secrets)
+    elif m["mode"] == "static":
         lines.append(f"/ip address add address={q(m['address'])} interface={BRIDGE} comment=\"mtc\"")
         lines.append(f"/ip route add dst-address=0.0.0.0/0 gateway={q(m['gateway'])} comment=\"mtc mgmt\"")
         if dns or m.get("dns"):
@@ -523,7 +568,7 @@ def config_body(model: dict) -> str:
         f"/system identity set name={q(model['identity'])}",
         f"/system clock set time-zone-autodetect=no time-zone-name={q(model['timezone'])}",
         f"/system ntp client set enabled=yes servers={q(','.join(model['ntp']))}",
-        "/ip dns set allow-remote-requests=no",
+        *([] if gw else ["/ip dns set allow-remote-requests=no"]),
         # zbytečné služby vypnout; www-ssl (REST pro controller) nastaví provisioning
         ':foreach s in={"telnet";"ftp";"www";"api"} do={ :do { /ip service set [find name=$s] disabled=yes } on-error={} }',
         "/tool mac-server set allowed-interface-list=none",
@@ -581,13 +626,13 @@ def _revert_source(reverted_url: str, auth_header: str, check_certificate: str, 
 
 
 def bootstrap(model: dict, adopt_body: str, checkin_install: str, *, reverted_url: str, auth_header: str,
-              check_certificate: str, backup_password: str) -> str:
+              check_certificate: str, backup_password: str, secrets: dict | None = None) -> str:
     """Skript pro `run-after-reset`: počká na porty, nastaví návrat ze zálohy,
     nasadí konfiguraci a znovu založí správu controllerem (tunel, účet, check-in).
 
     Návrat: tik každou minutu; po REVERT_TICKS bez potvrzení (CONFIRM_BODY smaže
     scheduler) se obnoví záloha pořízená těsně před resetem."""
-    n = len(model["ports"])
+    n = len(model["ports"]) + (1 if model.get("gw") else 0)
     tick = (":global mtcConfirmTicks\n"
             ':if ([:typeof $mtcConfirmTicks] != "num") do={ :set mtcConfirmTicks 0 }\n'
             ":set mtcConfirmTicks ($mtcConfirmTicks + 1)\n"
@@ -614,7 +659,7 @@ def bootstrap(model: dict, adopt_body: str, checkin_install: str, *, reverted_ur
 /system scheduler add name="mtc-confirm" interval=1m start-date=[/system clock get date] start-time=00:00:00 policy={SCRIPT_POLICY} comment="mtc" on-event="/system script run mtc-confirm-tick"
 :local ok true
 :do {{
-{config_body(model).rstrip()}
+{config_body(model, secrets).rstrip()}
 }} on-error={{ :set ok false; :log error "mtc: bootstrap - chyba konfigurace" }}
 # --- sprava controllerem (tunel, ucet, certifikat, firewall, check-in) ---
 :if ($ok) do={{
@@ -849,7 +894,11 @@ def reconcile(inv: dict, model: dict) -> dict:
             changes.append(f"odebrat VLAN {vid}")
             additive = False
     # adresa managementu: DHCP ↔ statická (s návratem, přeruší-li to správu)
-    a, r, c = _mgmt_diff(inv, model["mgmt"])
+    a, r, c = _mgmt_diff(inv, model["mgmt"]) if model["mgmt"].get("mode") != "gateway" else ([], [], [])
+    if model.get("gw"):
+        from . import gwcfg
+
+        a, r, c = gwcfg.reconcile(inv, model)
     if a:
         apply += a
         revert += r

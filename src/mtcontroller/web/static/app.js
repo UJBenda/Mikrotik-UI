@@ -183,6 +183,7 @@ function show(which) {
   for (const s of ["login", "mfa", "app"]) $(s).hidden = s !== which;
   $("detail").hidden = true;
   $("nav").hidden = which !== "app";
+  $("gs").hidden = which !== "app";
   for (const [k] of VIEWS) { const b = $("nav-" + k); if (b) b.className = "navbtn" + (which === "app" && k === prefs.view ? " active" : ""); }
 }
 
@@ -2324,6 +2325,86 @@ function showView(key, load) {
   if (key === "dash") renderOverview();
 }
 
+// --- rychlé hledání v záhlaví (Ctrl+K): kde co je + zařízení ----------------------------------------------
+// [popisek, kde to je, klíčová slova, pohled, podzáložka]
+const GS_PLACES = [
+  [__("Mapa lokality"), __("Přehled"), "mapa infrastruktura wan map overview", "dash", "infra"],
+  [__("Topologie"), __("Přehled"), "topologie strom spoje topology links", "dash", "topo"],
+  ["STP", __("Přehled"), "stp rstp root smycka loop", "dash", "stp"],
+  [__("Seznam zařízení"), __("Zařízení"), "zarizeni adopce pridat switch ap devices adopt", "devices", "list"],
+  [__("Porty všech switchů"), __("Zařízení"), "porty poe vlan ports", "devices", "sports"],
+  [__("Klienti"), __("Klienti"), "klienti wifi mac ip clients history historie", "clients", null],
+  [__("Sítě (VLAN, podsítě)"), __("Nastavení"), "site vlan podsit dhcp subnet networks zamer", "settings", "net"],
+  [__("Wi-Fi (SSID, hesla, kanály)"), __("Nastavení"), "wifi ssid heslo capsman kanaly channels password", "settings", "wifi"],
+  [__("Profily portů"), __("Nastavení"), "profily portu trunk access port profiles", "settings", "prof"],
+  [__("Aktualizace RouterOS a firmware"), __("Nastavení"), "aktualizace upgrade update routerboot firmware automaticke", "settings", "sys"],
+  [__("Přidat zařízení, výchozí konfigurace, NTP"), __("Nastavení"), "adopce pridat netinstall vychozi konfigurace ntp cas adopt defaults time", "settings", "sys"],
+  [__("Alerty"), __("Aktivita"), "alerty upozorneni problemy alerts servisni okno maintenance", "activity", "alerts"],
+  [__("Změny (plány ke schválení)"), __("Aktivita"), "zmeny plany schvaleni prevzeti changes plans approve", "activity", "plans"],
+  [__("Audit"), __("Aktivita"), "audit log kdo co historie", "activity", "audit"],
+  [__("Všechny lokality"), __("Lokality"), "lokality sites tenant", "tenant", null],
+  [__("Uživatelé a přístupy"), __("Uživatelé"), "uzivatele hesla mfa role users", "users", null],
+  [__("Systém (certifikáty, čas a DNS, zálohy)"), __("Systém"), "system certifikat dns ntp zaloha backup smtp", "system", null],
+];
+const gsNorm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+let gsItems = [], gsSel = 0;
+
+function gsSearch(qs) {
+  const words = gsNorm(qs).split(/\s+/).filter(Boolean);
+  const out = [];
+  if (!words.length) return out;
+  const hit = (text) => words.every((w) => text.includes(w));
+  for (const d of devicesCache) {
+    if (hit(gsNorm([d.identity, d.serial, d.model, d.note, d.tunnel_ip, d.role].join(" "))))
+      out.push({ label: d.identity || d.serial, where: __("zařízení") + (d.model ? " · " + d.model : ""), go: () => openDetail(d.id) });
+  }
+  // brána, WAN, firewall: nastavení je v detailu brány (záložka Řízení)
+  const gw = devicesCache.find((d) => d.role === "gateway");
+  if (gw && hit("brana gateway wan internet pppoe firewall zony zones dhcp server nat"))
+    out.push({ label: __("Brána: internet (WAN), DHCP, firewall"), where: (gw.identity || gw.serial) + " → " + __("Řízení"),
+               go: async () => { await openDetail(gw.id); openDetailTab("manage"); } });
+  for (const [label, where, kw, view, sub] of GS_PLACES) {
+    if (view === "system" && !(me && me.superadmin)) continue;
+    if (hit(gsNorm(label + " " + where) + " " + kw))
+      out.push({ label, where, go: () => { if ($("app").hidden) show("app"); if (sub) openSub(view, sub); else showView(view, true); } });
+  }
+  return out.slice(0, 12);
+}
+
+function gsRender() {
+  const ul = $("gs-list"); ul.textContent = "";
+  gsItems = gsSearch($("gs-in").value);
+  gsSel = Math.min(gsSel, Math.max(gsItems.length - 1, 0));
+  ul.hidden = !$("gs-in").value.trim();
+  if (!gsItems.length) { ul.appendChild(el("li", __("Nic nenalezeno"), "muted")); return; }
+  gsItems.forEach((it, i) => {
+    const li = el("li", null, i === gsSel ? "sel" : "");
+    li.append(el("span", it.label), el("small", it.where));
+    li.addEventListener("mousedown", (e) => { e.preventDefault(); gsGo(i); });
+    ul.appendChild(li);
+  });
+}
+
+function gsGo(i) {
+  const it = gsItems[i]; if (!it) return;
+  $("gs-in").value = ""; $("gs-list").hidden = true; $("gs-in").blur();
+  it.go();
+}
+
+$("gs-in").addEventListener("input", () => { gsSel = 0; gsRender(); });
+$("gs-in").addEventListener("focus", gsRender);
+$("gs-in").addEventListener("blur", () => { $("gs-list").hidden = true; });
+$("gs-in").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (gsItems.length) { gsSel = (gsSel + (e.key === "ArrowDown" ? 1 : gsItems.length - 1)) % gsItems.length; gsRender(); }
+  } else if (e.key === "Enter") { e.preventDefault(); gsGo(gsSel); }
+  else if (e.key === "Escape") { e.stopPropagation(); $("gs-in").value = ""; $("gs-list").hidden = true; $("gs-in").blur(); }
+});
+if (typeof document.addEventListener === "function") document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "k" && !$("gs").hidden) { e.preventDefault(); $("gs-in").focus(); $("gs-in").select(); }
+});
+
 let plansOpen = 0, alertsOpen = [0, 0];
 function activityBadge() { setBadge("activity", plansOpen + alertsOpen[0], alertsOpen[1] ? "bad" : "warn"); }
 
@@ -2333,9 +2414,9 @@ function setBadge(key, n, cls) {
 }
 
 // panel zařízení: Přehled · Porty · Wi-Fi · Diagnostika a logy (ta má vlastní podzáložky)
-const DETAIL_TABS = ["over", "ports", "wifi", "diag"];
+const DETAIL_TABS = ["over", "ports", "manage", "wifi", "diag"];
 const DIAG_TABS = ["sec", "vlan", "tools", "logs"];
-const DETAIL_LOADERS = { over: (id) => loadControl(id), wifi: (id) => loadDevWifi(id), logs: (id) => loadLogs(id), tools: (id) => loadBw(id) };
+const DETAIL_LOADERS = { over: (id) => loadControl(id), manage: (id) => loadControl(id), wifi: (id) => loadDevWifi(id), logs: (id) => loadLogs(id), tools: (id) => loadBw(id) };
 function showDetailTab(key) {
   if (DIAG_TABS.includes(key)) { prefs.diagTab = key; key = "diag"; }
   if (!DETAIL_TABS.includes(key) || $("dt-" + key).hidden) key = "over";
@@ -4747,7 +4828,8 @@ async function openDetail(id) {
     [__("Uptime"), sm.uptime], ["CPU", sm.cpu_load != null ? `${sm.cpu_load} %${sm.cpu ? ` (${sm.cpu})` : ""}` : null],
     [__("Paměť"), sm.memory_used_pct != null ? `${sm.memory_used_pct} %` : null], [__("Úložiště"), sm.hdd_used_pct != null ? `${sm.hdd_used_pct} %` : null],
     [__("Role"), ROLE_NAME[dev.role] || dev.role],
-    [__("Režim"), dev.managed_at ? __("Řízené – controller nastavuje porty, VLAN, NTP a Wi-Fi") : __("Sledované – controller jen čte")],
+    [__("Režim"), (() => { const x = el("a", dev.managed_at ? __("Řízené – controller nastavuje porty, VLAN, NTP a Wi-Fi") : __("Sledované – controller jen čte"));
+      x.href = "#"; x.title = __("Otevřít záložku Řízení"); x.addEventListener("click", (e) => { e.preventDefault(); openDetailTab("manage"); }); return x; })()],
     d.isolation ? [__("Internet"), isoCell(d)] : null,
     [__("Lokalita"), dev.site], [__("Poznámka"), dev.note], isLocal() ? [__("Adresa správy"), dev.tunnel_ip || "–"] : [__("Tunel"), __`${dev.tunnel_ip || "–"} přes ${dev.concentrator || "–"}`],
     [__("Check-in"), fmtTime(dev.last_checkin_at)], [__("Inventura"), fmtTime(dev.inventory_at)], [__("Záloha"), fmtTime(dev.backup_at)],
@@ -6291,6 +6373,14 @@ function renderControl() {
   }
   $("ctl-body").hidden = !c.model;
   if (!c.model) return;
+  const isGw = !!c.model.gw;
+  $("ctl-gw").hidden = !isGw;
+  $("ctl-role-row").hidden = isGw;
+  $("ctl-mgmt-row").hidden = isGw;
+  if (isGw) {
+    if (!c.managed) $("ctl-intro").textContent = __("Převzetí smaže současnou konfiguraci routeru a nasadí ji načisto: WAN, sítě lokality s DHCP, NAT a firewall podle zón. Předtím se udělá záloha; když se brána po převzetí do 12 minut neozve controlleru, sama se z ní vrátí.");
+    loadGateway(detailId);
+  }
   renderCtlPorts();
   const vt = $("ctl-vlans"); vt.textContent = "";
   const name = (p) => { if (p === "bridge") return __("správa zařízení"); const x = c.model.ports.find((q) => q.port === p); return x ? x.name : p; };
@@ -6398,6 +6488,110 @@ $("ctl-go").addEventListener("click", async () => {
     msg(__`Plán převzetí #${r.plan_id} čeká na schválení v Aktivitě → Změny.`);
     loadPlans();
     loadControl(detailId);
+  } catch (e) { msg(e.message, true); }
+});
+
+
+// --- řízená brána: WAN, DHCP po sítích, náhled zón -------------------------------------------------------
+
+let gwData = null;
+const ZONE_LABEL = { WAN: __("internet"), MGMT: __("správa"), LAN: "LAN", GUEST: __("hosté"), IOT: "IoT", CAM: __("kamery"), VOIP: "VoIP", OTHER: __("jiné") };
+
+async function loadGateway(id) {
+  try { gwData = await api("GET", `/tenants/${tenantId}/devices/${id}/gateway`); }
+  catch (e) { return msg(e.message, true); }
+  if (id !== detailId) return;
+  renderGateway();
+}
+
+function gwModeFields() {
+  const m = $("gw-mode").value;
+  $("gw-static").hidden = m !== "static";
+  $("gw-pppoe").hidden = m !== "pppoe";
+}
+
+function renderGateway() {
+  const g = gwData, w = g.wan || {};
+  const lock = g.managed && g.configured;   // WAN řízené brány se za provozu zatím nemění
+  $("gw-note").textContent = g.other_gateway ? __`Lokalita už má nastavenou bránu ${g.other_gateway}.`
+    : lock ? __("WAN řízené brány zatím za provozu změnit nejde (jen při převzetí). DHCP a sítě se mění sladěním.")
+    : !g.configured ? __("Zkontroluj, kudy jde internet, a ulož. Bez uložení se použije port dnešní výchozí routy a DHCP.") : "";
+  const ps = $("gw-port"); ps.textContent = "";
+  for (const p of g.ports) { const o = el("option", p.name + (p.name !== p.port ? ` (${p.port})` : "")); o.value = p.port; ps.appendChild(o); }
+  ps.value = w.port || g.wan_guess || (g.ports[0] && g.ports[0].port) || "";
+  $("gw-mode").value = w.mode || "dhcp";
+  $("gw-vlan").value = w.vlan || "";
+  $("gw-addr").value = w.address || ""; $("gw-gate").value = w.gateway || ""; $("gw-dns").value = (w.dns || []).join(", ");
+  $("gw-user").value = w.user || ""; $("gw-pass").value = "";
+  $("gw-pass").placeholder = w.has_password ? __("uloženo – vyplň jen pro změnu") : "";
+  for (const id of ["gw-port", "gw-mode", "gw-vlan", "gw-addr", "gw-gate", "gw-dns", "gw-user", "gw-pass"]) $(id).disabled = lock || !canManage();
+  gwModeFields();
+  const tb = $("gw-nets"); tb.textContent = "";
+  for (const n of g.networks) {
+    const tr = el("tr"); tr.dataset.vid = n.vid;
+    const pl = n.plan, o = g.dhcp[String(n.vid)] || {};
+    tr.append(el("td", `${n.name} (${n.vid})`));
+    if (!pl) {
+      const td = el("td", n.subnet ? __("podsíť nejde použít") : __("bez podsítě – brána ji nesměruje (doplň v Nastavení → Sítě)"), "muted");
+      td.colSpan = 6; tr.appendChild(td); tb.appendChild(tr); continue;
+    }
+    const on = el("input"); on.type = "checkbox"; on.className = "gw-on"; on.checked = o.enabled !== false; on.setAttribute("aria-label", __("DHCP server"));
+    const rng = (pl.dhcp ? pl.dhcp.ranges : "").split(",");
+    const from = el("input"), to = el("input"), lease = el("input");
+    from.className = "gw-from"; to.className = "gw-to"; lease.className = "gw-lease";
+    from.size = to.size = 13; lease.size = 5;
+    from.value = o.start || ""; to.value = o.end || ""; lease.value = o.lease || "";
+    from.placeholder = rng[0] ? rng[0].split("-")[0] : ""; to.placeholder = rng.length ? rng[rng.length - 1].split("-").pop() : "";
+    lease.placeholder = pl.dhcp ? pl.dhcp.lease : "12h";
+    from.setAttribute("aria-label", __("Rozsah od")); to.setAttribute("aria-label", __("Rozsah do")); lease.setAttribute("aria-label", __("Zápůjčka"));
+    const cell = (x) => { const td = el("td"); td.appendChild(x); return td; };
+    tr.append(el("td", ZONE_LABEL[pl.zone] || pl.zone), el("td", pl.address), cell(on), cell(from), cell(to), cell(lease));
+    for (const x of [on, from, to, lease]) x.disabled = !canManage();
+    tb.appendChild(tr);
+  }
+  // matice: řádek = odkud, sloupec = kam
+  const box = $("gw-matrix"); box.textContent = "";
+  const zones = Object.keys(g.zones || {});
+  if (zones.length) {
+    const allow = new Set((g.policies || []).filter((p) => p.action === "accept").map((p) => p.src + ">" + p.dst));
+    const t = el("table", "", "fw-matrix"), hr = el("tr");
+    hr.appendChild(el("th", __("odkud ↓ / kam →")));
+    for (const z of zones) hr.appendChild(el("th", ZONE_LABEL[z] || z));
+    t.appendChild(hr);
+    for (const s of zones) {
+      const tr = el("tr"); tr.appendChild(el("th", ZONE_LABEL[s] || s));
+      for (const d of zones) {
+        const ok = allow.has(s + ">" + d) || (s === d && s !== "WAN");
+        const td = el("td", s === d && s === "WAN" ? "–" : ok ? "✓" : "✕", s === d && s === "WAN" ? "muted" : ok ? "fw-allow" : "fw-block");
+        td.title = (ZONE_LABEL[s] || s) + " → " + (ZONE_LABEL[d] || d) + ": " + (ok ? __("povoleno") : __("zakázáno"));
+        tr.appendChild(td);
+      }
+      t.appendChild(tr);
+    }
+    box.appendChild(t);
+  }
+  $("gw-save").disabled = !canManage() || !!g.other_gateway;
+}
+
+$("gw-mode").addEventListener("change", gwModeFields);
+$("gw-save").addEventListener("click", async () => {
+  const wan = { port: $("gw-port").value, mode: $("gw-mode").value, vlan: $("gw-vlan").value.trim() || null };
+  if (wan.mode === "static") Object.assign(wan, { address: $("gw-addr").value.trim(), gateway: $("gw-gate").value.trim(),
+    dns: $("gw-dns").value.split(/[\s,;]+/).filter(Boolean) });
+  if (wan.mode === "pppoe") { wan.user = $("gw-user").value.trim(); if ($("gw-pass").value) wan.password = $("gw-pass").value; }
+  const dhcp = {};
+  for (const tr of $("gw-nets").querySelectorAll("tr")) {
+    const on = tr.querySelector(".gw-on");
+    if (!on) continue;
+    const o = { enabled: on.checked }, f = tr.querySelector(".gw-from").value.trim(), t = tr.querySelector(".gw-to").value.trim(),
+      l = tr.querySelector(".gw-lease").value.trim();
+    if (f || t) { o.start = f; o.end = t; }
+    if (l) o.lease = l;
+    dhcp[tr.dataset.vid] = o;
+  }
+  try {
+    const r = await api("PUT", `/tenants/${tenantId}/devices/${detailId}/gateway`, { wan, dhcp });
+    msg(__("Nastavení brány uloženo")); showApply(r.apply); loadControl(detailId);
   } catch (e) { msg(e.message, true); }
 });
 
