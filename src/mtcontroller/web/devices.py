@@ -1163,7 +1163,7 @@ async def uplinks(request: Request, p: Principal, tid: str) -> Response:
 
 
 INFRA_SECTIONS = ["interfaces", "neighbors", "resource", "ethernet_monitor", "poe_monitor", "stp_bridges",
-                  "stp_ports", "bridges", "bridge_ports", "routes_default", "dhcp_client", "addresses"]
+                  "stp_ports", "bridges", "bridge_ports", "routes_default", "dhcp_client", "addresses", "bridge_hosts"]
 
 
 @endpoint(READ)

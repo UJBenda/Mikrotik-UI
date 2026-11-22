@@ -1280,3 +1280,10 @@ jednom „portu“ – mapa z toho udělala hvězdu nebo „nespravovaný switch
 který RouterOS sám používá – `ether3,bridge`). Běží při sběru inventury i při čtení (`inventory.load`),
 takže se opraví i dříve uložená data; duplicitní záznamy téhož souseda na témž portu se sloučí. Soused,
 jehož MAC v tabulce hostů není, zůstane, jak byl.
+
+Mapa lokality navíc skládá strom z tabulek MAC adres bridge (FDB, sekce `bridge_hosts`): pro každé
+zařízení port, na kterém vidí MAC ostatních spravovaných zařízení (všechny jejich MAC, ne jen tu ze
+sousedů). Od brány: uplink zařízení = port, kde vidí bránu; rodič = zařízení, které ho vidí na jiném než
+svém uplink portu a má za tím portem nejméně zařízení. Dá správně kaskádu (switch → spoj → switch → AP)
+i bez discovery a s neúplnými tabulkami; porty jsou známé na obou koncích spoje. Jméno VLAN rozhraní nebo
+bridge se jako port neukáže (port „?“). Bez brány v lokalitě zůstává původní párové porovnání sousedů.

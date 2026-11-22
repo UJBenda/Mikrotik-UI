@@ -147,6 +147,31 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
                     ext_seen.add(key)
                     externals.append({"parent": a, "port": port, "label": n.get("identity") or n.get("mac-address"),
                                       "platform": n.get("board") or n.get("platform"), "address": n.get("address")})
+    # tabulka MAC adres bridge (FDB): na kterém portu zařízení vidí MAC ostatních spravovaných zařízení.
+    # Je spolehlivější než sousedé – zná každé zařízení, přes které jde provoz, i když discovery hlásí
+    # jen rozhraní VLAN nebo je vypnuté. Sousedé hlášení bez portu (jen VLAN / bridge) se nepočítají.
+    virtual: dict[str, set[str]] = {}
+    for a in ids:
+        inv = invs.get(a, {})
+        # rozhraní, která nejsou port (VLAN, bridge, tunely…) – podle typu, ne podle jména
+        virtual[a] = {str(i.get("name")) for i in _rows(inv, "interfaces")
+                       if str(i.get("type") or "").startswith(("vlan", "bridge", "vrrp", "veth", "loopback", "wg", "gre",
+                                                               "eoip", "ipip", "vxlan", "pppoe", "sstp", "l2tp", "ovpn"))}
+        for h in _rows(inv, "bridge_hosts"):
+            if _true(h.get("local")):
+                continue
+            b = owner.get(str(h.get("mac-address") or "").upper())
+            port = str(h.get("on-interface") or "")
+            if b and b != a and port:
+                seen.setdefault((a, port), set()).add(b)
+                has_nb.add(a)
+    for (a, p) in [k for k in seen if k[1] in virtual[k[0]]]:
+        # „port“ je rozhraní VLAN nebo bridge: pokud totéž zařízení známe i na fyzickém portu, záznam zahodit
+        rest = {b for b in seen[(a, p)] if not any(b in bs for (a2, p2), bs in seen.items() if a2 == a and p2 not in virtual[a])}
+        if rest:
+            seen[(a, p)] = rest
+        else:
+            del seen[(a, p)]
     ports: dict[tuple[str, str], str] = {}   # (a, b) → port na a
     for (a, p), bs in seen.items():
         for b in bs:
@@ -157,6 +182,36 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
                 if b2 == b and a in back and not (bs & back):
                     ports[(a, b)] = p
                     ports.setdefault((b, a), q)
+    # strom od brány: uplink zařízení = port, kde vidí bránu; rodič = nejbližší zařízení, které ho vidí
+    # na jiném než svém uplink portu (to s nejmenší množinou zařízení za tím portem). Nepotřebuje, aby se
+    # zařízení viděla navzájem úplně, a dá správně i kaskádu switch → spoj → switch → AP.
+    root0 = next((d for d in ids if dev[d].get("role") == "gateway" and any(a == d for a, _p in seen)), None)
+    if root0:
+        uplink: dict[str, str] = {}
+        for (a, p), bs in sorted(seen.items()):
+            if a != root0 and root0 in bs:
+                uplink.setdefault(a, p)
+        tree: dict[str, tuple[str, str]] = {}
+        for b in ids:
+            if b == root0:
+                continue
+            anc = sorted((len(bs), a != root0, a, p) for (a, p), bs in seen.items()
+                         if b in bs and a != b and (a == root0 or (a in uplink and uplink[a] != p)))
+            if anc:
+                tree[b] = (anc[0][2], anc[0][3])
+        for b in list(tree):                     # pojistka proti kruhu při nekonzistentních tabulkách
+            x, hops = b, 0
+            while x in tree and hops <= len(ids):
+                x, hops = tree[x][0], hops + 1
+            if hops > len(ids):
+                del tree[b]
+        if tree:
+            placed = set(tree) | {root0}
+            ports = {k: v for k, v in ports.items() if k[0] not in placed and k[1] not in placed}
+            for b, (a, p) in tree.items():
+                ports[(a, b)] = p
+                if b in uplink:
+                    ports[(b, a)] = uplink[b]
     # zařízení bez dat o sousedech (offline): k pozorovateli, který ho vidí jako jediného za portem
     for b in ids:
         if b in has_nb or any(x == b for _a, x in ports):
@@ -264,7 +319,9 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
             return None, hub_port.get(b)
         if infos[b].get("kind") == "hub":
             return hub_port.get(a), None
-        return ports.get((a, b)), ports.get((b, a))
+        # jméno VLAN rozhraní nebo bridge není port – raději „neznámý“ než zavádějící popisek
+        pa, pb = ports.get((a, b)), ports.get((b, a))
+        return (None if pa in virtual.get(a, ()) else pa, None if pb in virtual.get(b, ()) else pb)
 
     order: list[str] = []
     visited: set[str] = set()

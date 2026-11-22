@@ -4210,7 +4210,7 @@ function drawInfra() {
   const cx = (n) => 60 + pos[n.id] * (NW + GX) + NW / 2;
   const y = (n) => TOP + wanRoot * (WH + 90) + n.level * LV;
   const g = (cls) => svgEl("g", cls ? { class: cls } : {});
-  const num = (p) => String(p || "").replace(/^\D+/, "") || "?";
+  const num = (p) => String(p || "").replace(/^\D+/, "") || (p ? String(p).slice(0, 12) : "?");   // přejmenovaný port bez čísla → jméno
   const badge = (x0, y0, text, kind) => {
     const b = g("pbadge " + kind);
     b.appendChild(svgEl("rect", { x: x0 - 30, y: y0 - 14, width: 60, height: 28, rx: 7 }));
