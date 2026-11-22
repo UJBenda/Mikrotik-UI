@@ -4098,6 +4098,96 @@ function drawMlag() {
 }
 
 
+// --- mapové ovládání SVG: kolečko = zoom ke kurzoru, tažení = posun, dvojklik = přiblížit, špetka na dotyku ----
+// Obsah si drží své souřadnice (0..W × 0..H); mění se jen viewBox podle {x, y, k}. Pohled přežije
+// překreslení dat; nově se nastaví jen poprvé nebo tlačítkem „Vejít do okna“.
+function mapControl(box, svg) {
+  const st = { x: 0, y: 0, k: 1, W: 0, H: 0, set: false };
+  if (!box || !svg || typeof box.getBoundingClientRect !== "function") return { content() {}, fit() {} };
+  const size = () => { const r = box.getBoundingClientRect(); return [Math.max(50, r.width), Math.max(50, r.height)]; };
+  const apply = () => {
+    const [w, h] = size();
+    svg.setAttribute("width", w); svg.setAttribute("height", h);
+    svg.setAttribute("viewBox", `${st.x} ${st.y} ${w / st.k} ${h / st.k}`);
+  };
+  const clampK = (k) => Math.min(4, Math.max(0.15, k));
+  const zoomAt = (px, py, k) => {            // px, py = bod v okně, který má zůstat na místě
+    k = clampK(k);
+    st.x += px / st.k - px / k; st.y += py / st.k - py / k; st.k = k; apply();
+  };
+  const fit = () => {
+    const [w, h] = size();
+    st.k = clampK(Math.min(w / (st.W + 40), h / (st.H + 40), 1.25));
+    st.x = (st.W - w / st.k) / 2; st.y = Math.min(0, (st.H - h / st.k) / 2) - 10 / st.k; apply();
+  };
+  const one = () => { const [w] = size(); st.k = 1; st.x = (st.W - w) / 2; st.y = -10; apply(); };
+  const local = (e) => { const r = box.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  box.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const [px, py] = local(e);
+    zoomAt(px, py, st.k * Math.exp(-(e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY) * (e.ctrlKey ? 0.01 : 0.0018)));
+  }, { passive: false });
+  const pts = new Map();
+  let drag = null, moved = false, pinch = null;
+  box.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    if (e.target && e.target.closest && e.target.closest(".map-ctl")) return;
+    pts.set(e.pointerId, local(e));
+    if (pts.size === 1) { drag = { p: local(e), x: st.x, y: st.y }; moved = false; }
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), k: st.k }; drag = null; }
+  });
+  box.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, local(e));
+    if (pinch && pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, pinch.k * Math.hypot(a[0] - b[0], a[1] - b[1]) / Math.max(1, pinch.d));
+      moved = true; return;
+    }
+    if (!drag) return;
+    const [px, py] = local(e), dx = px - drag.p[0], dy = py - drag.p[1];
+    if (!moved && Math.hypot(dx, dy) < 5) return;       // drobný pohyb při kliknutí není tažení
+    if (!moved) { moved = true; box.classList.add("grabbing"); try { box.setPointerCapture(e.pointerId); } catch (_e) { /* není nutné */ } }
+    st.x = drag.x - dx / st.k; st.y = drag.y - dy / st.k; apply();
+  });
+  const end = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (!pts.size) { drag = null; box.classList.remove("grabbing"); }
+  };
+  box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+  // po tažení nesmí „kliknutí“ otevřít zařízení, nad kterým se tažení pustilo
+  box.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+  box.addEventListener("dblclick", (e) => {
+    if (e.target && e.target.closest && e.target.closest(".map-ctl, .node, .ext")) return;
+    const [px, py] = local(e); zoomAt(px, py, st.k * 1.6);
+  });
+  for (const b of box.querySelectorAll("[data-map]")) b.addEventListener("click", () => {
+    const [w, h] = size(), m = b.dataset.map;
+    if (m === "in") zoomAt(w / 2, h / 2, st.k * 1.3); else if (m === "out") zoomAt(w / 2, h / 2, st.k / 1.3);
+    else if (m === "fit") fit(); else one();
+  });
+  if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (st.set) apply(); }).observe(box);
+  return {
+    // po vykreslení obsahu o rozměrech W × H: poprvé vejít do okna, jinak pohled nechat
+    content(W, H) { st.W = W; st.H = H; if (!st.set) { st.set = true; fit(); } else apply(); },
+    fit,
+  };
+}
+const infraMap = mapControl($("infra-canvas"), $("infra-svg"));
+
+$("infra-list-btn").addEventListener("click", () => {
+  const hide = !$("infra-list").hidden;
+  setInfraList(!hide);
+  try { localStorage.setItem("mtc.infraList", hide ? "0" : "1"); } catch (_e) { /* jen pohodlí */ }
+});
+function setInfraList(show) {
+  $("infra-list").hidden = !show;
+  $("infra-list-btn").setAttribute("aria-pressed", show ? "true" : "false");
+  $("infra-list").parentNode.classList.toggle("nolist", !show);
+}
+try { if (localStorage.getItem("mtc.infraList") === "0") setInfraList(false); } catch (_e) { /* jen pohodlí */ }
+
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
   renderInfra();
@@ -4207,6 +4297,7 @@ function drawInfra() {
   const W = Math.max(slot, Math.max(1, d.wans.length) * 1.5) * (NW + GX) + 60;
   const H = TOP + wanRoot * (WH + 90) + (levels + 1) * LV;
   svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  infraMap.content(W, H);
   const cx = (n) => 60 + pos[n.id] * (NW + GX) + NW / 2;
   const y = (n) => TOP + wanRoot * (WH + 90) + n.level * LV;
   const g = (cls) => svgEl("g", cls ? { class: cls } : {});

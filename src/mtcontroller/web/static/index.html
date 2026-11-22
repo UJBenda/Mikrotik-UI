@@ -83,10 +83,21 @@
         <div class="infra-bar">
           <label class="check"><input type="checkbox" id="infra-clients"> klienti (MAC)</label>
           <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
+          <span class="spacer"></span>
+          <button id="infra-list-btn" type="button" class="small secondary" aria-pressed="true" title="Zobrazit nebo skrýt seznam zařízení vlevo">Seznam zařízení</button>
         </div>
         <div class="infra">
           <div id="infra-list" class="infra-list"></div>
-          <div class="infra-canvas"><svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg></div>
+          <div class="infra-canvas mapbox" id="infra-canvas">
+            <svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg>
+            <div class="map-ctl" role="group" aria-label="Ovládání mapy">
+              <button type="button" data-map="in" title="Přiblížit" aria-label="Přiblížit">+</button>
+              <button type="button" data-map="out" title="Oddálit" aria-label="Oddálit">−</button>
+              <button type="button" data-map="fit" title="Vejít do okna" aria-label="Vejít do okna">⤢</button>
+              <button type="button" data-map="one" title="Skutečná velikost" aria-label="Skutečná velikost">1:1</button>
+            </div>
+            <p class="map-hint muted">Kolečko = zoom · tažení = posun · dvojklik = přiblížit</p>
+          </div>
         </div>
       </div>
         <div id="topo-wrap" class="pane" hidden>

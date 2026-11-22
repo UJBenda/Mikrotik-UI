@@ -1150,3 +1150,21 @@ a:hover { text-decoration: underline; }
   .tl-tag { display: none; } .tl-acts { grid-column: 3; visibility: visible; }
 }
 @media (hover: none) { .tl-acts { visibility: visible; } }
+
+/* mapa lokality: okno s posunem a zoomem, skrývací seznam zařízení */
+.infra.nolist { grid-template-columns: 1fr; }
+.infra-bar .spacer { flex: 1; }
+#infra-list-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.mapbox { position: relative; overflow: hidden; height: min(74vh, 860px); min-height: 380px; max-height: none; cursor: grab; touch-action: none;
+  user-select: none; -webkit-user-select: none; }
+.mapbox.grabbing { cursor: grabbing; }
+.mapbox.grabbing svg * { pointer-events: none; }
+.map-ctl { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden; background: var(--card); box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+.map-ctl button { width: 36px; height: 34px; padding: 0; border: 0; border-radius: 0; background: var(--card); color: var(--text); font-size: 16px;
+  line-height: 1; cursor: pointer; }
+.map-ctl button + button { border-top: 1px solid var(--line); }
+.map-ctl button:hover { background: var(--hover); }
+.map-ctl button[data-map="one"] { font-size: 11px; font-weight: 600; }
+.map-hint { position: absolute; left: 10px; bottom: 6px; margin: 0; font-size: 11px; pointer-events: none; opacity: .8; }
+@media (hover: none) { .map-hint { display: none; } }
