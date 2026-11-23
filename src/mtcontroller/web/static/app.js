@@ -1267,28 +1267,20 @@ for (const k of ["all", "wifi", "wired"]) {
   });
 }
 
-// nabídky filtrů (síť, zařízení) podle načtených klientů; výběr zůstává, pokud pořád existuje
+// filtry klientů v levém panelu: kam je klient připojený, Wi-Fi síť, VLAN, výrobce (s počty)
+const CL_FACETS = [
+  ["state", __("Stav"), (c) => c.online === false ? "off" : "on", (v) => v === "on" ? __("Online") : __("Offline")],
+  ["dev", __("Připojeno k"), (c) => c.device || null],
+  ["ssid", __("Wi-Fi síť"), (c) => (c.wifi ? c.wifi.ssid : c.ssid) || null],
+  ["vlan", __("Síť (VLAN)"), (c) => c.vlan ? String(c.vlan) : null, (v) => "VLAN " + v],
+  ["vendor", __("Výrobce"), (c) => c.vendor || null]];
+clView.f = {};
+const clKindOk = (c) => clView.kind === "all" || (clView.kind === "wifi") === clIsWifi(c);
 function clFilterOptions() {
-  const fill = (id, all, values) => {
-    const sel = $(id), cur = sel.value;
-    sel.textContent = "";
-    const o0 = el("option", all); o0.value = ""; sel.appendChild(o0);
-    for (const v of values) { const o = el("option", v[1]); o.value = v[0]; sel.appendChild(o); }
-    sel.value = values.some((v) => v[0] === cur) ? cur : "";
-  };
-  const nets = new Map(), devs = new Map();
-  for (const c of clientsCache) {
-    const ssid = c.wifi ? c.wifi.ssid : c.ssid;
-    if (c.vlan) nets.set("v:" + c.vlan, "VLAN " + c.vlan);
-    if (ssid) nets.set("s:" + ssid, __("Wi-Fi ") + ssid);
-    if (c.device) devs.set(c.device, c.device);
-  }
-  const srt = (m) => [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], LOCALE, { numeric: true }));
-  fill("cl-f-net", __("Všechny sítě"), srt(nets));
-  fill("cl-f-dev", __("Všechna zařízení"), srt(devs));
+  facetGroups($("cl-facets"), "cl", clientsCache, CL_FACETS, clView.f, () => renderClients(), clKindOk);
+  $("cl-clear").disabled = !facetAny(clView.f) && !$("clients-filter").value;
 }
-$("cl-f-net").addEventListener("change", () => renderClients());
-$("cl-f-dev").addEventListener("change", () => renderClients());
+$("cl-clear").addEventListener("click", () => { clView.f = {}; $("clients-filter").value = ""; renderClients(); });
 
 function isNew(c) {
   return c.first_seen && Date.now() - new Date(c.first_seen).getTime() < 24 * 3600 * 1000;
@@ -1367,15 +1359,14 @@ function signalBars(dbm) {
 
 function renderClients() {
   const q = $("clients-filter").value.trim().toLowerCase();
-  const net = $("cl-f-net").value, dev = $("cl-f-dev").value;
+  clFilterOptions();
   const tb = $("clients");
   tb.textContent = "";
   const list = clientsCache.filter((c) => {
     const wifi = clIsWifi(c), ssid = c.wifi ? c.wifi.ssid : c.ssid;
     if (clView.kind === "wifi" && !wifi) return false;
     if (clView.kind === "wired" && wifi) return false;
-    if (dev && c.device !== dev) return false;
-    if (net && !(net === "v:" + c.vlan || net === "s:" + ssid)) return false;
+    if (!facetOk(CL_FACETS, clView.f, c)) return false;
     return !q || [c.label, c.hostname, c.ip, c.mac, c.device, c.port, c.vlan, ssid, c.vendor, c.note]
       .some((v) => v && String(v).toLowerCase().includes(q));
   });
@@ -4257,9 +4248,91 @@ function setInfraList(show) {
 }
 try { if (localStorage.getItem("mtc.infraList") === "0") setInfraList(false); } catch (_e) { /* jen pohodlí */ }
 
+// --- časová osa vedle mapy: události lokality na svislé ose (nahoře teď), klik zvýrazní zařízení v mapě ------
+// Neumí vrátit mapu do minulého stavu – ukazuje, kdy se co stalo, a vede na podrobnou osu v Aktivitě.
+const itl = { hours: 24, data: null };
+const ITL_H = 620;                     // výška osy v px
+function itlShow(on) {
+  $("infra-tl").hidden = !on; $("infra-tl-on").checked = on;
+  $("infra-tl").parentNode.classList.toggle("notl", !on);
+}
+$("infra-tl-on").addEventListener("change", () => {
+  const on = $("infra-tl-on").checked; itlShow(on);
+  try { localStorage.setItem("mtc.infraTl", on ? "1" : "0"); } catch (_e) { /* jen pohodlí */ }
+  if (on) loadInfraTimeline();
+});
+try { if (localStorage.getItem("mtc.infraTl") === "0") itlShow(false); } catch (_e) { /* jen pohodlí */ }
+
+async function loadInfraTimeline() {
+  if ($("infra-tl").hidden || !tenantId || !siteId()) return;
+  try { itl.data = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/timeline?hours=${itl.hours}&cats=alert,port,change,audit`); }
+  catch (_e) { return; }
+  renderInfraTimeline();
+}
+
+function itlHighlight(ids) {
+  for (const n of $("infra-svg").querySelectorAll ? $("infra-svg").querySelectorAll(".node.hl") : []) n.classList.remove("hl");
+  for (const id of ids) {
+    const n = $("infra-svg").querySelector ? $("infra-svg").querySelector(`.node[data-dev="${id}"]`) : null;
+    if (n) n.classList.add("hl");
+  }
+}
+
+function renderInfraTimeline() {
+  const d = itl.data; if (!d) return;
+  segmented($("itl-range"), [[6, __("6 h")], [24, __("24 h")], [168, __("7 d")]], itl.hours, (h) => { itl.hours = h; loadInfraTimeline(); });
+  const ax = $("itl-axis"); ax.textContent = ""; $("itl-pop").hidden = true;
+  ax.style.height = ITL_H + "px";
+  const t1 = new Date(d.until).getTime(), t0 = new Date(d.since).getTime(), span = t1 - t0;
+  const y = (t) => Math.round((t1 - t) / span * (ITL_H - 30)) + 24;          // nahoře teď, dolů do minulosti
+  ax.appendChild(el("div", null, "itl-bar"));
+  const now = el("div", __("TEĎ"), "itl-now"); ax.appendChild(now);
+  // popisky času: 8 dílků
+  for (let i = 1; i <= 8; i++) {
+    const t = t1 - span * i / 8, lab = el("div", null, "itl-tick"); lab.style.top = y(t) + "px";
+    lab.textContent = new Date(t).toLocaleString(LOCALE, itl.hours > 24 ? { weekday: "short", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
+    ax.appendChild(lab);
+  }
+  // události shluknout po 14 px, ať se značky nepřekrývají
+  const groups = new Map();
+  for (const e of d.events) {
+    const k = Math.round(y(new Date(e.at).getTime()) / 14);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const rank = { critical: 3, warning: 2, ok: 1, info: 0 };
+  for (const [k, evs] of groups) {
+    const sev = evs.reduce((a, e) => (rank[e.sev] > rank[a] ? e.sev : a), "info");
+    const b = el("button", evs.length > 1 ? String(evs.length) : "", "itl-ev tl-s-" + sev); b.type = "button";
+    b.style.top = (k * 14 - 9) + "px";
+    b.title = evs.slice(0, 6).map((e) => `${new Date(e.at).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })} ${e.device ? e.device + ": " : ""}${tlText(e)}`).join("\n");
+    b.setAttribute("aria-label", b.title);
+    b.addEventListener("click", () => {
+      itlHighlight(evs.map((e) => e.device_id).filter(Boolean));
+      const pop = $("itl-pop"); pop.textContent = ""; pop.hidden = false; pop.style.top = Math.min(ITL_H - 120, k * 14 + 30) + "px";
+      for (const e of evs.slice(0, 8)) {
+        const row = el("div", null, "itl-row tl-s-" + e.sev);
+        row.append(el("time", new Date(e.at).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })), el("span", (e.device ? e.device + " · " : "") + tlText(e)));
+        pop.appendChild(row);
+      }
+      if (evs.length > 8) pop.appendChild(el("div", __`a dalších ${evs.length - 8}`, "muted"));
+      const go = el("button", __("Co se dělo kolem (±5 min)"), "ux-link"); go.type = "button";
+      go.addEventListener("click", () => {
+        tl.device = ""; tl.mac = ""; tl.macName = ""; tl.cats = new Set(TL_CATS.map((c) => c[0]));
+        tl.until = new Date(new Date(evs[0].at).getTime() + 5 * 60000).toISOString(); tl.minutes = 10;
+        openSub("activity", "tl");
+      });
+      pop.appendChild(go);
+    });
+    ax.appendChild(b);
+  }
+  $("itl-sum").textContent = d.total ? __`${d.total} událostí` : __("bez událostí");
+}
+
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
   renderInfra();
+  loadInfraTimeline();
 }
 $("infra-ext").addEventListener("change", () => { if (infraData) renderInfra(); });
 $("infra-clients").addEventListener("change", () => {
@@ -4457,6 +4530,7 @@ function drawInfra() {
       continue;
     }
     const card = g("node" + (n.state === "offline" ? " offline" : ""));
+    if (n.id) card.setAttribute("data-dev", n.id);
     card.appendChild(svgEl("title", {}, [n.label, n.model, n.version, n.stp_root ? __`STP root, priorita ${n.stp_priority ?? "?"}` : "",
                                          n.poe_w ? `PoE ${n.poe_w} W` : ""].filter(Boolean).join("\n")));
     card.appendChild(svgEl("rect", { x: x - NW / 2, y: top, width: NW, height: NH, rx: 10, class: "card" }));
@@ -5671,50 +5745,93 @@ const DEV_COLS = [
 const DEV_STATES = [["all", __("Vše")], ["adopted", __("Online")], ["offline", __("Offline")], ["pending", __("Čekající")], ["problem", __("S problémem")]];
 const devView = Object.assign({ cols: null, sort: "name", dir: 1, state: "all", f: {} }, prefs.devView || {});
 let uplinksCache = {};
-// filtry vlevo (jako UniFi): role, model, lokalita s počty
-const DEV_FACETS = [["role", __("Typ"), (d) => d.role || "unknown"], ["model", __("Model"), (d) => d.model || __("neznámý model")],
-  ["site", __("Lokalita"), (d) => d.site || __("bez lokality")]];
-const ROLE_NAME = { gateway: __("Brána"), switch: "Switch", ap: "Access point", ptp: __("Spoj PtP"), unknown: __("bez role") };
-const STATE_NAME = { adopted: "online", offline: "offline", pending: __("čeká na adopci"), provisioning: __("nastavuje se"), removed: __("odebráno") };
-function devFacetOk(d, skip) {
-  for (const [k, , fn] of DEV_FACETS) {
-    const sel = (devView.f || {})[k];
-    if (k !== skip && sel && sel.length && !sel.includes(fn(d))) return false;
+// --- skupiny filtrů v levém panelu (jako UniFi): zaškrtávátka s počty, skupinu jde sbalit ------------------
+// defs: [klíč, popisek, fn(položka) → hodnota | pole hodnot | null, jméno hodnoty?, vždy ukázat?]
+// Počty u skupiny respektují ostatní skupiny (a `pre`), takže ukazují, kolik řádků výběr opravdu nechá.
+const facetVals = (fn, item) => { const v = fn(item); return v === null || v === undefined || v === "" ? [] : Array.isArray(v) ? v : [v]; };
+function facetOk(defs, sel, item, skip) {
+  for (const [k, , fn] of defs) {
+    const want = (sel || {})[k];
+    if (k !== skip && want && want.length && !facetVals(fn, item).some((v) => want.includes(v))) return false;
   }
   return true;
 }
-function renderDevFacets() {
-  const box = $("dev-facets"); if (!box) return;
+function facetGroups(box, scope, items, defs, sel, onChange, pre, limit) {
   box.textContent = "";
-  devView.f = devView.f || {};
-  let any = false;
-  for (const [k, label, fn] of DEV_FACETS) {
+  prefs.facetClosed = prefs.facetClosed || {};
+  for (const [k, label, fn, nameOf, always] of defs) {
     const counts = new Map();
-    for (const d of siteDevices()) if (devMatchesState(d, devView.state) && devFacetOk(d, k)) counts.set(fn(d), (counts.get(fn(d)) || 0) + 1);
-    const sel = devView.f[k] || [];
-    for (const v of sel) if (!counts.has(v)) counts.set(v, 0);
-    if (counts.size < 2 && !sel.length) continue;
-    const sec = el("div", null, "facet");
-    sec.appendChild(el("div", label, "facet-h"));
-    for (const [v, n] of [...counts].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), LOCALE))) {
-      const l = el("label", null, "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = sel.includes(v);
+    for (const it of items) if ((!pre || pre(it)) && facetOk(defs, sel, it, k)) for (const v of facetVals(fn, it)) counts.set(v, (counts.get(v) || 0) + 1);
+    const cur = sel[k] || [];
+    for (const v of cur) if (!counts.has(v)) counts.set(v, 0);
+    if (!counts.size || (counts.size < 2 && !cur.length && !always)) continue;
+    const id = scope + "." + k, sec = el("div", null, "facet" + (prefs.facetClosed[id] ? " closed" : ""));
+    const h = el("button", null, "facet-h"); h.type = "button"; h.setAttribute("aria-expanded", prefs.facetClosed[id] ? "false" : "true");
+    h.append(el("span", label), el("span", "", "facet-chev"));
+    h.addEventListener("click", () => { prefs.facetClosed[id] = !prefs.facetClosed[id]; savePrefs(); onChange(); });
+    sec.appendChild(h);
+    const rows = [...counts].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), LOCALE, { numeric: true }));
+    const open = (prefs.facetMore || {})[id], max = limit || 8;
+    for (const [v, n] of open ? rows : rows.filter((r, i) => i < max || cur.includes(r[0]))) {
+      const l = el("label", null, "check"); const cb = el("input"); cb.type = "checkbox"; cb.checked = cur.includes(v);
       cb.addEventListener("change", () => {
-        const cur = new Set(devView.f[k] || []);
-        if (cb.checked) cur.add(v); else cur.delete(v);
-        devView.f[k] = [...cur]; saveDevView(); renderDevices();
+        const now = new Set(sel[k] || []);
+        if (cb.checked) now.add(v); else now.delete(v);
+        sel[k] = [...now]; onChange();
       });
-      l.append(cb, document.createTextNode(` ${k === "role" ? ROLE_NAME[v] || v : v}`), el("span", String(n), "facet-n"));
+      l.append(cb, el("span", `${nameOf ? nameOf(v) : v} (${n})`));
       sec.appendChild(l);
-      if (sel.includes(v)) any = true;
+    }
+    if (rows.length > max) {
+      const more = el("button", open ? __("méně") : __`dalších ${rows.length - max}…`, "ux-link facet-more"); more.type = "button";
+      more.addEventListener("click", () => { prefs.facetMore = prefs.facetMore || {}; prefs.facetMore[id] = !open; savePrefs(); onChange(); });
+      sec.appendChild(more);
     }
     box.appendChild(sec);
   }
-  if (any) {
-    const r = el("button", __("Zrušit filtry"), "small secondary"); r.type = "button";
-    r.addEventListener("click", () => { devView.f = {}; saveDevView(); renderDevices(); });
-    box.appendChild(r);
-  }
   box.hidden = !box.children.length;
+}
+const facetAny = (sel) => Object.values(sel || {}).some((v) => v && v.length);
+
+// filtry seznamu zařízení
+const ROLE_NAME = { gateway: __("Brána"), switch: "Switch", ap: "Access point", ptp: __("Spoj PtP"), unknown: __("bez role") };
+const STATE_NAME = { adopted: "online", offline: "offline", pending: __("čeká na adopci"), provisioning: __("nastavuje se"), removed: __("odebráno") };
+const TODO_NAME = { alert: __("Upozornění"), update: __("Dostupná aktualizace"), security: __("Bezpečnostní nález") };
+const DEV_FACETS = [
+  ["role", __("Typ zařízení"), (d) => d.role || "unknown", (v) => ROLE_NAME[v] || v, true],
+  ["manage", __("Správa"), (d) => d.state === "pending" ? null : d.managed_at ? "full" : "watch", (v) => v === "full" ? __("Plná správa") : __("Jen sledování")],
+  ["todo", __("K řešení"), (d) => [Number(d.alerts) > 0 && "alert", d.update_available && "update", Number(d.security_issues) > 0 && "security"].filter(Boolean),
+    (v) => TODO_NAME[v] || v],
+  ["ros", "RouterOS", (d) => d.ros_version ? String(d.ros_version).split(" ")[0] : null],
+  ["model", __("Model"), (d) => d.model || __("neznámý model")],
+  ["site", __("Lokalita"), (d) => d.site || __("bez lokality")]];
+const devFacetOk = (d, skip) => facetOk(DEV_FACETS, devView.f, d, skip);
+function renderDevFacets() {
+  const box = $("dev-facets"); if (!box) return;
+  devView.f = devView.f || {};
+  facetGroups(box, "dev", siteDevices(), DEV_FACETS, devView.f, () => { saveDevView(); renderDevices(); }, (d) => devMatchesState(d, devView.state));
+  $("dev-clear").disabled = !facetAny(devView.f) && devView.state === "all" && !$("dev-q").value;
+  $("dev-topo").checked = !!devView.topo;
+}
+// řazení podle topologie: rodič, pod ním jeho potomci (odsazení podle hloubky); mimo strom na konec
+function devTopoOrder(list) {
+  const ids = new Set(list.map((d) => d.id)), kids = new Map(), depth = new Map(), out = [];
+  const name = (d) => String(d.identity || d.serial || "").toLowerCase();
+  for (const d of list) {
+    const par = (uplinksCache[d.id] || {}).parent_id;
+    const key = par && ids.has(par) && par !== d.id ? par : "";
+    if (!kids.has(key)) kids.set(key, []);
+    kids.get(key).push(d);
+  }
+  const walk = (key, lvl) => {
+    for (const d of (kids.get(key) || []).sort((a, b) => name(a).localeCompare(name(b), LOCALE, { numeric: true }))) {
+      if (depth.has(d.id)) continue;
+      depth.set(d.id, lvl); out.push(d); walk(d.id, lvl + 1);
+    }
+  };
+  walk("", 0);
+  for (const d of list) if (!depth.has(d.id)) { depth.set(d.id, 0); out.push(d); }    // kruh v datech: nic neztratit
+  return [out, depth];
 }
 function devUplinkCell(d) {
   const u = uplinksCache[d.id];
@@ -5816,6 +5933,8 @@ function renderDevices() {
       [d.identity, d.serial, d.note, d.model, d.site, d.tunnel_ip, d.ros_version, d.role, d.identity_pending]
         .some((v) => v && String(v).toLowerCase().includes(q))))
     .sort((a, b) => { const x = col[3](a), y = col[3](b); return (x < y ? -1 : x > y ? 1 : 0) * devView.dir; });
+  let depth = null;
+  if (devView.topo) { const [ordered, dep] = devTopoOrder(list); list.length = 0; list.push(...ordered); depth = dep; }
   $("dev-count").textContent = list.length === base.length ? __`${list.length} zařízení` : `${list.length} z ${base.length}`;
   const tb = $("devices"); tb.textContent = "";
   for (const d of list) {
@@ -5827,6 +5946,7 @@ function renderDevices() {
       if (detailId === d.id && !$("detail").hidden) tr.className += " selected";
       tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
     }
+    if (depth && depth.get(d.id)) tr.setAttribute("style", "--depth: " + depth.get(d.id));
     withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
     for (const c of cols) tr.appendChild(c[4](d));
     // akce: schválení u čekajících, jinak aktualizace a ⋯ (vše ostatní v menu – pravé tlačítko)
@@ -5943,6 +6063,8 @@ function devMatchesState(d, st) {
 function devCount(st) { return siteDevices().filter((d) => devMatchesState(d, st)).length; }
 
 $("dev-q").addEventListener("input", () => renderDevices());
+$("dev-topo").addEventListener("change", () => { devView.topo = $("dev-topo").checked; saveDevView(); renderDevices(); });
+$("dev-clear").addEventListener("click", () => { devView.f = {}; devView.state = "all"; $("dev-q").value = ""; saveDevView(); renderDevices(); });
 $("dev-cols").addEventListener("click", (ev) => {
   if (ev.stopPropagation) ev.stopPropagation();
   const pop = $("dev-cols-pop");

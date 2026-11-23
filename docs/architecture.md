@@ -1325,3 +1325,12 @@ skrývá úchytem na své hraně (`.ux-toggle`, volba se pamatuje pro každou se
 mřížka `[panel | obsah]`, podzáložky (`.pane`) mají `display: contents`, takže jejich `.ux-side` a
 `.ux-main` padnou do sloupců mřížky bez změny přepínání podzáložek. Hotovo: kostra, Zařízení (Seznam,
 Porty), Klienti. Zbývá: Přehled/Mapa s panelem zařízení, Události, Nastavení, úzký panel detailu.
+
+Krok 2 (boční panely a časová osa u mapy): obecné **skupiny filtrů** (`facetGroups` v `app.js`) –
+zaškrtávátka s počty, počty respektují ostatní skupiny, skupinu jde sbalit (pamatuje se), dlouhé seznamy
+mají „dalších N…“. Zařízení: typ, správa, k řešení (upozornění / aktualizace / bezpečnostní nález),
+RouterOS, model, lokalita; přepínač **Seřadit podle topologie** (rodič, pod ním potomci, odsazení podle
+hloubky – z `uplinks`). Klienti: stav, připojeno k, Wi-Fi síť, VLAN, výrobce. **Časová osa vedle mapy**
+(`#infra-tl`): události lokality z `timeline` API na svislé ose (nahoře teď, 6 h / 24 h / 7 d), shluknuté
+značky podle závažnosti; klik zvýrazní dotčená zařízení v mapě a nabídne „co se dělo kolem“ v Aktivitě.
+Stav mapy v minulosti nevrací – topologie se neukládá v čase.

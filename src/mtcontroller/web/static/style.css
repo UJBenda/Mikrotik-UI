@@ -1275,3 +1275,52 @@ table.kv tr:hover > td, .fw-matrix tr:hover > td { background: transparent; }
 .ux-hint { font-size: 12px; margin: 8px 0 0; }
 .ux .cl-time { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 8px 4px 12px; margin: 0 0 4px; }
 .overview { padding: 12px 16px 0; }
+
+/* skupiny filtrů: hlavička se sbalením, zaškrtávátko s počtem v závorce, přepínače */
+.ux .facet-h { width: 100%; border: 0; background: transparent; padding: 0; justify-content: space-between; font-weight: 700; cursor: default; }
+.ux button.facet-h { cursor: pointer; }
+.facet-chev { width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-top: 1.5px solid var(--muted); transform: rotate(-45deg); margin: 4px 4px 0 0; }
+.facet.closed .facet-chev { transform: rotate(135deg); margin-top: -3px; }
+.facet.closed > :not(.facet-h) { display: none; }
+.ux .facet label.check span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ux .facet label.check input { width: 15px; height: 15px; margin: 0 8px 0 0; accent-color: var(--accent); flex: none; }
+.facet-more { padding: 2px 0 0 23px; font-size: 12px; }
+.ux-link:disabled { color: var(--muted); opacity: .6; cursor: default; text-decoration: none; }
+.ux-switch { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 30px; font-size: 13px; font-weight: 600; cursor: pointer; position: relative; }
+.ux-switch input { position: absolute; opacity: 0; width: 34px; height: 18px; right: 0; margin: 0; cursor: pointer; }
+.ux-switch i { width: 34px; height: 18px; border-radius: 9px; background: #cfd3da; flex: none; position: relative; transition: background .15s; }
+.ux-switch i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+.ux-switch input:checked + i { background: var(--accent); }
+.ux-switch input:checked + i::after { left: 18px; }
+.ux-switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* řazení podle topologie: odsazení jména podle hloubky ve stromu */
+.dev-table tr[style*="--depth"] td:nth-child(2) { padding-left: calc(8px + var(--depth) * 18px); position: relative; }
+.dev-table tr[style*="--depth"] td:nth-child(2)::before { content: ""; position: absolute; left: calc(var(--depth) * 18px - 6px); top: 0; height: 50%; width: 9px;
+  border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0 0 0 4px; }
+
+/* časová osa vedle mapy lokality */
+.infra { --l: 250px; --t: 150px; grid-template-columns: var(--l) var(--t) minmax(0, 1fr); }
+.infra.nolist { --l: 0px; grid-template-columns: var(--t) minmax(0, 1fr); }
+.infra.notl { grid-template-columns: var(--l) minmax(0, 1fr); }
+.infra.nolist.notl { grid-template-columns: minmax(0, 1fr); }
+.infra-tl { position: relative; border: 1px solid var(--line); border-radius: 10px; padding: 8px 0 8px; min-height: 380px; overflow: hidden; }
+.infra-tl[hidden] { display: none; }
+.itl-head { display: flex; flex-direction: column; gap: 6px; padding: 0 8px 6px; font-size: 12px; }
+.itl-head .seg { width: 100%; } .itl-head .seg button { flex: 1; padding: 3px 4px; font-size: 12px; }
+.itl-axis { position: relative; }
+.itl-bar { position: absolute; left: 86px; top: 10px; bottom: 0; width: 8px; border-radius: 4px; background: var(--accent-weak); }
+.itl-now { position: absolute; left: 0; right: 0; top: 0; height: 22px; border-bottom: 2px solid var(--accent); }
+.itl-now { padding-left: 8px; font-size: 10px; font-weight: 700; color: var(--accent); line-height: 20px; letter-spacing: .04em; }
+.itl-tick { position: absolute; left: 8px; transform: translateY(-50%); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.itl-tick::after { content: ""; position: absolute; left: 62px; top: 50%; width: 10px; border-top: 1px solid var(--line); }
+.itl-ev { position: absolute; left: 80px; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 2px solid var(--card); background: var(--muted);
+  color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; cursor: pointer; }
+.itl-ev.tl-s-warning { background: var(--warn); } .itl-ev.tl-s-critical { background: var(--bad); } .itl-ev.tl-s-ok { background: var(--ok); }
+.itl-ev.tl-s-info { background: var(--accent); }
+.itl-ev:hover, .itl-ev:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.itl-pop { position: absolute; left: 6px; right: 6px; z-index: 4; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .16); font-size: 12px; }
+.itl-row { display: flex; gap: 6px; padding: 2px 0; } .itl-row time { color: var(--muted); flex: none; }
+.itl-row.tl-s-critical span { color: var(--bad); } .itl-row.tl-s-warning span { color: var(--warn); }
+#infra-svg .node.hl > rect:first-of-type, #infra-svg .node.hl rect { stroke: var(--accent); stroke-width: 2.5; }
+@media (max-width: 900px) { .infra, .infra.nolist, .infra.notl { grid-template-columns: 1fr; } }

@@ -83,9 +83,15 @@
         <div class="infra-bar">
           <label class="check"><input type="checkbox" id="infra-clients"> klienti (MAC)</label>
           <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
+          <label class="check"><input type="checkbox" id="infra-tl-on" checked> časová osa</label>
         </div>
         <div class="infra">
           <div id="infra-list" class="infra-list"></div>
+          <div id="infra-tl" class="infra-tl" aria-label="Časová osa událostí">
+            <div class="itl-head"><span id="itl-sum" class="muted"></span><div id="itl-range" class="seg"></div></div>
+            <div id="itl-axis" class="itl-axis"></div>
+            <div id="itl-pop" class="itl-pop" hidden></div>
+          </div>
           <div class="infra-canvas mapbox" id="infra-canvas">
             <svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg>
             <button id="infra-list-btn" type="button" class="map-tab" aria-expanded="true" title="Skrýt seznam zařízení" aria-label="Skrýt seznam zařízení">‹</button>
@@ -125,9 +131,11 @@
       <div id="devlist-wrap" class="pane">
         <div class="ux-side">
           <input id="dev-q" type="search" placeholder="Hledat jméno, sériové č., model, poznámku, IP…" aria-label="Hledat zařízení">
+          <label class="ux-switch"><span>Seřadit podle topologie</span><input type="checkbox" id="dev-topo"><i aria-hidden="true"></i></label>
           <div class="facet"><div class="facet-h">Stav</div><span id="dev-state" class="seg ux-vseg"></span></div>
           <aside id="dev-facets" class="dev-facets" aria-label="Filtry zařízení"></aside>
           <div class="ux-links">
+            <button id="dev-clear" type="button" class="ux-link">Zrušit filtry</button>
             <button id="add-dev" type="button" class="ux-link">Přidat zařízení</button>
             <button id="refresh" type="button" class="ux-link">Obnovit</button>
             <div class="dev-cols-wrap">
@@ -180,10 +188,9 @@
       <div id="clients-wrap" class="pane">
         <div class="ux-side">
           <input id="clients-filter" type="search" placeholder="Hledat jméno, MAC, IP, port, výrobce…" aria-label="Hledat klienty">
-          <div class="facet"><div class="facet-h">Síť</div><select id="cl-f-net" aria-label="Síť"></select></div>
-          <div class="facet"><div class="facet-h">Připojeno k</div><select id="cl-f-dev" aria-label="Zařízení"></select></div>
-          <div class="facet"><div class="facet-h">Zobrazit</div>
-            <label class="check"><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label></div>
+          <label class="ux-switch"><span>I odpojení (30 dní)</span><input type="checkbox" id="clients-history"><i aria-hidden="true"></i></label>
+          <div id="cl-facets" class="dev-facets" aria-label="Filtry klientů"></div>
+          <div class="ux-links"><button id="cl-clear" type="button" class="ux-link">Zrušit filtry</button></div>
           <p class="ux-hint muted" title="Klik na klienta = popisek, ikona, logo; pravé tlačítko = další akce">klik = upravit · pravé tlačítko = akce</p>
         </div>
         <div class="ux-main">

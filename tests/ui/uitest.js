@@ -87,6 +87,23 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!byId["devices"].children[0].children[iUp].textContent.includes("20 min")) errors.push("zařízení: uptime " + byId["devices"].children[0].children[iUp].textContent);
       await byId["devices-head"].children[iUp].fire("click");
       if (!byId["devices"].children[0].textContent.includes("GW1")) errors.push("zařízení: třídění sestupně");
+      // levý panel: skupiny filtrů s počty; zaškrtnutí zúží seznam, „Zrušit filtry“ vrátí vše
+      {
+        const groups = byId["dev-facets"].children.map((x) => x.children[0].textContent);
+        if (!groups.includes("Typ zařízení") || !groups.includes("RouterOS")) errors.push("zařízení: skupiny filtrů " + groups.join(","));
+        const sec = byId["dev-facets"].children.find((x) => x.children[0].textContent === "RouterOS");
+        const before = byId["devices"].children.length;
+        const cb = sec.children[1].children[0]; cb.checked = true; await cb.fire("change");
+        if (byId["devices"].children.length >= before || byId["dev-clear"].disabled) errors.push("zařízení: filtr RouterOS nezúžil seznam");
+        await byId["dev-clear"].fire("click");
+        if (byId["devices"].children.length !== before) errors.push("zařízení: Zrušit filtry");
+        // řazení podle topologie: potomek (sw) je pod bránou a odsazený
+        byId["dev-topo"].checked = true; await byId["dev-topo"].fire("change");
+        const rows = byId["devices"].children;
+        if (!rows[0].textContent.includes("gw") || !String(rows[1].attrs.style || "").includes("--depth: 1"))
+          errors.push("zařízení: řazení podle topologie");
+        byId["dev-topo"].checked = false; await byId["dev-topo"].fire("change");
+      }
       byId["dev-q"].value = "sw"; await byId["dev-q"].fire("input");
       if (byId["devices"].children.length !== 1 || byId["dev-count"].textContent !== "1 z 2") errors.push("zařízení: filtr " + byId["dev-count"].textContent);
       byId["dev-q"].value = ""; await byId["dev-q"].fire("input");
@@ -139,6 +156,12 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       byId["tl-q"].value = "ether2"; await byId["tl-q"].fire("input");
       if (byId["tl-list"].children.filter((x) => x.className.startsWith("tl-row")).length !== 3) errors.push("časová osa: hledání");
       byId["tl-q"].value = ""; await byId["tl-q"].fire("input");
+    }
+    // časová osa vedle mapy: značky událostí (shluknuté), souhrn
+    {
+      const evs = byId["itl-axis"].children.filter((x) => x.className.startsWith("itl-ev"));
+      if (!evs.length || !evs.some((x) => x.className.includes("tl-s-critical"))) errors.push("mapa: časová osa " + evs.length);
+      if (!byId["itl-sum"].textContent.includes("9")) errors.push("mapa: souhrn osy " + byId["itl-sum"].textContent);
     }
     // dostupnost: řádek na zařízení, 30 sloupečků dnů, trvající výpadek
     await byId["avail-btn"].fire("click"); await tlTick();
