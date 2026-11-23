@@ -475,6 +475,7 @@ function alertReactions(a) {
     port_errors: [__("Chyby na portu – kabel, konektor nebo duplex."), []],
     port_half_duplex: [__("Port jede v half-duplexu – zkontroluj autonegociaci."), []],
     cpu_high: [__("Vysoké vytížení CPU."), []], memory_high: [__("Málo volné paměti."), []],
+    anomaly: [__("Zařízení se chová jinak než obvykle v tuto hodinu (porovnání s posledními 14 dny) – podívej se na časovou osu, co se změnilo."), []],
     ntp_unsynced: [__("Čas není synchronizovaný – Nastavení lokality → Systém a nasazení."), []],
     dhcp_pool_full: [__("DHCP pool je skoro plný – zvětši rozsah nebo zkrať lease."), []],
     config_drift: [__("Konfigurace se liší od záměru – Nastavení lokality → Sítě → Sladit řízená zařízení."), []],
@@ -2289,7 +2290,7 @@ const SUBTABS = {
   settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
-  activity: [["tl", "tl-btn", "tl-wrap", () => loadTimeline()], ["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
+  activity: [["tl", "tl-btn", "tl-wrap", () => loadTimeline()], ["avail", "avail-btn", "avail-wrap", () => loadAvail()], ["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
              ["audit", "audit-btn", "audit-wrap", () => loadAudit()]],
 };
 function subOf(view) {
@@ -2340,6 +2341,7 @@ const GS_PLACES = [
   [__("Aktualizace RouterOS a firmware"), __("Nastavení"), "aktualizace upgrade update routerboot firmware automaticke", "settings", "sys"],
   [__("Přidat zařízení, výchozí konfigurace, NTP"), __("Nastavení"), "adopce pridat netinstall vychozi konfigurace ntp cas adopt defaults time", "settings", "sys"],
   [__("Časová osa"), __("Aktivita"), "casova osa timeline udalosti historie co se stalo vypadek events", "activity", "tl"],
+  [__("Dostupnost zařízení"), __("Aktivita"), "dostupnost uptime vypadky sla availability outages", "activity", "avail"],
   [__("Alerty"), __("Aktivita"), "alerty upozorneni problemy alerts servisni okno maintenance", "activity", "alerts"],
   [__("Změny (plány ke schválení)"), __("Aktivita"), "zmeny plany schvaleni prevzeti changes plans approve", "activity", "plans"],
   [__("Audit"), __("Aktivita"), "audit log kdo co historie", "activity", "audit"],
@@ -2537,6 +2539,50 @@ $("cl-timeline").addEventListener("click", () => {
   tl.mac = c.mac; tl.macName = clientName(c); tl.hours = Math.max(tl.hours, 168);
   loadTimeline();
 });
+
+// --- dostupnost zařízení (Aktivita → Dostupnost): proužek dnů, procenta, výpadky ---------------------------
+
+let availDays = 30;
+function fmtSpan(sec) {
+  if (!sec) return "–";
+  if (sec < 90) return __`${Math.round(sec)} s`;
+  if (sec < 5400) return __`${Math.round(sec / 60)} min`;
+  if (sec < 172800) return __`${(sec / 3600).toFixed(1)} h`;
+  return __`${(sec / 86400).toFixed(1)} d`;
+}
+const availClass = (p) => p === null || p === undefined ? "none" : p >= 99.9 ? "ok" : p >= 99 ? "warn" : "bad";
+const fmtPct = (p) => p === null || p === undefined ? "–" : (p >= 99.995 ? "100" : p.toFixed(p >= 99 ? 2 : 1)) + " %";
+
+async function loadAvail() {
+  if (!tenantId || !siteId()) return;
+  let d;
+  try { d = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/availability?days=${availDays}`); }
+  catch (e) { return msg(e.message, true); }
+  segmented($("avail-range"), [[7, __("7 dní")], [30, __("30 dní")], [90, __("90 dní")]], availDays, (v) => { availDays = v; loadAvail(); });
+  $("avail-sum").textContent = d.avg_pct === null ? "" : __`průměr lokality ${fmtPct(d.avg_pct)}`;
+  const tb = $("avail-rows"); tb.textContent = "";
+  const first = new Date(d.first_day + "T00:00:00Z");
+  for (const x of d.devices) {
+    const tr = el("tr"); tr.className = "clickable";
+    const name = el("td"); name.append(el("strong", x.name), el("small", " " + (x.model || ""), "muted"));
+    const strip = el("div", null, "avail-strip");
+    x.daily.forEach((p, i) => {
+      const c = el("span", null, "av-" + availClass(p));
+      const day = new Date(first.getTime() + i * 86400000).toLocaleDateString(LOCALE, { day: "numeric", month: "numeric" });
+      c.title = day + ": " + (p === null ? __("zařízení ještě nebylo přidané") : fmtPct(p));
+      strip.appendChild(c);
+    });
+    const stripTd = el("td"); stripTd.appendChild(strip);
+    const pct = el("td", fmtPct(x.pct), "num av-t-" + availClass(x.pct));
+    const last = x.last[0];
+    const lastTd = el("td", !last ? "–" : fmtTime(last.from) + " · " + (last.to ? fmtSpan(last.seconds) : __("trvá")), last && !last.to ? "av-t-bad" : "");
+    tr.append(name, stripTd, pct, el("td", String(x.outages), "num"), el("td", fmtSpan(x.down_seconds), "num"),
+              el("td", fmtSpan(x.longest_seconds), "num"), lastTd);
+    tr.addEventListener("click", () => { tl.hours = Math.max(tl.hours, availDays >= 30 ? 720 : 168); openTimelineFor(x.id); });
+    tb.appendChild(tr);
+  }
+  if (!d.devices.length) { const td = el("td", __("V lokalitě zatím nejsou žádná zařízení."), "muted"); td.colSpan = 7; const tr = el("tr"); tr.appendChild(td); tb.appendChild(tr); }
+}
 
 let plansOpen = 0, alertsOpen = [0, 0];
 function activityBadge() { setBadge("activity", plansOpen + alertsOpen[0], alertsOpen[1] ? "bad" : "warn"); }

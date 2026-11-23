@@ -433,6 +433,36 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20c) hodinové průměry zařízení izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_hourly (tenant_id, device_id, hour, cpu_sum, cpu_max, mem_sum, samples, last_at)
+  SELECT tenant_id, id, date_trunc('hour', now()), 10, 10, 40, 1, now() FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_hourly) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí hodinové průměry tenanta B'; END IF;
+  UPDATE device_hourly SET cpu_max = 99;
+  BEGIN
+    INSERT INTO device_hourly (tenant_id, device_id, hour, last_at)
+      SELECT '00000000-0000-0000-0000-0000000000b1', id, date_trunc('hour', now()) - interval '1 hour', now()
+      FROM device WHERE serial = 'SER-A1';
+    RAISE EXCEPTION 'FAIL: tenant A zapsal hodinový průměr tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 20c hodinové průměry zařízení izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT cpu_max FROM device_hourly) <> 10 THEN RAISE EXCEPTION 'FAIL: tenant A změnil hodinový průměr B'; END IF;
+  IF NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname = 'device_hourly') THEN
+    RAISE EXCEPTION 'FAIL: device_hourly bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

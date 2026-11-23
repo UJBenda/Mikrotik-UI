@@ -445,6 +445,7 @@
             <h2>Aktivita a audit</h2>
             <div id="act-tabs" class="seg">
               <button id="tl-btn" type="button">Časová osa</button>
+              <button id="avail-btn" type="button">Dostupnost</button>
               <button id="alerts-btn" type="button">Alerty</button>
               <button id="plans-btn" type="button">Změny</button>
               <button id="audit-btn" type="button">Audit</button>
@@ -462,6 +463,14 @@
             <div id="tl-chart" class="tl-chart" role="img" aria-label="Počet událostí v čase"></div>
             <div class="tl-axis"><span id="tl-from"></span><span id="tl-info" class="muted"></span><span id="tl-to"></span></div>
             <div id="tl-list" class="tl-list"></div>
+          </div>
+          <div id="avail-wrap" class="pane" hidden>
+            <div class="tl-bar">
+              <div id="avail-range" class="seg"></div>
+              <span id="avail-sum" class="muted"></span>
+            </div>
+            <p class="muted">Jak dlouho bylo každé zařízení dosažitelné. Sloupeček je jeden den; po najetí ukáže datum a hodnotu, kliknutím na řádek otevřeš časovou osu zařízení.</p>
+            <div class="ptable-wrap"><table class="avail"><thead><tr><th>Zařízení</th><th>Den po dni</th><th class="num">Dostupnost</th><th class="num">Výpadky</th><th class="num">Celkem mimo</th><th class="num">Nejdelší</th><th>Poslední výpadek</th></tr></thead><tbody id="avail-rows"></tbody></table></div>
           </div>
           <div id="alerts-wrap" class="pane" hidden>
       <h3>Alerty <span id="alerts-count" class="badge"></span>

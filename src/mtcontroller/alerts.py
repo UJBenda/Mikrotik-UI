@@ -49,6 +49,14 @@ def conditions(tx: Tx) -> list[Active]:
                   d.last_status, d.inventory_error, d.inventory_at, d.backup_at, d.adopted_at,
                   (SELECT data FROM device_inventory i WHERE i.device_id = d.id AND i.section = 'resource') AS res
            FROM device d WHERE d.state IN ('adopted', 'offline', 'provisioning')""")
+    # odchylky od vlastního normálu zařízení (stejná hodina za posledních 14 dní) – jen u zařízení online
+    from . import baseline
+
+    labels = {str(d["id"]): _label(d) for d in devs if d["state"] == "adopted"}
+    for a in baseline.anomalies(tx):
+        if str(a["device_id"]) in labels:
+            out.append(Active(a["tenant_id"], a["device_id"], "anomaly", a["metric"], "warning",
+                              f"{labels[str(a['device_id'])]}: nezvyklý stav – {a['message']}"))
     for d in devs:
         name = _label(d)
         t, i = d["tenant_id"], d["id"]

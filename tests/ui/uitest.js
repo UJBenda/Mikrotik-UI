@@ -140,6 +140,19 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["tl-list"].children.filter((x) => x.className.startsWith("tl-row")).length !== 3) errors.push("časová osa: hledání");
       byId["tl-q"].value = ""; await byId["tl-q"].fire("input");
     }
+    // dostupnost: řádek na zařízení, 30 sloupečků dnů, trvající výpadek
+    await byId["avail-btn"].fire("click"); await tlTick();
+    {
+      const rows = byId["avail-rows"].children;
+      if (byId["avail-wrap"].hidden || rows.length !== 2) errors.push("dostupnost: řádky " + rows.length);
+      else {
+        const strip = rows[1].children[1].children[0];
+        if (strip.children.length !== 30 || strip.children[0].className !== "av-none" || strip.children[29].className !== "av-bad")
+          errors.push("dostupnost: proužek dnů");
+        if (!rows[1].children[2].textContent.includes("99.64") || !rows[1].textContent.includes("trvá")) errors.push("dostupnost: hodnoty " + rows[1].textContent);
+        if (!rows[0].children[2].textContent.startsWith("100 ")) errors.push("dostupnost: 100 %");
+      }
+    }
     await byId["alerts-btn"].fire("click"); await tlTick();
     if (byId["alerts-wrap"].hidden || !byId["plans-wrap"].hidden) errors.push("aktivita: podzáložka alerty");
     await byId["plans-btn"].fire("click");

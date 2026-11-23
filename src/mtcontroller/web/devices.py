@@ -1017,6 +1017,24 @@ async def site_clients_timeline(request: Request, p: Principal, tid: str) -> Res
 
 
 @endpoint(READ)
+async def site_availability(request: Request, p: Principal, tid: str) -> Response:
+    """Dostupnost zařízení lokality za posledních N dní (z alertů offline)."""
+    from .. import baseline
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    days = _int(request.query_params.get("days"), 30, 1, 90)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            return baseline.availability(tx, sid, days)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
 async def site_timeline(request: Request, p: Principal, tid: str) -> Response:
     """Časová osa lokality: alerty, porty, klienti, Wi-Fi, změny a zásahy na jedné ose."""
     import datetime as dt
@@ -1946,6 +1964,7 @@ def routes() -> list[Route]:
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients/timeline", site_clients_timeline, methods=["GET"]),
         Route(s + "/timeline", site_timeline, methods=["GET"]),
+        Route(s + "/availability", site_availability, methods=["GET"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),

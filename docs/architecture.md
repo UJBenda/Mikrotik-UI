@@ -1300,3 +1300,17 @@ neblokuje – tam si místo řeší RouterOS sám.
 Bootstrap po resetu zakládá `mtc-revert`, `mtc-confirm-tick` a časovač `mtc-confirm` úplně prvními příkazy,
 mimo hlavní blok `{ }` a bez lokálních proměnných – dřív než čekání na porty. Zaseknutý, chybný nebo
 uříznutý zbytek skriptu tak návrat ze zálohy nezastaví.
+
+## Dostupnost a odchylky od normálu (etapa 14)
+
+`baseline.py`. **Dostupnost** zařízení se počítá z alertů `offline` (vznik–pominutí), okno nejdřív od
+adopce; API `GET …/sites/{id}/availability?days=7|30|90` vrací procenta, počet a délku výpadků a hodnotu
+pro každý den. UI: Aktivita → Dostupnost (proužek dnů, klik = časová osa zařízení).
+
+**Normál zařízení**: worker (`baseline.sample`) započítává každou čerstvou inventuru do `device_hourly`
+(CPU, paměť; migrace 0029, RLS). `baseline.anomalies` porovná poslední dokončenou hodinu se stejnou hodinou
+dne za 14 dní (CPU, paměť z `device_hourly`, provoz nejvytíženějšího rozhraní z `interface_hourly`) a při
+výrazné odchylce (3 směrodatné odchylky a zároveň absolutní práh) otevře alert `anomaly` (varování, předmět
+= `cpu` / `memory` / `traffic` / `traffic_low`). Potřebuje aspoň 5 dní historie; alert sám pomine, jakmile
+další hodina vyjde normálně. Hodiny se porovnávají v UTC (stejná hodina dne je stejná i v místním čase,
+kromě týdne se změnou času).

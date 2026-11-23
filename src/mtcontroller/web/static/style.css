@@ -1172,3 +1172,14 @@ a:hover { text-decoration: underline; }
 .map-ctl button[data-map="one"] { font-size: 11px; font-weight: 600; }
 .map-hint { position: absolute; left: 10px; bottom: 6px; margin: 0; font-size: 11px; pointer-events: none; opacity: .8; }
 @media (hover: none) { .map-hint { display: none; } }
+
+/* dostupnost zařízení (Aktivita) */
+.avail { width: 100%; border-collapse: collapse; font-size: 14px; }
+.avail th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.avail td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.avail .num { text-align: right; font-variant-numeric: tabular-nums; }
+.avail tr.clickable { cursor: pointer; } .avail tr.clickable:hover { background: var(--hover); }
+.avail-strip { display: flex; gap: 2px; align-items: stretch; height: 22px; min-width: 180px; }
+.avail-strip span { flex: 1 1 0; min-width: 3px; border-radius: 2px; background: var(--line); }
+.avail-strip .av-ok { background: var(--ok); } .avail-strip .av-warn { background: var(--warn); } .avail-strip .av-bad { background: var(--bad); }
+.av-t-ok { color: var(--ok); font-weight: 600; } .av-t-warn { color: var(--warn); font-weight: 600; } .av-t-bad { color: var(--bad); font-weight: 600; }
