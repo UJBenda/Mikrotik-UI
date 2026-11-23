@@ -113,43 +113,47 @@
       </div>
 
       <div id="view-devices" class="view" hidden>
-    <div class="card">
+    <div class="card ux" id="devs-ux">
       <div class="site-head">
-        <h2>Zařízení <button id="add-dev" type="button" class="small primary">+ Přidat zařízení</button>
-          <button id="refresh" type="button" class="small secondary">Obnovit</button></h2>
+        <h2 class="sr-only">Zařízení</h2>
         <div id="devs-tabs" class="seg">
           <button id="devlist-btn" type="button">Seznam</button>
           <button id="sports-btn" type="button">Porty všech switchů</button>
         </div>
       </div>
+      <button type="button" class="ux-toggle" data-ux="devs-ux" aria-expanded="true" title="Skrýt panel filtrů" aria-label="Skrýt panel filtrů">‹</button>
       <div id="devlist-wrap" class="pane">
-      <div class="dev-bar">
-        <input id="dev-q" placeholder="Hledat jméno, sériové č., model, poznámku, IP…" size="34">
-        <span id="dev-state" class="seg"></span>
-        <span class="grow"></span>
-        <span id="dev-count" class="muted small"></span>
-        <div class="dev-cols-wrap">
-          <button id="dev-cols" type="button" class="small secondary" aria-haspopup="true">Sloupce ▾</button>
-          <div id="dev-cols-pop" class="dev-cols-pop" hidden></div>
+        <div class="ux-side">
+          <input id="dev-q" type="search" placeholder="Hledat jméno, sériové č., model, poznámku, IP…" aria-label="Hledat zařízení">
+          <div class="facet"><div class="facet-h">Stav</div><span id="dev-state" class="seg ux-vseg"></span></div>
+          <aside id="dev-facets" class="dev-facets" aria-label="Filtry zařízení"></aside>
+          <div class="ux-links">
+            <button id="add-dev" type="button" class="ux-link">Přidat zařízení</button>
+            <button id="refresh" type="button" class="ux-link">Obnovit</button>
+            <div class="dev-cols-wrap">
+              <button id="dev-cols" type="button" class="ux-link" aria-haspopup="true">Upravit sloupce</button>
+              <div id="dev-cols-pop" class="dev-cols-pop" hidden></div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="dev-layout">
-        <aside id="dev-facets" class="dev-facets" aria-label="Filtry zařízení"></aside>
-        <div class="dev-main">
+        <div class="ux-main dev-main">
           <table class="dev-table">
             <thead><tr id="devices-head"></tr></thead>
             <tbody id="devices"></tbody>
           </table>
           <div id="dev-found" class="dev-found" hidden></div>
+          <div id="dev-count" class="ux-count muted"></div>
         </div>
       </div>
-    </div>
       <div id="sports-wrap" class="pane" hidden>
-        <div class="sp-bar">
-          <input id="sp-filter" placeholder="Filtr: port, popis, profil, soused, VLAN…" size="34">
-          <label class="check"><input type="checkbox" id="sp-poe"> jen PoE</label>
-          <label class="check"><input type="checkbox" id="sp-up"> jen s linkou</label>
+        <div class="ux-side">
+          <input id="sp-filter" type="search" placeholder="Filtr: port, popis, profil, soused, VLAN…" aria-label="Filtr portů">
+          <div class="facet"><div class="facet-h">Zobrazit</div>
+            <label class="check"><input type="checkbox" id="sp-poe"> jen PoE</label>
+            <label class="check"><input type="checkbox" id="sp-up"> jen s linkou</label>
+          </div>
         </div>
+        <div class="ux-main">
         <div id="sp-sel" class="port-sel" hidden></div>
         <table class="sp-t"><thead><tr><th><input type="checkbox" id="sp-all" aria-label="Vybrat vše"></th><th>Switch</th><th>Port</th>
           <th>Popis</th><th>Soused</th><th>PoE</th><th>Native</th><th>Tagované</th><th>Profil</th><th>Stav</th></tr></thead>
@@ -157,21 +161,32 @@
         <div class="sp-grid">
                     <div class="card-lite" id="sp-mlag"></div>
         </div>
+        </div>
       </div>
     </div>
       </div>
 
       <div id="view-clients" class="view" hidden>
-        <div class="card">
+        <div class="card ux" id="cl-ux">
           <div class="site-head">
-            <h2>Klienti <span id="cl-count" class="badge"></span></h2>
+            <h2 class="ux-title">Klienti <span id="cl-count" class="badge"></span></h2>
             <div id="cl-kind" class="seg" role="group" aria-label="Typ připojení">
               <button id="cl-kind-all" type="button" class="active">Vše</button>
               <button id="cl-kind-wifi" type="button">Wi-Fi</button>
               <button id="cl-kind-wired" type="button">Kabel</button>
             </div>
           </div>
-      <div id="clients-wrap" class="sub">
+      <button type="button" class="ux-toggle" data-ux="cl-ux" aria-expanded="true" title="Skrýt panel filtrů" aria-label="Skrýt panel filtrů">‹</button>
+      <div id="clients-wrap" class="pane">
+        <div class="ux-side">
+          <input id="clients-filter" type="search" placeholder="Hledat jméno, MAC, IP, port, výrobce…" aria-label="Hledat klienty">
+          <div class="facet"><div class="facet-h">Síť</div><select id="cl-f-net" aria-label="Síť"></select></div>
+          <div class="facet"><div class="facet-h">Připojeno k</div><select id="cl-f-dev" aria-label="Zařízení"></select></div>
+          <div class="facet"><div class="facet-h">Zobrazit</div>
+            <label class="check"><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label></div>
+          <p class="ux-hint muted" title="Klik na klienta = popisek, ikona, logo; pravé tlačítko = další akce">klik = upravit · pravé tlačítko = akce</p>
+        </div>
+        <div class="ux-main">
         <div class="cl-time">
           <div class="cl-time-head">
             <b id="cl-time-label">Teď</b>
@@ -187,15 +202,9 @@
           <input type="range" id="cl-slider" min="0" max="0" value="0" aria-label="Posun v čase">
           <p id="cl-time-note" class="muted small"></p>
         </div>
-        <div class="cl-filters">
-          <input id="clients-filter" type="search" placeholder="Hledat jméno, MAC, IP, port, výrobce…">
-          <select id="cl-f-net" aria-label="Síť"></select>
-          <select id="cl-f-dev" aria-label="Zařízení"></select>
-          <label class="check"><input type="checkbox" id="clients-history"> i odpojení (30 dní)</label>
-          <span class="ctx-hint" title="Klik na klienta = popisek, ikona, logo; pravé tlačítko = další akce">klik = upravit · pravé tlačítko = akce</span>
-        </div>
         <table class="clients-t"><thead><tr><th></th><th>Jméno</th><th>Připojení</th><th>IP</th><th>Síť</th><th>Signál</th><th>MAC</th><th>Poprvé</th><th>Naposledy</th><th></th></tr></thead>
         <tbody id="clients"></tbody></table>
+        </div>
       </div>
         </div>
       </div>

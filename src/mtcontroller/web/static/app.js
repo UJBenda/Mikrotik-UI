@@ -4144,6 +4144,22 @@ function drawMlag() {
 }
 
 
+// --- skrývací levý panel filtrů (rozvržení .ux): úchyt na hraně panelu, volba se pamatuje pro každou sekci ----
+for (const b of document.querySelectorAll ? document.querySelectorAll(".ux-toggle") : []) {
+  const box = $(b.dataset.ux), key = "mtc.side." + b.dataset.ux;
+  const set = (show) => {
+    box.classList.toggle("noside", !show);
+    const label = show ? __("Skrýt panel filtrů") : __("Zobrazit panel filtrů");
+    b.textContent = show ? "‹" : "›"; b.title = label; b.setAttribute("aria-label", label); b.setAttribute("aria-expanded", show ? "true" : "false");
+  };
+  b.addEventListener("click", () => {
+    const show = box.classList.contains("noside");
+    set(show);
+    try { localStorage.setItem(key, show ? "1" : "0"); } catch (_e) { /* jen pohodlí */ }
+  });
+  try { if (localStorage.getItem(key) === "0") set(false); } catch (_e) { /* jen pohodlí */ }
+}
+
 // --- mapové ovládání SVG: kolečko = zoom ke kurzoru, tažení = posun, dvojklik = přiblížit, špetka na dotyku ----
 // Obsah si drží své souřadnice (0..W × 0..H); mění se jen viewBox podle {x, y, k}. Pohled přežije
 // překreslení dat; nově se nastaví jen poprvé nebo tlačítkem „Vejít do okna“.
@@ -4163,8 +4179,11 @@ function mapControl(box, svg) {
   };
   const fit = () => {
     const [w, h] = size();
-    st.k = clampK(Math.min(w / (st.W + 40), h / (st.H + 40), 1.25));
-    st.x = (st.W - w / st.k) / 2; st.y = Math.min(0, (st.H - h / st.k) / 2) - 10 / st.k; apply();
+    // skutečný rozsah nakresleného obsahu (karty můžou přesahovat vlevo od nuly); bez něj rozměr plátna
+    let x0 = 0, y0 = 0, cw = st.W, chh = st.H;
+    try { const bb = svg.getBBox(); if (bb && bb.width > 0 && bb.height > 0) { x0 = bb.x; y0 = bb.y; cw = bb.width; chh = bb.height; } } catch (_e) { /* skryté SVG */ }
+    st.k = clampK(Math.min(w / (cw + 48), h / (chh + 48), 1.25));
+    st.x = x0 + (cw - w / st.k) / 2; st.y = y0 - 24 / st.k; apply();
   };
   const one = () => { const [w] = size(); st.k = 1; st.x = (st.W - w) / 2; st.y = -10; apply(); };
   const local = (e) => { const r = box.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
@@ -4217,7 +4236,8 @@ function mapControl(box, svg) {
   if (typeof ResizeObserver === "function") new ResizeObserver(() => { if (st.set) { if (st.user) apply(); else fit(); } }).observe(box);
   return {
     // po vykreslení obsahu o rozměrech W × H: poprvé vejít do okna, jinak pohled nechat
-    content(W, H) { st.W = W; st.H = H; st.set = true; if (st.user) apply(); else fit(); },
+    // voláno před dokreslením prvků → vejít do okna až po něm (rozsah obsahu se měří z nakresleného)
+    content(W, H) { st.W = W; st.H = H; st.set = true; if (st.user) apply(); else { fit(); setTimeout(() => { if (!st.user) fit(); }, 0); } },
     fit,
   };
 }

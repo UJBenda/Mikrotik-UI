@@ -1314,3 +1314,14 @@ výrazné odchylce (3 směrodatné odchylky a zároveň absolutní práh) otevř
 = `cpu` / `memory` / `traffic` / `traffic_low`). Potřebuje aspoň 5 dní historie; alert sám pomine, jakmile
 další hodina vyjde normálně. Hodiny se porovnávají v UTC (stejná hodina dne je stejná i v místním čase,
 kromě týdne se změnou času).
+
+## Vzhled 2 – podle UniFi Network (etapa 15, krok 1)
+
+Směr schválený nad maketami: úzký pruh ikon bez popisků (52 px, popisek v `title`), tenké ploché záhlaví,
+bílá plocha bez karet a stínů, husté tabulky (řádek 34 px, písmo 13 px), jedna modrá jako akcent, akce jako
+modré odkazy. Druhá úroveň navigace je **skrývací levý panel** (`.ux`): nahoře přepínač pohledů sekce, pod
+ním hledání a skupiny filtrů, dole odkazy s akcemi; obsah (tabulka) vpravo přes celou výšku. Panel se
+skrývá úchytem na své hraně (`.ux-toggle`, volba se pamatuje pro každou sekci). Technicky: karta sekce je
+mřížka `[panel | obsah]`, podzáložky (`.pane`) mají `display: contents`, takže jejich `.ux-side` a
+`.ux-main` padnou do sloupců mřížky bez změny přepínání podzáložek. Hotovo: kostra, Zařízení (Seznam,
+Porty), Klienti. Zbývá: Přehled/Mapa s panelem zařízení, Události, Nastavení, úzký panel detailu.
