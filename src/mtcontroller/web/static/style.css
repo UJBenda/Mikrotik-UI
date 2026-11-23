@@ -1324,3 +1324,49 @@ table.kv tr:hover > td, .fw-matrix tr:hover > td { background: transparent; }
 .itl-row.tl-s-critical span { color: var(--bad); } .itl-row.tl-s-warning span { color: var(--warn); }
 #infra-svg .node.hl > rect:first-of-type, #infra-svg .node.hl rect { stroke: var(--accent); stroke-width: 2.5; }
 @media (max-width: 900px) { .infra, .infra.nolist, .infra.notl { grid-template-columns: 1fr; } }
+
+/* sekce Porty: schéma, VLAN, provoz */
+.pm-devsel { width: 100%; height: 32px; font-weight: 600; background: var(--hover); border-color: transparent; }
+.pm-info { padding-bottom: 6px; }
+.pm-kv { display: flex; justify-content: space-between; gap: 8px; height: 24px; align-items: center; font-size: 13px; }
+.pm-kv span:last-child { color: var(--muted); }
+.pm-diagram { display: flex; flex-direction: column; gap: 14px; padding: 12px 4px 6px; }
+.pm-dev-h { margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+.pm-dev h4 { margin: 14px 0 6px; font-size: 13px; }
+.pm-face { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+.pm-grp { display: flex; gap: 6px; }
+.pm-col { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 40px; }
+.pm-lab { height: 14px; max-width: 46px; font-size: 10px; line-height: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-gap { width: 38px; height: 38px; }
+.pm-tile { position: relative; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 4px; background: #cfd3da; color: #fff; cursor: pointer;
+  display: inline-block; flex: none; }
+.pm-tile .pm-n { position: absolute; left: 4px; bottom: 2px; font-size: 10px; font-weight: 600; }
+.pm-tile .pm-m { position: absolute; right: 4px; top: 2px; font-size: 12px; line-height: 1; }
+.pm-tile.s-10 { background: #e0603a; } .pm-tile.s-100 { background: #b5cf1d; } .pm-tile.s-1g, .pm-tile.s-up { background: #2fbf5b; }
+.pm-tile.s-2g5 { background: #59a8f7; } .pm-tile.s-10g { background: #1f6fe0; }
+.pm-tile.s-down { background: #cfd3da; } .pm-tile.s-off { background: repeating-linear-gradient(45deg, #dfe2e7, #dfe2e7 4px, #c3c8d0 4px, #c3c8d0 8px); }
+.pm-tile.dim { opacity: .28; }
+.pm-tile.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pm-tile:hover { filter: brightness(1.07); }
+.pm-tile.mini { width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; cursor: default; }
+i.pm-tile { cursor: default; }
+.pm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 4px 10px; font-size: 12px; color: var(--muted); }
+.pm-legend i { width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.pm-vlan { padding: 0 4px 10px; border-top: 1px solid var(--line); }
+.pm-vh { display: flex; justify-content: space-between; margin: 12px 0 6px; font-size: 13px; }
+.pm-vbox { width: 38px; height: 30px; border-radius: 4px; border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; background: var(--card); }
+.pm-vbox.v-tagged { background: #2fbf5b; border-color: #2fbf5b; } .pm-vbox.v-native { background: #59a8f7; border-color: #59a8f7; }
+.pm-vbox.v-none { background: #cfd3da; border-color: #cfd3da; }
+.pm-vbox.dim { opacity: .35; }
+.pm-vlan .pm-col { gap: 4px; }
+.pm-stats { padding: 8px 4px 12px; border-top: 1px solid var(--line); }
+.pm-st-h { display: flex; gap: 16px; align-items: baseline; font-size: 13px; margin-bottom: 6px; }
+.pm-rx { color: #2b7bd6; } .pm-tx { color: #7a4fd0; }
+.pm-chart { width: 100%; height: 190px; display: block; border: 1px solid var(--line); border-radius: 6px; }
+.pm-a-rx { fill: rgba(43, 123, 214, .16); stroke: none; } .pm-a-tx { fill: rgba(122, 79, 208, .16); stroke: none; }
+.pm-a-rx.l { fill: none; stroke: #2b7bd6; stroke-width: 1.5; vector-effect: non-scaling-stroke; } .pm-a-tx.l { fill: none; stroke: #7a4fd0; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.pm-st-x { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); padding-top: 3px; }
+.pm-t { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.pm-t tr.off td { color: var(--muted); }
+.pm-sp.s-100 { color: #7d9400; } .pm-sp.s-10 { color: #c2410c; } .pm-sp.s-1g, .pm-sp.s-up { color: var(--ok); } .pm-sp.s-2g5, .pm-sp.s-10g { color: var(--accent); }

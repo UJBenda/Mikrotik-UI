@@ -332,6 +332,18 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
                           AND state IN ('adopted', 'offline') ORDER BY identity, serial""", {"s": str(site_id)})
     profs = profiles.list_profiles(tx)
     svids = profiles.site_vlans(tx, devs[0]["id"]) if devs else []
+    from . import ports as portinfo
+
+    by_name = {str(d["identity"] or d["serial"]).lower(): str(d["id"]) for d in devs}
+    # klienti na portech (viděni v posledních 20 minutách): {(device_id, port): [{mac, name, ip}]}
+    on_port: dict[tuple[str, str], list[dict]] = {}
+    for c in tx.fetchall(
+            """SELECT c.mac, c.ip, c.hostname, c.device_id, c.port, n.note FROM client c
+               LEFT JOIN client_note n ON n.mac = c.mac
+               WHERE c.site_id = %(s)s AND c.device_id IS NOT NULL AND c.port IS NOT NULL AND c.ssid IS NULL
+                 AND c.last_seen > now() - interval '20 minutes' ORDER BY c.mac""", {"s": str(site_id)}):
+        on_port.setdefault((str(c["device_id"]), str(c["port"])), []).append(
+            {"mac": c["mac"], "ip": c["ip"], "name": c["note"] or c["hostname"] or None})
     out = []
     for d in devs:
         inv = inventory.load(tx, d["id"])
@@ -340,10 +352,17 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
         mods = plans.module_modes(tx, d["id"])
         running = {str(i.get("name")): str(i.get("running")) in ("true", "yes") for i in inv.get("interfaces") or []
                    if isinstance(i, dict)}
-        neigh = {}
+        neigh, peer = {}, {}
         for n in inv.get("neighbors") or []:
             if isinstance(n, dict) and n.get("interface"):
-                neigh.setdefault(str(n["interface"]).split(",")[0], n.get("identity") or n.get("address") or "")
+                pn = str(n["interface"]).split(",")[0]
+                neigh.setdefault(pn, n.get("identity") or n.get("address") or "")
+                pid = by_name.get(str(n.get("identity") or "").lower())
+                if pid and pid != str(d["id"]):
+                    # spravovaný soused: odkaz na zařízení a jeho port (jméno vzdáleného rozhraní z LLDP/MNDP)
+                    peer.setdefault(pn, {"device_id": pid, "device": n.get("identity"),
+                                         "port": str(n.get("interface-name") or "").split("/")[0] or None})
+        info = portinfo.port_info(inv)
         ports = []
         for i in sorted((i for i in inv.get("interfaces") or [] if isinstance(i, dict) and i.get("type") == "ether"),
                         key=lambda x: portcfg._port_key(str(x.get("name")))):
@@ -352,16 +371,28 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
             except portcfg.PortError:
                 continue
             m = profiles.matching(profs, st, svids)
+            pi = info.get(st["port"]) or {}
+            # jeden soused na portu = přímý spoj; víc sousedů (přes VLAN vidí celou síť) → jen první jako popisek
             ports.append({"port": st["port"], "comment": st["comment"], "disabled": st["disabled"], "running": running.get(st["port"]),
                           "poe": st["poe"], "pvid": st["pvid"], "tagged": st["tagged"], "bond": st["bond"],
                           "lock": st["lock"], "watchdog": (st["poe_watchdog"] or {}).get("enabled"),
-                          "profile": m["name"] if m else None, "neighbor": neigh.get(st["port"])})
+                          "profile": m["name"] if m else None, "neighbor": neigh.get(st["port"]),
+                          "rate": pi.get("rate"), "poe_status": pi.get("poe"), "poe_w": _num(pi.get("poe_power")),
+                          "stp_role": pi.get("stp_role"), "sfp": str(i.get("name", "")).lower().startswith(("sfp", "qsfp")),
+                          "peer": peer.get(st["port"]), "clients": on_port.get((str(d["id"]), st["port"]), [])})
         from . import bondcfg
 
         out.append({"device_id": str(d["id"]), "device": d["identity"] or d["serial"], "model": d["model"],
                     "online": d["state"] == "adopted", "manage": mods.get("ports") == "manage", "ports": ports,
                     "bonds": bondcfg.summarize_bonds(inv)})
     return out
+
+
+def _num(v: Any) -> float | None:
+    try:
+        return round(float(v), 1)
+    except (TypeError, ValueError):
+        return None
 
 
 def mlag_pair(db: Database, tenant_id: Any, a: dict, b: dict, user_id: Any = None, ip: str | None = None) -> list[dict]:

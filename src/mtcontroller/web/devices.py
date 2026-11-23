@@ -512,7 +512,12 @@ async def site_ports(request: Request, p: Principal, tid: str) -> Response:
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            return {"devices": porttools.site_ports(tx, sid), "profiles": profiles.list_profiles(tx)}
+            from .. import takeover
+
+            it = takeover.load_intent(tx, sid) or {}
+            nets = [{"vid": int(n["vlan_id"]), "name": n.get("name"), "subnet": n.get("subnet"), "purpose": n.get("purpose")}
+                    for n in it.get("networks") or []]
+            return {"devices": porttools.site_ports(tx, sid), "profiles": profiles.list_profiles(tx), "networks": nets}
 
     return json_response(await run_in_threadpool(q))
 

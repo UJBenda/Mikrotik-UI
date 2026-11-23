@@ -135,9 +135,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       else { byId["ask-input"].value = "GW-praha"; byId["ask-ok"].onclick(); await pr; for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
       if (!requests.slice(n1).some((r) => r.startsWith("POST") && r.endsWith("/identity"))) errors.push("přehled: odeslání jména");
     }
-    // levá navigace: 5 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
+    // levá navigace: 6 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
     const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");
-    if (navBtns.length !== 8 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    if (navBtns.length !== 9 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
     if (byId["view-dash"].hidden || !byId["view-activity"].hidden) errors.push("navigace: výchozí pohled");
     await byId["nav-activity"].fire("click");
     if (byId["view-activity"].hidden || !byId["view-dash"].hidden || byId["nav-activity"].className !== "navbtn active") errors.push("navigace: přepnutí na aktivitu");
@@ -217,6 +217,29 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // lokalita: topologie a klienti
     await byId["topo-btn"].fire("click");
     if (byId["topo-wrap"].hidden || !byId["infra-wrap"].hidden) errors.push("přehled: podzáložka topologie");
+    // sekce Porty: schéma, filtry, tabulka s připojeným zařízením/klientem, přehled VLAN
+    await byId["nav-ports"].fire("click");
+    await tlTick();
+    {
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      const tilesOf = () => { const t = []; find(byId["pm-diagram"], (n) => { if (n.tagName === "BUTTON") t.push(n); return false; }); return t; };
+      const tiles = tilesOf(), rows = byId["pm-body"].children;
+      if (byId["view-ports"].hidden || tiles.length !== 3 || rows.length !== 3) errors.push(`porty: schéma ${tiles.length}, řádků ${rows.length}`);
+      else {
+        if (!tiles[1].className.includes("s-1g") || !tiles[2].className.includes("s-100")) errors.push("porty: barva podle rychlosti " + tiles.map((t) => t.className));
+        if (!rows[1].children[4].textContent.includes("AP-1") || !rows[1].children[4].textContent.includes("ether1")) errors.push("porty: protější port " + rows[1].children[4].textContent);
+        if (rows[2].children[4].textContent !== "tiskarna" || rows[2].children[7].textContent !== "AA:BB:CC:00:00:01") errors.push("porty: klient na portu");
+        if (rows[1].children[10].textContent !== "Sprava (20)") errors.push("porty: nativní VLAN " + rows[1].children[10].textContent);
+        const groups = byId["pm-facets"].children.map((x) => x.children[0].textContent);
+        if (!groups.includes("Rychlost linky") || !groups.includes("PoE") || !groups.includes("Nativní VLAN")) errors.push("porty: filtry " + groups);
+        await tiles[2].fire("click");
+        if (byId["pm-body"].children.length !== 1) errors.push("porty: výběr portu");
+        await tilesOf()[2].fire("click");
+        byId["pm-o-vlan"].checked = true; await byId["pm-o-vlan"].fire("change");
+        if (byId["pm-vlan"].hidden || !byId["pm-vlan"].textContent.includes("LAN (10)")) errors.push("porty: přehled VLAN");
+        byId["pm-o-vlan"].checked = false; await byId["pm-o-vlan"].fire("change");
+      }
+    }
     await byId["nav-clients"].fire("click");
     if (byId["view-clients"].hidden) errors.push("klienti: sekce");
     await byId["nav-settings"].fire("click");

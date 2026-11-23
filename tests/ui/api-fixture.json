@@ -4995,7 +4995,35 @@
        "lock": null,
        "watchdog": true,
        "profile": "AP",
-       "neighbor": "AP-1"
+       "neighbor": "AP-1",
+       "rate": "1Gbps",
+       "poe_status": "powered-on",
+       "poe_w": 6.4,
+       "stp_role": "designated-port",
+       "sfp": false,
+       "peer": {"device_id": "ap-fixture", "device": "AP-1", "port": "ether1"},
+       "clients": []
+      },
+      {
+       "port": "ether3",
+       "comment": "",
+       "disabled": false,
+       "running": true,
+       "poe": "auto-on",
+       "pvid": 10,
+       "tagged": [],
+       "bond": null,
+       "lock": null,
+       "watchdog": null,
+       "profile": null,
+       "neighbor": null,
+       "rate": "100Mbps",
+       "poe_status": "waiting-for-load",
+       "poe_w": 0,
+       "stp_role": "designated-port",
+       "sfp": false,
+       "peer": null,
+       "clients": [{"mac": "AA:BB:CC:00:00:01", "ip": "10.0.10.21", "name": "tiskarna"}]
       }
      ],
      "bonds": [
@@ -5026,7 +5054,8 @@
      "poe_watchdog": true,
      "poe_watchdog_timeout": 60
     }
-   ]
+   ],
+   "networks": [{"vid": 10, "name": "LAN", "subnet": "10.0.10.0/24", "purpose": "lan"}, {"vid": 20, "name": "Sprava", "subnet": "10.0.20.0/24", "purpose": "mgmt"}]
   },
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/port-profiles": [
    {

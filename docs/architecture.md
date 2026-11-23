@@ -1334,3 +1334,21 @@ hloubky – z `uplinks`). Klienti: stav, připojeno k, Wi-Fi síť, VLAN, výrob
 (`#infra-tl`): události lokality z `timeline` API na svislé ose (nahoře teď, 6 h / 24 h / 7 d), shluknuté
 značky podle závažnosti; klik zvýrazní dotčená zařízení v mapě a nabídne „co se dělo kolem“ v Aktivitě.
 Stav mapy v minulosti nevrací – topologie se neukládá v čase.
+
+## Sekce Porty (etapa 15, krok 3)
+
+Samostatná položka levé lišty (`view-ports`, stav `pm` v `app.js`) – přehled portů celé lokality po vzoru
+UniFi Ports. Jen čtení; hromadná úprava portů a MLAG zůstávají v Zařízení → Porty všech switchů.
+
+- **Data:** `GET …/sites/{id}/ports` (`porttools.site_ports`) vrací u portu navíc `rate`, `poe_status`, `poe_w`,
+  `stp_role`, `sfp`, `peer` (spravovaný soused `{device_id, device, port}` – protější port z `interface-name`
+  souseda) a `clients` (drátoví klienti viděni na portu za posledních 20 minut); v odpovědi je i seznam
+  `networks` lokality pro jména VLAN.
+- **Levý panel:** výběr zařízení (nebo všechny porty), přepínače Schéma portů / Připojená zařízení / VLAN /
+  Provoz (ukládají se do `prefs.pm`) a skupiny filtrů (`PM_FACETS`: stav, rychlost linky, PoE, co je připojeno,
+  nativní VLAN, STP, profil).
+- **Schéma:** dlaždice portů ve dvou řadách (liché nahoře), SFP zvlášť; barva podle rychlosti linky, značky
+  PoE / uplink (STP root port) / bond, nad a pod dlaždicí jméno toho, co je na portu. Porty mimo filtr zešednou,
+  klik port vybere (tabulka i graf se zúží na něj).
+- **VLAN:** nativní VLAN každého portu a pro každou síť mřížka tagovaná / nativní / není na portu.
+- **Provoz:** graf rx/tx za 24 h z `/devices/{id}/traffic` – součet fyzických portů zařízení, nebo vybraný port.

@@ -2235,15 +2235,16 @@ function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(pre
 
 // lokalita: pět sekcí jako v UniFi; dole celý tenant (lokality, uživatelé, systém)
 // [klíč, popisek v ikonové liště, celý název (tooltip)]
-const VIEWS = [["dash", __("Přehled"), __("Přehled a topologie")], ["devices", __("Zařízení")], ["clients", __("Klienti")],
+const VIEWS = [["dash", __("Přehled"), __("Přehled a topologie")], ["devices", __("Zařízení")], ["ports", __("Porty")], ["clients", __("Klienti")],
   ["settings", __("Nastavení"), __("Nastavení lokality")], ["activity", __("Aktivita"), __("Aktivita a audit")],
   ["tenant", __("Lokality"), __("Všechny lokality")], ["users", __("Uživatelé")], ["system", __("Systém")]];
-const SITE_VIEWS = ["dash", "devices", "clients", "settings", "activity"];
+const SITE_VIEWS = ["dash", "devices", "ports", "clients", "settings", "activity"];
 const navBadges = {};
 
 // ikony navigace (16 px, obrys)
 const NAV_ICON = {
   dash: "M2 9l6-6 6 6M4 8v5h8V8", devices: "M2 4h12v5H2zM2 11h12M5 6.5h.01M8 6.5h.01", clients: "M3 3h10v7H3zM1.5 13h13",
+  ports: "M2 4h12v8H2zM5 7v3M8 7v3M11 7v3",
   settings: "M3 4h10M3 8h10M3 12h10M6 2.5v3M10 6.5v3M5 10.5v3", activity: "M1.5 8h3l2-5 3 10 2-5h3",
   tenant: "M2 14V4l5-2v12M7 6l7 2v6M1 14h14", users: "M8 8a3 3 0 100-6 3 3 0 000 6zM2.5 14c.6-3 2.7-4.5 5.5-4.5s4.9 1.5 5.5 4.5",
   system: "M3 3h10v4H3zM3 9h10v4H3zM5.5 5h.01M5.5 11h.01",
@@ -2278,6 +2279,7 @@ const SUBTABS = {
          ["stp", "stp-btn", "stp-wrap", () => loadStp()]],
   devices: [["list", "devlist-btn", "devlist-wrap", () => loadDevices()], ["sports", "sports-btn", "sports-wrap", () => loadSitePorts()]],
   clients: [["clients", null, null, () => loadClients()]],
+  ports: [["ports", null, null, () => loadPortMap()]],
   settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
@@ -2325,6 +2327,7 @@ const GS_PLACES = [
   ["STP", __("Přehled"), "stp rstp root smycka loop", "dash", "stp"],
   [__("Seznam zařízení"), __("Zařízení"), "zarizeni adopce pridat switch ap devices adopt", "devices", "list"],
   [__("Porty všech switchů"), __("Zařízení"), "porty poe vlan ports", "devices", "sports"],
+  [__("Porty: schéma, VLAN, provoz"), __("Porty"), "porty port poe vlan rychlost linka schema ports speed stats provoz", "ports", null],
   [__("Klienti"), __("Klienti"), "klienti wifi mac ip clients history historie", "clients", null],
   [__("Sítě (VLAN, podsítě)"), __("Nastavení"), "site vlan podsit dhcp subnet networks zamer", "settings", "net"],
   [__("Wi-Fi (SSID, hesla, kanály)"), __("Nastavení"), "wifi ssid heslo capsman kanaly channels password", "settings", "wifi"],
@@ -4134,6 +4137,214 @@ function drawMlag() {
   box.appendChild(f);
 }
 
+
+// --- sekce Porty: schéma portů s připojenými zařízeními, filtry, přehled VLAN a provoz -------------------------
+const pm = { data: null, dev: "", f: {}, sel: null, chartFor: null };
+const pmOpt = () => (prefs.pm = prefs.pm || { diagram: true, conn: true, vlan: false, stats: false });
+function pmSpeed(p) {
+  if (p.disabled) return "off";
+  if (!p.running) return "down";
+  const r = String(p.rate || "");
+  return /^10M/i.test(r) ? "10" : /^100M/i.test(r) ? "100" : /^1G/i.test(r) ? "1g" : /^2\.5G/i.test(r) ? "2g5" : /^\d+G/i.test(r) ? "10g" : "up";
+}
+const PM_SPEED = { 10: "10 Mb/s", 100: "100 Mb/s", "1g": "1 Gb/s", "2g5": "2,5 Gb/s", "10g": "10 Gb/s +", up: __("linka"), down: __("bez linky"), off: __("vypnutý") };
+const pmPoe = (p) => !p.poe ? "none" : p.poe_w > 0 ? "on" : p.poe === "off" ? "off" : "idle";
+const PM_POE = { on: __("Napájí"), idle: __("Zapnuto, bez odběru"), off: __("PoE vypnuté"), none: __("Bez PoE") };
+const pmNet = (vid) => { const n = ((pm.data && pm.data.networks) || []).find((x) => String(x.vid) === String(vid)); return n ? `${n.name} (${vid})` : "VLAN " + vid; };
+const pmConn = (p) => p.peer ? "dev" : (p.clients || []).length ? "client" : p.neighbor ? "other" : "none";
+const PM_FACETS = [
+  ["link", __("Stav"), (x) => x.p.disabled ? "off" : x.p.running ? "up" : "down", (v) => ({ up: __("S linkou"), down: __("Bez linky"), off: __("Vypnutý") })[v], true],
+  ["speed", __("Rychlost linky"), (x) => x.p.running && !x.p.disabled ? pmSpeed(x.p) : null, (v) => PM_SPEED[v]],
+  ["poe", "PoE", (x) => pmPoe(x.p), (v) => PM_POE[v]],
+  ["conn", __("Připojeno"), (x) => pmConn(x.p), (v) => ({ dev: __("Spravované zařízení"), client: __("Klient"), other: __("Jiný soused"), none: __("Nic") })[v]],
+  ["pvid", __("Nativní VLAN"), (x) => x.p.pvid ? String(x.p.pvid) : null, pmNet],
+  ["stp", "STP", (x) => x.p.stp_role || null],
+  ["profile", __("Profil"), (x) => x.p.bond ? "bond " + x.p.bond : x.p.profile || null]];
+const pmNum = (name) => String(name || "").replace(/^\D+/, "") || String(name || "");
+const pmKey = (d, p) => d.device_id + "|" + p.port;
+// co je na portu: spravované zařízení (s jeho portem), klient(i), jiný soused
+function pmWhat(p) {
+  if (p.peer) return p.peer.device + (p.peer.port ? " · " + p.peer.port : "");
+  const c = p.clients || [];
+  if (c.length) return (c[0].name || c[0].mac) + (c.length > 1 ? ` +${c.length - 1}` : "");
+  return p.neighbor || "";
+}
+
+async function loadPortMap() {
+  if (!tenantId || !siteId()) return;
+  try { pm.data = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/ports`); } catch (e) { return msg(e.message, true); }
+  if (pm.dev && !pm.data.devices.some((d) => d.device_id === pm.dev)) pm.dev = "";
+  renderPortMap();
+}
+
+function pmItems() {
+  const out = [];
+  for (const d of (pm.data && pm.data.devices) || []) if (!pm.dev || d.device_id === pm.dev) for (const p of d.ports) out.push({ d, p });
+  return out;
+}
+
+// mřížka portů jednoho zařízení: liché nahoře, sudé dole (jako na čelním panelu); SFP zvlášť
+function pmGrid(d, cell, labels) {
+  const face = el("div", null, "pm-face");
+  const groups = [d.ports.filter((p) => !p.sfp), d.ports.filter((p) => p.sfp)];
+  for (const g of groups) {
+    if (!g.length) continue;
+    const grp = el("div", null, "pm-grp"), two = g.length > 8;
+    for (let i = 0; i < g.length; i += two ? 2 : 1) {
+      const col = el("div", null, "pm-col"), a = g[i], b = two ? g[i + 1] : null;
+      if (labels) col.appendChild(el("span", labels(a), "pm-lab"));
+      col.appendChild(cell(a));
+      if (two) { col.appendChild(b ? cell(b) : el("span", "", "pm-gap")); if (labels) col.appendChild(el("span", b ? labels(b) : "", "pm-lab")); }
+      grp.appendChild(col);
+    }
+    face.appendChild(grp);
+  }
+  return face;
+}
+
+function renderPortMap() {
+  const o = pmOpt(), data = pm.data; if (!data) return;
+  // výběr zařízení
+  const sel = $("pm-dev"); sel.textContent = "";
+  const all = el("option", __("Všechny porty")); all.value = ""; sel.appendChild(all);
+  for (const d of data.devices) if (d.ports.length) { const op = el("option", d.device + (d.online ? "" : __(" (offline)"))); op.value = d.device_id; sel.appendChild(op); }
+  sel.value = pm.dev;
+  for (const k of ["diagram", "conn", "vlan", "stats"]) $("pm-o-" + k).checked = !!o[k];
+  const cur = data.devices.find((d) => d.device_id === pm.dev);
+  const info = $("pm-info"); info.textContent = "";
+  if (cur) {
+    const used = cur.ports.filter((p) => p.running).length, w = cur.ports.reduce((a, p) => a + (p.poe_w || 0), 0);
+    for (const [k, v] of [[__("Model"), cur.model || "–"], [__("Porty s linkou"), `${used} / ${cur.ports.length}`], [__("PoE celkem"), w ? w.toFixed(1) + " W" : "–"]]) {
+      const r = el("div", null, "pm-kv"); r.append(el("span", k), el("span", v)); info.appendChild(r);
+    }
+    const a = el("button", __("Otevřít zařízení"), "ux-link"); a.type = "button"; a.addEventListener("click", () => openDetail(cur.device_id)); info.appendChild(a);
+  }
+  const items = pmItems();
+  facetGroups($("pm-facets"), "pm", items, PM_FACETS, pm.f, () => renderPortMap());
+  $("pm-clear").disabled = !facetAny(pm.f);
+  const ok = (x) => facetOk(PM_FACETS, pm.f, x);
+  const shown = new Set(items.filter(ok).map((x) => pmKey(x.d, x.p)));
+  const devs = data.devices.filter((d) => d.ports.length && (!pm.dev || d.device_id === pm.dev));
+  // schéma
+  const dg = $("pm-diagram"); dg.textContent = ""; dg.hidden = !o.diagram;
+  const tile = (d) => (p) => {
+    const sp = pmSpeed(p), key = pmKey(d, p);
+    const b = el("button", null, `pm-tile s-${sp}` + (shown.has(key) ? "" : " dim") + (pm.sel === key ? " sel" : "")); b.type = "button";
+    b.appendChild(el("span", pmNum(p.port), "pm-n"));
+    const marks = (p.poe_w > 0 ? "ϟ" : "") + (p.stp_role === "root-port" ? "↑" : "") + (p.bond ? "≡" : "");
+    if (marks) b.appendChild(el("span", marks, "pm-m"));
+    b.title = [`${d.device} · ${p.port}`, p.comment, PM_SPEED[sp], p.poe_w > 0 ? `PoE ${p.poe_w} W` : "", pmWhat(p),
+               p.pvid ? __`nativní ${pmNet(p.pvid)}` : ""].filter(Boolean).join("\n");
+    b.setAttribute("aria-label", b.title.replace(/\n/g, ", "));
+    b.addEventListener("click", () => { pm.sel = pm.sel === key ? null : key; renderPortMap(); });
+    b.addEventListener("dblclick", () => openDetail(d.device_id));
+    return b;
+  };
+  for (const d of devs) {
+    const box = el("div", null, "pm-dev");
+    if (!pm.dev) {
+      const h = el("div", null, "pm-dev-h"), a = el("a", d.device); a.href = "#";
+      a.addEventListener("click", (e) => { e.preventDefault(); pm.dev = d.device_id; pm.sel = null; renderPortMap(); });
+      h.append(a, el("small", " " + [d.model, d.online ? "" : __("offline")].filter(Boolean).join(" · "), "muted")); box.appendChild(h);
+    }
+    box.appendChild(pmGrid(d, tile(d), o.conn ? (p) => pmWhat(p).split(" · ")[0] : null));
+    dg.appendChild(box);
+  }
+  // legenda
+  const lg = $("pm-legend"); lg.textContent = ""; lg.hidden = !o.diagram;
+  for (const k of ["10", "100", "1g", "2g5", "10g", "down", "off"]) { const s = el("span"); s.append(el("i", "", "pm-tile s-" + k), document.createTextNode(PM_SPEED[k])); lg.appendChild(s); }
+  lg.append(el("span", "ϟ " + __("napájí PoE")), el("span", "↑ " + __("uplink")), el("span", "≡ bond"));
+  // VLAN: nativní VLAN portů + síť po síti (tagovaná / nativní / není)
+  const vb = $("pm-vlan"); vb.textContent = ""; vb.hidden = !o.vlan;
+  if (o.vlan) {
+    for (const d of devs) {
+      const box = el("div", null, "pm-dev");
+      box.appendChild(el("h4", (pm.dev ? "" : d.device + " – ") + __("Nativní VLAN portů")));
+      box.appendChild(pmGrid(d, (p) => { const c = el("span", p.pvid ? String(p.pvid) : "–", "pm-vbox" + (shown.has(pmKey(d, p)) ? "" : " dim")); c.title = `${p.port}: ${p.pvid ? pmNet(p.pvid) : "–"}`; return c; }));
+      const vids = new Set((data.networks || []).map((n) => String(n.vid)));
+      for (const p of d.ports) { if (p.pvid) vids.add(String(p.pvid)); for (const t of p.tagged || []) vids.add(String(t)); }
+      for (const vid of [...vids].sort((a, b) => Number(a) - Number(b))) {
+        const net = (data.networks || []).find((n) => String(n.vid) === vid);
+        if (!d.ports.some((p) => String(p.pvid) === vid || (p.tagged || []).map(String).includes(vid))) continue;
+        const h = el("div", null, "pm-vh"); h.append(el("span", pmNet(vid)), el("span", net && net.subnet ? net.subnet : "", "muted")); box.appendChild(h);
+        box.appendChild(pmGrid(d, (p) => {
+          const st = String(p.pvid) === vid ? "native" : (p.tagged || []).map(String).includes(vid) ? "tagged" : "none";
+          const c = el("span", "", "pm-vbox v-" + st); c.title = `${p.port}: ` + ({ native: __("nativní (netagovaná)"), tagged: __("tagovaná"), none: __("není na portu") })[st]; return c;
+        }));
+      }
+      vb.appendChild(box);
+    }
+    const lg2 = el("div", null, "pm-legend");
+    for (const [k, t] of [["tagged", __("tagovaná")], ["native", __("nativní")], ["none", __("není na portu")]]) { const s2 = el("span"); s2.append(el("i", "", "pm-vbox v-" + k), document.createTextNode(t)); lg2.appendChild(s2); }
+    vb.insertBefore(lg2, vb.children[0] || null);
+  }
+  // provoz
+  const stb = $("pm-stats"); stb.hidden = !o.stats;
+  if (o.stats) pmStats(cur);
+  // tabulka
+  const tb = $("pm-body"); tb.textContent = "";
+  let n = 0;
+  for (const { d, p } of items) {
+    const key = pmKey(d, p);
+    if (!shown.has(key) || (pm.sel && pm.sel !== key)) continue;
+    n++;
+    const tr = el("tr", null, "clickable" + (pm.sel === key ? " selected" : "") + (p.running ? "" : " off"));
+    const pt = el("td"); pt.append(el("i", "", "pm-tile mini s-" + pmSpeed(p)), document.createTextNode(" " + pmNum(p.port)));
+    const dv = el("td"); const da = el("a", d.device); da.href = "#"; da.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openDetail(d.device_id); }); dv.appendChild(da);
+    const cn = el("td");
+    if (p.peer) { const a = el("a", p.peer.device); a.href = "#"; a.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openDetail(p.peer.device_id); }); cn.appendChild(a); if (p.peer.port) cn.appendChild(el("span", " · " + p.peer.port, "muted")); }
+    else cn.textContent = pmWhat(p) || "–";
+    const c0 = (p.clients || [])[0];
+    const sp = pmSpeed(p);
+    tr.append(pt, dv, el("td", p.comment || p.port, p.comment ? "" : "muted"), el("td", p.stp_role || "–", "muted"), cn,
+              el("td", p.poe ? (p.poe_w > 0 ? p.poe_w + " W" : PM_POE[pmPoe(p)]) : "–", p.poe_w > 0 ? "" : "muted"),
+              el("td", (sp === "10g" || sp === "up") && p.rate ? p.rate : PM_SPEED[sp], "pm-sp s-" + sp),
+              el("td", c0 ? c0.mac + ((p.clients || []).length > 1 ? ` +${p.clients.length - 1}` : "") : "–", "mono"), el("td", c0 && c0.ip ? c0.ip : "–"),
+              el("td", p.bond ? "bond " + p.bond : p.profile || "–", p.profile || p.bond ? "" : "muted"),
+              el("td", p.pvid ? pmNet(p.pvid) : "–"), el("td", (p.tagged || []).join(", ") || "–", "muted"));
+    tr.addEventListener("click", () => { pm.sel = pm.sel === key ? null : key; renderPortMap(); });
+    tb.appendChild(tr);
+  }
+  if (!n) { const tr = el("tr"), td = el("td", __("Žádné porty neodpovídají filtru."), "muted"); td.colSpan = 12; tr.appendChild(td); tb.appendChild(tr); }
+  $("pm-count").textContent = pm.sel ? __("vybraný port – kliknutím na něj výběr zrušíš") : n === items.length ? __`${n} portů` : __`${n} z ${items.length} portů`;
+}
+
+// provoz: součet fyzických portů zařízení, nebo vybraný port (posledních 24 h)
+async function pmStats(cur) {
+  const box = $("pm-stats");
+  if (!cur) { box.textContent = ""; box.appendChild(el("p", __("Provoz se kreslí pro jedno zařízení – vyber ho nahoře v panelu."), "muted")); pm.chartFor = null; return; }
+  const port = pm.sel && pm.sel.startsWith(cur.device_id + "|") ? pm.sel.split("|")[1] : "*";
+  const want = cur.device_id + "|" + port;
+  if (pm.chartFor === want) return;
+  pm.chartFor = want;
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/devices/${cur.device_id}/traffic?hours=24&interface=${encodeURIComponent(port)}`); }
+  catch (e) { pm.chartFor = null; box.textContent = ""; box.appendChild(el("p", __`Provoz se nepodařilo načíst: ${e.message}`, "muted")); return; }
+  if (pm.chartFor !== want) return;
+  box.textContent = "";
+  const pts = r.points || [];
+  const head = el("div", null, "pm-st-h");
+  const last = pts[pts.length - 1] || {};
+  head.append(el("strong", port === "*" ? __("Provoz všech portů (24 h)") : __`Provoz portu ${port} (24 h)`),
+              el("span", "↓ " + fmtBps(last.rx || 0), "pm-rx"), el("span", "↑ " + fmtBps(last.tx || 0), "pm-tx"));
+  box.appendChild(head);
+  if (pts.length < 2 || typeof document.createElementNS !== "function") { box.appendChild(el("p", __("Zatím není dost měření."), "muted")); return; }
+  const W = 1000, H = 190, max = Math.max(1000, ...pts.map((x) => Math.max(x.rx || 0, x.tx || 0)));
+  const t0 = new Date(pts[0].t).getTime(), t1 = new Date(pts[pts.length - 1].t).getTime() || t0 + 1;
+  const X = (t) => (new Date(t).getTime() - t0) / Math.max(1, t1 - t0) * W, Y = (v) => H - 4 - (v / max) * (H - 14);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", class: "pm-chart", role: "img", "aria-label": __("Graf provozu") });
+  for (const [k, cls] of [["tx", "pm-a-tx"], ["rx", "pm-a-rx"]]) {
+    const line = pts.map((x) => `${X(x.t).toFixed(1)},${Y(x[k] || 0).toFixed(1)}`).join(" ");
+    svg.appendChild(svgEl("polygon", { points: `0,${H} ${line} ${W},${H}`, class: cls }));
+    svg.appendChild(svgEl("polyline", { points: line, class: cls + " l" }));
+  }
+  box.appendChild(svg);
+  const ax = el("div", null, "pm-st-x"); ax.append(el("span", fmtTime(pts[0].t)), el("span", __`špička ${fmtBps(max)}`), el("span", __("teď"))); box.appendChild(ax);
+}
+
+$("pm-dev").addEventListener("change", () => { pm.dev = $("pm-dev").value; pm.sel = null; pm.chartFor = null; renderPortMap(); });
+for (const k of ["diagram", "conn", "vlan", "stats"]) $("pm-o-" + k).addEventListener("change", () => { pmOpt()[k] = $("pm-o-" + k).checked; savePrefs(); pm.chartFor = null; renderPortMap(); });
+$("pm-clear").addEventListener("click", () => { pm.f = {}; pm.sel = null; renderPortMap(); });
 
 // --- skrývací levý panel filtrů (rozvržení .ux): úchyt na hraně panelu, volba se pamatuje pro každou sekci ----
 for (const b of document.querySelectorAll ? document.querySelectorAll(".ux-toggle") : []) {

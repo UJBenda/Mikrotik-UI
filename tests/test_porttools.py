@@ -137,8 +137,21 @@ def test_bulk_profile_with_watchdog_and_site_ports():
         assert r.json()["results"][0]["command_id"]
         bad = c.post(T + "/ports/bulk", json_body={"targets": [{"device_id": sw, "ports": ["ether4"]}], "desired": {"comment": "x"}})
         assert bad.status_code == 400
+        # sekce Porty: klient na portu (viděn nedávno), starý klient a Wi-Fi klient se na port nepočítají
+        from mtcontroller.db import operator_scope as op_scope
+        with op_scope(db) as tx:
+            for mac, port, seen, ssid, host in (("AA:AA:AA:00:00:01", "ether2", "now()", None, "tiskarna"),
+                                                ("AA:AA:AA:00:00:02", "ether2", "now() - interval '2 hours'", None, "stary"),
+                                                ("AA:AA:AA:00:00:03", "ether2", "now()", "Firma", "telefon")):
+                tx.execute(f"""INSERT INTO client (tenant_id, site_id, mac, ip, hostname, device_id, device, port, ssid, last_seen)
+                               VALUES (%(t)s, %(s)s, %(m)s, '10.0.0.9', %(h)s, %(d)s, 'sw', %(p)s, %(w)s, {seen})""",
+                           {"t": tid, "s": sid, "m": mac, "h": host, "d": sw, "p": port, "w": ssid})
         sp = c.get(f"{T}/sites/{sid}/ports").json()
+        assert isinstance(sp["networks"], list)
         d = sp["devices"][0]
+        e2 = next(p for p in d["ports"] if p["port"] == "ether2")
+        assert e2["clients"] == [{"mac": "AA:AA:AA:00:00:01", "ip": "10.0.0.9", "name": "tiskarna"}], e2["clients"]
+        assert {"rate", "poe_w", "poe_status", "stp_role", "peer", "sfp"} <= set(e2)
         assert d["manage"] and [p["port"] for p in d["ports"]][:3] == ["ether1", "ether2", "ether3"]
         assert next(p for p in d["ports"] if p["port"] == "ether3")["neighbor"] == "AP-1"
     finally:
