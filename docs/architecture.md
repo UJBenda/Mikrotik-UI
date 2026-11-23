@@ -1352,3 +1352,28 @@ UniFi Ports. Jen čtení; hromadná úprava portů a MLAG zůstávají v Zaříz
   klik port vybere (tabulka i graf se zúží na něj).
 - **VLAN:** nativní VLAN každého portu a pro každou síť mřížka tagovaná / nativní / není na portu.
 - **Provoz:** graf rx/tx za 24 h z `/devices/{id}/traffic` – součet fyzických portů zařízení, nebo vybraný port.
+
+## Zdraví ethernetových portů (etapa 16, krok 1)
+
+Modul `porthealth.py`, tabulka `port_error_hourly` (migrace 0030, RLS, kontrola 20d).
+
+- **Sběr:** inventura čte navíc `rx-packet`/`tx-packet` z `/interface` a sekci `ethernet_stats`
+  (`/interface/ethernet` s čítači rx-fcs-error, rx-align-error, rx-fragment, rx-jabber, rx-too-short/long,
+  rx-overflow, tx-late-collision, tx-collision, rx/tx-pause…). Sekce je zvlášť od `ethernet`, aby měnící se
+  čísla nehýbala otiskem konfigurace; její selhání není chyba inventury. Které čítače čip vede, se liší –
+  chybějící se nepočítají a zůstává souhrn rx-error + tx-error (`generic`).
+- **Přírůstky:** čítače RouterOS jen rostou, proto `porthealth.record` při uložení inventury odečte předchozí
+  stav a rozdíl přičte do hodinového řádku. Pokles čítače (restart) port v tom kroku přeskočí; předchozí stav
+  starší než 2 h se nepoužije. Do řádku jde i poslední optický výkon SFP.
+- **Hodnocení (`evaluate`):** poměr chyb k rámcům za poslední hodinu. Varování od 20 chyb a 0,01 % rámců,
+  vážné od 100 chyb a 1 %; bez počtu rámců absolutně od 100 chyb. Dominantní druh chyby určuje nápovědu
+  (FCS = kabel/konektor/rušení, pozdní kolize = duplex, přetečení = přetížení…). Běžné kolize, pause rámce
+  a zahozené pakety se evidují, ale chybou nejsou.
+- **Alerty:** `port_errors` (nově poměrem a s druhem chyby, dřív absolutně ≥ 100/h z `interface_hourly`)
+  a `sfp_power` – přijímaný výkon aspoň o 3 dB pod průměrem předchozích 7 dní (≥ 24 hodinových hodnot).
+- **Rozhraní:** `site_ports` vrací u portu `health` `{level ok|note|warning|critical, why[], errors_1h,
+  errors_24h, ratio, top, kinds, drops, pause, collision, link_downs, sfp_rx, sfp_usual}`; `why` jsou kódy
+  (`errors`, `flap`, `sfp`, `half`, `slow`), texty skládá UI. Sekce Porty: značka na dlaždici, filtr
+  Zdraví portu, sloupec Chyby 24 h a detail vybraného portu s průběhem po hodinách
+  (`GET …/devices/{id}/port-errors?interface=&hours=`).
+- Prahy jsou odhad, na skutečném zařízení zatím neověřeno (ani to, které čítače REST vrací).

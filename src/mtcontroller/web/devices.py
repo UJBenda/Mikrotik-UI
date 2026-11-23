@@ -795,6 +795,23 @@ async def traffic(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(READ)
+async def port_errors(request: Request, p: Principal, tid: str) -> Response:
+    """Hodinová řada chyb jednoho portu podle druhu (sekce Porty)."""
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    hours = _int(request.query_params.get("hours"), 48, 1, 24 * 60)
+    iface = str(request.query_params.get("interface") or "")[:100]
+
+    def q():
+        from .. import porthealth
+
+        with tenant_scope(st.db, tid) as tx:
+            return {"interface": iface, "hours": hours, "points": porthealth.history(tx, did, iface, hours)}
+
+    return json_response(await run_in_threadpool(q))
+
+
 # --- lokalita: NTP politika, plány, topologie ------------------------------------------
 
 
@@ -1937,6 +1954,7 @@ def routes() -> list[Route]:
         Route(d + "/vlan-migration", vlan_migration, methods=["GET"]),
         Route(d + "/metrics", metrics, methods=["GET"]),
         Route(d + "/traffic", traffic, methods=["GET"]),
+        Route(d + "/port-errors", port_errors, methods=["GET"]),
         Route(d + "/release-notes", release_notes, methods=["GET"]),
         Route(d + "/port-history", port_history, methods=["GET"]),
         Route(d + "/ports/{port}", port_get, methods=["GET"]),

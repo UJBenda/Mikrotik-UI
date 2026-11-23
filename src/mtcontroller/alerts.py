@@ -12,13 +12,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from . import health, ros_versions
+from . import health, porthealth, ros_versions
 from .db import Database, Tx, operator_scope
 
 log = logging.getLogger("mtc.alerts")
 
 FLAP_LINK_DOWNS = 5        # výpadků linky za 2 hodiny
-PORT_ERRORS = 100          # chyb RX+TX za poslední hodinu
 CPU_HIGH = 90
 MEM_HIGH = 90
 BACKUP_STALE_HOURS = 48
@@ -124,15 +123,11 @@ def conditions(tx: Tx) -> list[Active]:
                 HAVING sum(h.link_downs) >= {FLAP_LINK_DOWNS}"""):
         out.append(Active(r["tenant_id"], r["device_id"], "port_flapping", r["name"], "warning",
                           f"{_label(r)}: port {r['name']} – {r['downs']} výpadků linky za 2 h"))
-    for r in tx.fetchall(
-            f"""SELECT h.tenant_id, h.device_id, h.name, sum(coalesce(h.rx_errors, 0) + coalesce(h.tx_errors, 0)) AS errs,
-                       d.identity, d.serial, d.id
-                FROM interface_hourly h JOIN device d ON d.id = h.device_id
-                WHERE h.hour > now() - interval '1 hour' AND d.state = 'adopted'
-                GROUP BY h.tenant_id, h.device_id, h.name, d.identity, d.serial, d.id
-                HAVING sum(coalesce(h.rx_errors, 0) + coalesce(h.tx_errors, 0)) >= {PORT_ERRORS}"""):
-        out.append(Active(r["tenant_id"], r["device_id"], "port_errors", r["name"], "warning",
-                          f"{_label(r)}: port {r['name']} – {r['errs']} chyb za poslední hodinu (kabel, duplex, SFP?)"))
+    # chybovost portů (poměr chyb k rámcům, druh chyby) a pokles optického výkonu SFP
+    names = {str(d["id"]): _label(d) for d in devs}
+    for r in porthealth.alerts(tx):
+        out.append(Active(r["tenant_id"], r["device_id"], r["kind"], r["port"], r["severity"],
+                          f"{names.get(str(r['device_id']), '?')}: {r['message']}"))
     for r in tx.fetchall(
             """SELECT DISTINCT ON (a.target) a.tenant_id, substr(a.target, 8)::uuid AS device_id, a.action, a.after,
                       d.identity, d.serial, d.id

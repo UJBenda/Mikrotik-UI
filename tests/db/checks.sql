@@ -463,6 +463,35 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20d) chybové čítače portů izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO port_error_hourly (tenant_id, device_id, name, hour, fcs)
+  SELECT tenant_id, id, 'ether1', date_trunc('hour', now()), 7 FROM device WHERE serial = 'SER-B1';
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM port_error_hourly) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí chyby portů tenanta B'; END IF;
+  UPDATE port_error_hourly SET fcs = 0;
+  BEGIN
+    INSERT INTO port_error_hourly (tenant_id, device_id, name, hour)
+      SELECT '00000000-0000-0000-0000-0000000000b1', id, 'ether1', date_trunc('hour', now()) FROM device WHERE serial = 'SER-A1';
+    RAISE EXCEPTION 'FAIL: tenant A zapsal chyby portu tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 20d chybové čítače portů izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT fcs FROM port_error_hourly) <> 7 THEN RAISE EXCEPTION 'FAIL: tenant A změnil chyby portu B'; END IF;
+  IF NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname = 'port_error_hourly') THEN
+    RAISE EXCEPTION 'FAIL: port_error_hourly bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

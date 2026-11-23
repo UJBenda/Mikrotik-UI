@@ -5023,7 +5023,9 @@
        "stp_role": "designated-port",
        "sfp": false,
        "peer": null,
-       "clients": [{"mac": "AA:BB:CC:00:00:01", "ip": "10.0.10.21", "name": "tiskarna"}]
+       "clients": [{"mac": "AA:BB:CC:00:00:01", "ip": "10.0.10.21", "name": "tiskarna"}],
+       "health": {"level": "warning", "why": ["errors", "slow"], "errors_1h": 240, "errors_24h": 1310, "ratio": 0.0042, "top": "fcs",
+                  "kinds": {"fcs": 1250, "fragment": 60}, "drops": 12, "pause": 0, "collision": 0, "link_downs": 2, "sfp_rx": null, "sfp_usual": null}
       }
      ],
      "bonds": [
@@ -5056,6 +5058,11 @@
     }
    ],
    "networks": [{"vid": 10, "name": "LAN", "subnet": "10.0.10.0/24", "purpose": "lan"}, {"vid": 20, "name": "Sprava", "subnet": "10.0.20.0/24", "purpose": "mgmt"}]
+  },
+  "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/devices/06813aef-ac70-438a-a7d6-7859862f16ed/port-errors?hours=48&interface=ether3": {
+   "interface": "ether3", "hours": 48,
+   "points": [{"t": "2026-11-23T10:00:00+00:00", "errors": 70, "packets": 90000, "kinds": {"fcs": 70}, "drops": 0, "level": "warning", "sfp_rx": null},
+              {"t": "2026-11-23T12:00:00+00:00", "errors": 240, "packets": 57000, "kinds": {"fcs": 230, "fragment": 10}, "drops": 4, "level": "warning", "sfp_rx": null}]
   },
   "/api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/port-profiles": [
    {

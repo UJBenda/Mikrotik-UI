@@ -228,12 +228,22 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       else {
         if (!tiles[1].className.includes("s-1g") || !tiles[2].className.includes("s-100")) errors.push("porty: barva podle rychlosti " + tiles.map((t) => t.className));
         if (!rows[1].children[4].textContent.includes("AP-1") || !rows[1].children[4].textContent.includes("ether1")) errors.push("porty: protější port " + rows[1].children[4].textContent);
-        if (rows[2].children[4].textContent !== "tiskarna" || rows[2].children[7].textContent !== "AA:BB:CC:00:00:01") errors.push("porty: klient na portu");
-        if (rows[1].children[10].textContent !== "Sprava (20)") errors.push("porty: nativní VLAN " + rows[1].children[10].textContent);
+        if (rows[2].children[4].textContent !== "tiskarna" || rows[2].children[8].textContent !== "AA:BB:CC:00:00:01") errors.push("porty: klient na portu");
+        if (rows[1].children[11].textContent !== "Sprava (20)") errors.push("porty: nativní VLAN " + rows[1].children[11].textContent);
+        // zdraví portu: značka na dlaždici, sloupec chyb, filtr, detail s důvody a hodinovým průběhem
+        if (!tiles[2].className.includes("h-warning") || tiles[1].className.includes("h-")) errors.push("porty: značka chyb " + tiles.map((t) => t.className));
+        if (!rows[2].children[7].textContent.includes("1310 · FCS") || rows[1].children[7].textContent !== "–") errors.push("porty: sloupec chyb " + rows[2].children[7].textContent);
+        if (!tiles[2].title.includes("240 chyb za poslední hodinu") || !tiles[2].title.includes("kabel, konektor nebo rušení")) errors.push("porty: důvod " + tiles[2].title);
         const groups = byId["pm-facets"].children.map((x) => x.children[0].textContent);
-        if (!groups.includes("Rychlost linky") || !groups.includes("PoE") || !groups.includes("Nativní VLAN")) errors.push("porty: filtry " + groups);
+        if (!groups.includes("Zdraví portu") || !groups.includes("Rychlost linky") || !groups.includes("PoE") || !groups.includes("Nativní VLAN")) errors.push("porty: filtry " + groups);
         await tiles[2].fire("click");
         if (byId["pm-body"].children.length !== 1) errors.push("porty: výběr portu");
+        await tlTick();
+        const det = byId["pm-port"];
+        if (det.hidden || !det.textContent.includes("Varování") || !det.textContent.includes("1250 FCS")) errors.push("porty: detail chyb " + det.textContent);
+        const bars = find(det, (n) => n.className === "pm-bars");
+        if (!bars || bars.children.length !== 48 || bars.children.filter((b) => b.className === "h-warning").length !== 2) errors.push("porty: průběh chyb");
+        if (!requests.some((r) => r.includes("/port-errors?hours=48&interface=ether3"))) errors.push("porty: dotaz na chyby portu");
         await tilesOf()[2].fire("click");
         byId["pm-o-vlan"].checked = true; await byId["pm-o-vlan"].fire("change");
         if (byId["pm-vlan"].hidden || !byId["pm-vlan"].textContent.includes("LAN (10)")) errors.push("porty: přehled VLAN");

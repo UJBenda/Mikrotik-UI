@@ -30,6 +30,8 @@ def test_alert_lifecycle_and_api():
             tx.execute(
                 """INSERT INTO interface_hourly (tenant_id, device_id, hour, name, link_downs, rx_errors, samples)
                    VALUES (%(t)s, %(d)s, date_trunc('hour', now()), 'ether3', 7, 500, 12)""", {"t": tid, "d": a})
+            tx.execute("""INSERT INTO port_error_hourly (tenant_id, device_id, name, hour, generic)
+                          VALUES (%(t)s, %(d)s, 'ether3', date_trunc('hour', now()), 500)""", {"t": tid, "d": a})
         inventory.store(db, tid, a, {"resource": {"cpu-load": "97", "free-memory": "50", "total-memory": "1000",
                                                   "version": "7.24.2 (stable)"}}, [])
         backup.store(db, box, tid, a, "# x by RouterOS 7.24\n/system identity set name=a\n")

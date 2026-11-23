@@ -474,6 +474,7 @@ function alertReactions(a) {
     port_flapping: [__("Port často padá – zkontroluj kabel a protějšek."), []],
     port_errors: [__("Chyby na portu – kabel, konektor nebo duplex."), []],
     port_half_duplex: [__("Port jede v half-duplexu – zkontroluj autonegociaci."), []],
+    sfp_power: [__("Optický výkon na SFP klesl proti obvyklému – vyčisti konektory, zkontroluj vlákno a modul."), []],
     cpu_high: [__("Vysoké vytížení CPU."), []], memory_high: [__("Málo volné paměti."), []],
     anomaly: [__("Zařízení se chová jinak než obvykle v tuto hodinu (porovnání s posledními 14 dny) – podívej se na časovou osu, co se změnilo."), []],
     ntp_unsynced: [__("Čas není synchronizovaný – Nastavení lokality → Systém a nasazení."), []],
@@ -4155,11 +4156,33 @@ const pmConn = (p) => p.peer ? "dev" : (p.clients || []).length ? "client" : p.n
 const PM_FACETS = [
   ["link", __("Stav"), (x) => x.p.disabled ? "off" : x.p.running ? "up" : "down", (v) => ({ up: __("S linkou"), down: __("Bez linky"), off: __("Vypnutý") })[v], true],
   ["speed", __("Rychlost linky"), (x) => x.p.running && !x.p.disabled ? pmSpeed(x.p) : null, (v) => PM_SPEED[v]],
+  ["health", __("Zdraví portu"), (x) => pmHealth(x.p).level || "ok", (v) => PM_HEALTH[v] || v],
   ["poe", "PoE", (x) => pmPoe(x.p), (v) => PM_POE[v]],
   ["conn", __("Připojeno"), (x) => pmConn(x.p), (v) => ({ dev: __("Spravované zařízení"), client: __("Klient"), other: __("Jiný soused"), none: __("Nic") })[v]],
   ["pvid", __("Nativní VLAN"), (x) => x.p.pvid ? String(x.p.pvid) : null, pmNet],
   ["stp", "STP", (x) => x.p.stp_role || null],
   ["profile", __("Profil"), (x) => x.p.bond ? "bond " + x.p.bond : x.p.profile || null]];
+// zdraví portu: chyby podle druhu (poměr k provozu), výpadky linky, duplex, optika
+const PM_ERR = { fcs: "FCS", align: __("zarovnání"), fragment: __("fragmenty"), jabber: "jabber", size: __("délka rámce"), overflow: __("přetečení"),
+  late_collision: __("pozdní kolize"), other: __("nosná"), generic: __("chyby (souhrn)") };
+const PM_ERR_HINT = { fcs: __("kabel, konektor nebo rušení"), align: __("kabel nebo neshoda duplexu"), fragment: __("kabel, rušení nebo kolize"),
+  jabber: __("vadná síťová karta protistrany"), size: __("neshoda MTU"), overflow: __("port nestíhá – přetížení, flow control"),
+  late_collision: __("neshoda duplexu nebo příliš dlouhý kabel"), other: __("problém s linkou"), generic: __("kabel, duplex nebo SFP") };
+const PM_HEALTH = { critical: __("Vážné chyby"), warning: __("Varování"), note: __("Drobnosti"), ok: __("V pořádku") };
+const pmHealth = (p) => p.health || { level: "ok", why: [] };
+const pmPct = (r) => r == null ? "" : (r * 100 >= 1 ? (r * 100).toFixed(1) : r * 100 >= 0.1 ? (r * 100).toFixed(2) : (r * 100).toFixed(3)).replace(".", ",") + " %";
+function pmWhy(p) {
+  const h = pmHealth(p), out = [];
+  for (const w of h.why || []) {
+    if (w === "errors") out.push(__`${h.errors_1h} chyb za poslední hodinu` + (h.ratio != null ? ` (${pmPct(h.ratio)} ${__("rámců")})` : "") + (h.top ? ` – ${PM_ERR[h.top] || h.top}: ${PM_ERR_HINT[h.top] || ""}` : ""));
+    else if (w === "flap") out.push(__`${h.link_downs}× výpadek linky za 24 h – kabel, konektor nebo protějšek`);
+    else if (w === "sfp") out.push(__`optický výkon ${h.sfp_rx} dBm, obvykle ${h.sfp_usual} dBm – konektor, vlákno nebo modul`);
+    else if (w === "half") out.push(__("half-duplex – neshoda autonegociace s protistranou"));
+    else if (w === "slow") out.push(__("jen 100 Mb/s – u gigabitového zařízení typicky vadný pár v kabelu"));
+  }
+  return out;
+}
+const pmErrText = (p) => { const h = pmHealth(p); return h.errors_24h ? `${h.errors_24h}` + (h.top ? " · " + (PM_ERR[h.top] || h.top) : "") : h.link_downs ? __`${h.link_downs}× linka` : "–"; };
 const pmNum = (name) => String(name || "").replace(/^\D+/, "") || String(name || "");
 const pmKey = (d, p) => d.device_id + "|" + p.port;
 // co je na portu: spravované zařízení (s jeho portem), klient(i), jiný soused
@@ -4229,12 +4252,13 @@ function renderPortMap() {
   const dg = $("pm-diagram"); dg.textContent = ""; dg.hidden = !o.diagram;
   const tile = (d) => (p) => {
     const sp = pmSpeed(p), key = pmKey(d, p);
-    const b = el("button", null, `pm-tile s-${sp}` + (shown.has(key) ? "" : " dim") + (pm.sel === key ? " sel" : "")); b.type = "button";
+    const hl = pmHealth(p).level;
+    const b = el("button", null, `pm-tile s-${sp}` + (shown.has(key) ? "" : " dim") + (pm.sel === key ? " sel" : "") + (hl && hl !== "ok" ? " h-" + hl : "")); b.type = "button";
     b.appendChild(el("span", pmNum(p.port), "pm-n"));
     const marks = (p.poe_w > 0 ? "ϟ" : "") + (p.stp_role === "root-port" ? "↑" : "") + (p.bond ? "≡" : "");
     if (marks) b.appendChild(el("span", marks, "pm-m"));
     b.title = [`${d.device} · ${p.port}`, p.comment, PM_SPEED[sp], p.poe_w > 0 ? `PoE ${p.poe_w} W` : "", pmWhat(p),
-               p.pvid ? __`nativní ${pmNet(p.pvid)}` : ""].filter(Boolean).join("\n");
+               p.pvid ? __`nativní ${pmNet(p.pvid)}` : "", ...pmWhy(p).map((w) => "⚠ " + w)].filter(Boolean).join("\n");
     b.setAttribute("aria-label", b.title.replace(/\n/g, ", "));
     b.addEventListener("click", () => { pm.sel = pm.sel === key ? null : key; renderPortMap(); });
     b.addEventListener("dblclick", () => openDetail(d.device_id));
@@ -4254,6 +4278,8 @@ function renderPortMap() {
   const lg = $("pm-legend"); lg.textContent = ""; lg.hidden = !o.diagram;
   for (const k of ["10", "100", "1g", "2g5", "10g", "down", "off"]) { const s = el("span"); s.append(el("i", "", "pm-tile s-" + k), document.createTextNode(PM_SPEED[k])); lg.appendChild(s); }
   lg.append(el("span", "ϟ " + __("napájí PoE")), el("span", "↑ " + __("uplink")), el("span", "≡ bond"));
+  for (const k of ["critical", "warning"]) { const s = el("span"); s.append(el("i", "", "pm-dot h-" + k), document.createTextNode(PM_HEALTH[k])); lg.appendChild(s); }
+  pmPortDetail();
   // VLAN: nativní VLAN portů + síť po síti (tagovaná / nativní / není)
   const vb = $("pm-vlan"); vb.textContent = ""; vb.hidden = !o.vlan;
   if (o.vlan) {
@@ -4298,15 +4324,72 @@ function renderPortMap() {
     const sp = pmSpeed(p);
     tr.append(pt, dv, el("td", p.comment || p.port, p.comment ? "" : "muted"), el("td", p.stp_role || "–", "muted"), cn,
               el("td", p.poe ? (p.poe_w > 0 ? p.poe_w + " W" : PM_POE[pmPoe(p)]) : "–", p.poe_w > 0 ? "" : "muted"),
-              el("td", (sp === "10g" || sp === "up") && p.rate ? p.rate : PM_SPEED[sp], "pm-sp s-" + sp),
+              el("td", (sp === "10g" || sp === "up") && p.rate ? p.rate : PM_SPEED[sp], "pm-sp s-" + sp), pmErrCell(p),
               el("td", c0 ? c0.mac + ((p.clients || []).length > 1 ? ` +${p.clients.length - 1}` : "") : "–", "mono"), el("td", c0 && c0.ip ? c0.ip : "–"),
               el("td", p.bond ? "bond " + p.bond : p.profile || "–", p.profile || p.bond ? "" : "muted"),
               el("td", p.pvid ? pmNet(p.pvid) : "–"), el("td", (p.tagged || []).join(", ") || "–", "muted"));
     tr.addEventListener("click", () => { pm.sel = pm.sel === key ? null : key; renderPortMap(); });
     tb.appendChild(tr);
   }
-  if (!n) { const tr = el("tr"), td = el("td", __("Žádné porty neodpovídají filtru."), "muted"); td.colSpan = 12; tr.appendChild(td); tb.appendChild(tr); }
+  if (!n) { const tr = el("tr"), td = el("td", __("Žádné porty neodpovídají filtru."), "muted"); td.colSpan = 13; tr.appendChild(td); tb.appendChild(tr); }
   $("pm-count").textContent = pm.sel ? __("vybraný port – kliknutím na něj výběr zrušíš") : n === items.length ? __`${n} portů` : __`${n} z ${items.length} portů`;
+}
+
+function pmErrCell(p) {
+  const h = pmHealth(p), td = el("td", null, "pm-err h-" + (h.level || "ok"));
+  if (h.level === "critical" || h.level === "warning") td.appendChild(el("i", "", "pm-dot h-" + h.level));
+  td.appendChild(document.createTextNode(pmErrText(p)));
+  const kinds = Object.entries(h.kinds || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${PM_ERR[k] || k}: ${n}`);
+  td.title = [...pmWhy(p), kinds.length ? __("za 24 h – ") + kinds.join(", ") : "", h.drops ? __`zahozeno ${h.drops}` : "", h.pause ? __`pause rámců ${h.pause}` : ""].filter(Boolean).join("\n");
+  return td;
+}
+
+// vybraný port: proč je označený, chyby podle druhu a hodinový průběh chyb (48 h)
+async function pmPortDetail() {
+  const box = $("pm-port"), data = pm.data;
+  let d = null, p = null;
+  if (pm.sel && data) { const [id, name] = pm.sel.split("|"); d = data.devices.find((x) => x.device_id === id); p = d && d.ports.find((x) => x.port === name); }
+  box.hidden = !p;
+  if (!p) { pm.errFor = null; return; }
+  const h = pmHealth(p), head = () => {
+    box.textContent = "";
+    const t = el("div", null, "pm-port-h");
+    t.append(el("strong", `${d.device} · ${p.port}` + (p.comment ? ` (${p.comment})` : "")), el("span", PM_HEALTH[h.level] || PM_HEALTH.ok, "pm-badge h-" + (h.level || "ok")));
+    const open = el("button", __("Upravit port"), "ux-link"); open.type = "button"; open.addEventListener("click", () => openDetail(d.device_id)); t.appendChild(open);
+    box.appendChild(t);
+    for (const w of pmWhy(p)) box.appendChild(el("p", "⚠ " + w, "pm-why"));
+    const kinds = Object.entries(h.kinds || {}).sort((a, b) => b[1] - a[1]);
+    if (kinds.length || h.drops || h.pause || h.collision) {
+      const k = el("div", null, "pm-kinds");
+      for (const [name, n] of kinds) { const c = el("span"); c.append(el("b", String(n)), document.createTextNode(" " + (PM_ERR[name] || name))); c.title = PM_ERR_HINT[name] || ""; k.appendChild(c); }
+      for (const [n, t2] of [[h.drops, __("zahozeno")], [h.collision, __("kolize")], [h.pause, __("pause rámce")]]) if (n) { const c = el("span", null, "muted"); c.append(el("b", String(n)), document.createTextNode(" " + t2)); k.appendChild(c); }
+      box.appendChild(k);
+    } else if (!(h.why || []).length) box.appendChild(el("p", __("Za posledních 24 h bez chyb."), "muted"));
+  };
+  head();
+  if (pm.errFor === pm.sel && pm.errPts) return pmErrBars(box, pm.errPts);
+  const want = pm.sel; pm.errFor = want; pm.errPts = null;
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/devices/${d.device_id}/port-errors?hours=48&interface=${encodeURIComponent(p.port)}`); } catch (e) { return; }
+  if (pm.sel !== want) return;
+  pm.errPts = r.points || [];
+  pmErrBars(box, pm.errPts);
+}
+
+function pmErrBars(box, pts) {
+  if (!pts.some((x) => x.errors > 0)) return;
+  const max = Math.max(...pts.map((x) => x.errors)), by = {};
+  for (const x of pts) by[String(x.t).slice(0, 13)] = x;
+  const bars = el("div", null, "pm-bars"); bars.setAttribute("role", "img"); bars.setAttribute("aria-label", __("Chyby portu po hodinách (48 h)"));
+  const end = new Date(pts[pts.length - 1].t).getTime();
+  for (let i = 47; i >= 0; i--) {
+    const t = new Date(end - i * 3600e3), x = by[t.toISOString().slice(0, 13)], b = el("i", "", "h-" + (x ? x.level : "ok"));
+    b.setAttribute("style", `height: ${x && x.errors ? Math.max(8, Math.round(100 * x.errors / max)) : 2}%`);
+    b.title = `${fmtTime(t.toISOString())}: ${x ? x.errors : 0} ` + __("chyb");
+    bars.appendChild(b);
+  }
+  const cap = el("div", null, "pm-st-x"); cap.append(el("span", __("před 48 h")), el("span", __`chyby po hodinách, nejvíc ${max}`), el("span", __("teď")));
+  box.append(bars, cap);
 }
 
 // provoz: součet fyzických portů zařízení, nebo vybraný port (posledních 24 h)

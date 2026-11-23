@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from . import porthealth
 from .db import Database, operator_scope, tenant_scope
 from .rosapi import PinMismatch, RosApi, RosApiError
 
@@ -39,7 +40,7 @@ SECTIONS: list[Section] = [
     Section("packages", "/system/package", "name,version,disabled,build-time"),
     Section("update", "/system/package/update"),
     Section("interfaces", "/interface",
-            "name,type,mac-address,running,disabled,mtu,comment,rx-byte,tx-byte,rx-error,tx-error,"
+            "name,type,mac-address,running,disabled,mtu,comment,rx-byte,tx-byte,rx-packet,tx-packet,rx-error,tx-error,"
             "rx-drop,tx-drop,link-downs,last-link-up-time,slave,dynamic"),
     Section("ethernet", "/interface/ethernet", "name,default-name,switch,poe-out,loop-protect,loop-protect-status,disabled"),
     Section("switch", "/interface/ethernet/switch", "name,type,l3-hw-offloading"),
@@ -206,6 +207,18 @@ def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     if names:
         _fetch(api, data, errors, "ethernet_monitor", "POST", "/interface/ethernet/monitor",
                body={"numbers": ",".join(names), "once": "true", ".proplist": MONITOR_PROPS})
+    if names:
+        # chybové čítače portů podle druhu – zvlášť od `ethernet`, ať měnící se čísla nehýbou otiskem konfigurace.
+        # Které čítače čip vede, se liší; selhání není chyba inventury (zůstane souhrn rx/tx-error z /interface).
+        try:
+            st = api.request("GET", "/interface/ethernet", params={".proplist": porthealth.STATS_PROPS})
+            if isinstance(st, list):
+                data["ethernet_stats"] = [e for e in st if isinstance(e, dict)]
+        except PinMismatch:
+            raise
+        except RosApiError as e:
+            if e.status in (401, 403) or e.status is None and "no such" not in str(e):
+                raise
     # SNMP komunita je fakticky heslo: do DB jen to, zda je výchozí "public"
     try:
         comms = api.request("GET", "/snmp/community", params={".proplist": "name,addresses,disabled"})
@@ -295,6 +308,8 @@ def store(db: Database, tenant_id: Any, device_id: Any, data: dict[str, Any], er
     if "ip_services" in data:
         data = dict(data, hardening=hardening_audit(data))
     with tenant_scope(db, tenant_id) as tx:
+        # chybové čítače portů: přírůstek proti předchozí inventuře (před přepsáním)
+        porthealth.record(tx, tenant_id, device_id, data)
         if "interfaces" in data:
             # historie portů: porovnání s předchozí inventurou (před přepsáním)
             porthistory.record(tx, tenant_id, device_id, load(tx, device_id, porthistory.KEEP_SECTIONS), data)
@@ -486,6 +501,7 @@ def retention(db: Database, sample_days: int = 14, hourly_days: int = 400, backu
         tx.execute("DELETE FROM interface_sample WHERE at < now() - make_interval(days => %(d)s)", {"d": sample_days})
         tx.execute("DELETE FROM interface_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
         tx.execute("DELETE FROM device_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
+        tx.execute("DELETE FROM port_error_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
         tx.execute("DELETE FROM port_event WHERE at < now() - make_interval(days => %(d)s)", {"d": event_days})
         # nejnovější záloha zařízení zůstává vždy
         tx.execute(

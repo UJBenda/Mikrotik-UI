@@ -344,6 +344,9 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
                  AND c.last_seen > now() - interval '20 minutes' ORDER BY c.mac""", {"s": str(site_id)}):
         on_port.setdefault((str(c["device_id"]), str(c["port"])), []).append(
             {"mac": c["mac"], "ip": c["ip"], "name": c["note"] or c["hostname"] or None})
+    from . import porthealth
+
+    health = porthealth.site_health(tx, site_id)
     out = []
     for d in devs:
         inv = inventory.load(tx, d["id"])
@@ -372,6 +375,16 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
                 continue
             m = profiles.matching(profs, st, svids)
             pi = info.get(st["port"]) or {}
+            up = running.get(st["port"]) and pi.get("link") == "link-ok"
+            hl = dict(health.get((str(d["id"]), st["port"])) or {"level": "ok", "why": []})
+            hl["why"] = list(hl["why"])
+            if up and pi.get("full_duplex") is False:
+                hl["why"].append("half")
+                hl["level"] = "warning" if hl["level"] in ("ok", "note") else hl["level"]
+            # 100 Mb/s na metalickém portu = typicky vadný pár v kabelu (nebo jen staré zařízení) → jen poznámka
+            if up and str(pi.get("rate") or "").startswith("100M") and st["port"].startswith("ether"):
+                hl["why"].append("slow")
+                hl["level"] = "note" if hl["level"] == "ok" else hl["level"]
             # jeden soused na portu = přímý spoj; víc sousedů (přes VLAN vidí celou síť) → jen první jako popisek
             ports.append({"port": st["port"], "comment": st["comment"], "disabled": st["disabled"], "running": running.get(st["port"]),
                           "poe": st["poe"], "pvid": st["pvid"], "tagged": st["tagged"], "bond": st["bond"],
@@ -379,7 +392,8 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
                           "profile": m["name"] if m else None, "neighbor": neigh.get(st["port"]),
                           "rate": pi.get("rate"), "poe_status": pi.get("poe"), "poe_w": _num(pi.get("poe_power")),
                           "stp_role": pi.get("stp_role"), "sfp": str(i.get("name", "")).lower().startswith(("sfp", "qsfp")),
-                          "peer": peer.get(st["port"]), "clients": on_port.get((str(d["id"]), st["port"]), [])})
+                          "peer": peer.get(st["port"]), "clients": on_port.get((str(d["id"]), st["port"]), []),
+                          "full_duplex": pi.get("full_duplex"), "sfp_rx": _num(pi.get("sfp_rx_power")), "health": hl})
         from . import bondcfg
 
         out.append({"device_id": str(d["id"]), "device": d["identity"] or d["serial"], "model": d["model"],
