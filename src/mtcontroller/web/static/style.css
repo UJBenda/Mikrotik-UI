@@ -1294,8 +1294,8 @@ table.kv tr:hover > td, .fw-matrix tr:hover > td { background: transparent; }
 .ux-switch input:checked + i::after { left: 18px; }
 .ux-switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* řazení podle topologie: odsazení jména podle hloubky ve stromu */
-.dev-table tr[style*="--depth"] td:nth-child(2) { padding-left: calc(8px + var(--depth) * 18px); position: relative; }
-.dev-table tr[style*="--depth"] td:nth-child(2)::before { content: ""; position: absolute; left: calc(var(--depth) * 18px - 6px); top: 0; height: 50%; width: 9px;
+.dev-table tr[data-depth] td:nth-child(2) { padding-left: calc(8px + var(--depth) * 18px); position: relative; }
+.dev-table tr[data-depth] td:nth-child(2)::before { content: ""; position: absolute; left: calc(var(--depth) * 18px - 6px); top: 0; height: 50%; width: 9px;
   border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0 0 0 4px; }
 
 /* časová osa vedle mapy lokality */
@@ -1559,3 +1559,22 @@ header { z-index: 45; }
 .wl-kv { font-size: 12.5px; padding: 5px 0; border-bottom: 1px solid var(--line); } .wl-kv small { margin-top: 1px; }
 .wl-title { font-size: 16px; }
 .wl-dot.b { background: #14b8a6; } .wl-dot { background: #2563eb; }
+
+/* odsazení podle topologie: hloubka je v atributu data-depth (inline style by zablokovala CSP) */
+.dev-table tr[data-depth="1"] { --depth: 1; }
+.dev-table tr[data-depth="2"] { --depth: 2; }
+.dev-table tr[data-depth="3"] { --depth: 3; }
+.dev-table tr[data-depth="4"] { --depth: 4; }
+.dev-table tr[data-depth="5"] { --depth: 5; }
+.dev-table tr[data-depth="6"] { --depth: 6; }
+.dev-table tr[data-depth="7"] { --depth: 7; }
+.dev-table tr[data-depth="8"] { --depth: 8; }
+.dev-table tr[data-depth="9"] { --depth: 9; }
+.dev-table tr[data-depth="10"] { --depth: 10; }
+.dev-table tr[data-depth="11"] { --depth: 11; }
+.dev-table tr[data-depth="12"] { --depth: 12; }
+#topo path.link.wless.clickable { cursor: pointer; }
+/* karta spoje: bublina nesmí roztahovat stránku a hlavní část nemá vlastní posuvník */
+.wl-chart { overflow: hidden; }
+.wl-tip { left: 0; top: 0; }
+#wl-main { overflow: visible; }

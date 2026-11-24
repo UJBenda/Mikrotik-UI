@@ -100,7 +100,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         // řazení podle topologie: potomek (sw) je pod bránou a odsazený
         byId["dev-topo"].checked = true; await byId["dev-topo"].fire("change");
         const rows = byId["devices"].children;
-        if (!rows[0].textContent.includes("gw") || !String(rows[1].attrs.style || "").includes("--depth: 1"))
+        if (!rows[0].textContent.includes("gw") || rows[1].attrs["data-depth"] !== "1")
           errors.push("zařízení: řazení podle topologie");
         byId["dev-topo"].checked = false; await byId["dev-topo"].fire("change");
       }
@@ -134,6 +134,12 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["ask"].hidden || byId["ask-input"].value !== "gw" || byId["ask-input"].maxLength !== 63) errors.push("přehled: přejmenování " + byId["ask-input"].value);
       else { byId["ask-input"].value = "GW-praha"; byId["ask-ok"].onclick(); await pr; for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
       if (!requests.slice(n1).some((r) => r.startsWith("POST") && r.endsWith("/identity"))) errors.push("přehled: odeslání jména");
+    }
+    // CSP (style-src 'self') blokuje atribut style – styly se smí nastavovat jen přes CSSOM nebo třídy
+    {
+      const src = require("fs").readFileSync(process.argv[2], "utf8");
+      if (/setAttribute\(\s*["']style["']/.test(src) || /style\s*=\s*["'`][^"'`]*:/.test(src.replace(/\.style\.[a-zA-Z]+ = /g, ""))) errors.push("app.js nastavuje atribut style – v produkci ho zablokuje CSP");
+      if (/\sstyle="/.test(require("fs").readFileSync(process.argv[3], "utf8"))) errors.push("index.html obsahuje atribut style – zablokuje ho CSP");
     }
     // levá navigace: 6 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
     const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");

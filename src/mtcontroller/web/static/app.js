@@ -1109,7 +1109,7 @@ function drawTopology(t) {
     const wx = wlOf(e.a, e.b);
     const ln = svgEl("path", { d: `M${xa} ${ya}C${out} ${ya} ${out} ${yb} ${xb} ${yb}`, class: wx ? "link wless s-" + wx.state : "link extra" });
     ln.appendChild(svgEl("title", {}, wx ? wlTitle(wx) : __`další spoj: ${byId[e.a].label} ${e.ports[e.a] || ""} ↔ ${byId[e.b].label} ${e.ports[e.b] || ""}`));
-    if (wx) { ln.addEventListener("click", () => openLink(wx.id)); ln.setAttribute("style", "cursor: pointer"); }
+    if (wx) { ln.addEventListener("click", () => openLink(wx.id)); ln.setAttribute("class", "link wless clickable s-" + wx.state); }
     svg.appendChild(ln);
   }
   for (const n of t.nodes) {
@@ -4490,7 +4490,9 @@ function wlChart(box, d, o) {
     if (devs || best.reconnect) tip.appendChild(el("div", (devs ? devs.codes : ["reconnect"]).map((c) => WL_CODE[c] || c).join(", "), "wl-tip-w"));
     tip.hidden = false;
     const left = (bx / W) * r.width + 14;
-    tip.setAttribute("style", `left: ${left + 216 > r.width ? left - 244 : left}px; top: ${Math.max(0, Math.min(r.height - 150, ev.clientY - r.top - 30))}px`);
+    // pozice přes CSSOM – atribut style by zablokovala CSP (style-src 'self') a bublina by spadla pod graf
+    tip.style.left = (left + 216 > r.width ? left - 244 : left) + "px";
+    tip.style.top = Math.max(0, Math.min(r.height - 150, ev.clientY - r.top - 30)) + "px";
   });
   svg.addEventListener("mouseleave", () => { tip.hidden = true; cur.setAttribute("visibility", "hidden"); dots.setAttribute("visibility", "hidden"); });
 }
@@ -4745,7 +4747,7 @@ function pmErrBars(box, pts) {
   const end = new Date(pts[pts.length - 1].t).getTime();
   for (let i = 47; i >= 0; i--) {
     const t = new Date(end - i * 3600e3), x = by[t.toISOString().slice(0, 13)], b = el("i", "", "h-" + (x ? x.level : "ok"));
-    b.setAttribute("style", `height: ${x && x.errors ? Math.max(8, Math.round(100 * x.errors / max)) : 2}%`);
+    b.style.height = (x && x.errors ? Math.max(8, Math.round(100 * x.errors / max)) : 2) + "%";
     b.title = `${fmtTime(t.toISOString())}: ${x ? x.errors : 0} ` + __("chyb");
     bars.appendChild(b);
   }
@@ -6631,7 +6633,7 @@ function renderDevices() {
       if (detailId === d.id && !$("detail").hidden) tr.className += " selected";
       tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target === tr) openDetail(d.id); });
     }
-    if (depth && depth.get(d.id)) tr.setAttribute("style", "--depth: " + depth.get(d.id));
+    if (depth && depth.get(d.id)) tr.setAttribute("data-depth", String(Math.min(12, depth.get(d.id))));
     withCtx(tr, d.identity || d.serial, () => deviceMenu(d));
     for (const c of cols) tr.appendChild(c[4](d));
     // akce: schválení u čekajících, jinak aktualizace a ⋯ (vše ostatní v menu – pravé tlačítko)
