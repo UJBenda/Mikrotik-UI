@@ -1605,3 +1605,8 @@ header { z-index: 45; }
 .dbv-list { overflow-x: visible; }
 .dbv-diff { white-space: pre; }
 .bt-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; }
+/* tabulka úložišť: akce se smí zalomit, ať nevyjedou z okna */
+#bt-list .bt-acts { flex-wrap: wrap; justify-content: flex-end; gap: 4px 6px; }
+#bt-list td { vertical-align: top; padding-top: 8px; padding-bottom: 8px; }
+#bt-list td:nth-child(4) small { display: block; }
+#bt-list td:last-child { width: 300px; }
