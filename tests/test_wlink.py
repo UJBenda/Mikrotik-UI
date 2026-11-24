@@ -68,9 +68,15 @@ def test_w60g_link():
     from mtcontroller.rosapi import RosApiError
 
     def inv(mac, peer, mode, ip):
-        return {"w60g": [{"name": "wlan60-1", "mac-address": mac, "mode": mode}],
-                "w60g_monitor": [{"name": "wlan60-1", "connected": "true", "remote-address": peer, "rssi": "-52"}],
+        return {"wgig": [{"name": "wlan60-1", "mac-address": mac, "mode": mode}],
+                "wgig_monitor": [{"name": "wlan60-1", "connected": "true", "remote-address": peer, "rssi": "-52"}],
                 "addresses": [{"address": ip + "/24", "interface": "bridge"}]}
+
+    # jména sekcí inventury musí projít omezením sloupce device_inventory.section
+    import re
+
+    from mtcontroller import inventory
+    assert all(re.fullmatch(r"[a-z_]+", x.name) for x in inventory.SECTIONS) and all(re.fullmatch(r"[a-z_]+", x) for x in w.SECTIONS)
 
     A, B = "C4:AD:34:00:00:0A", "C4:AD:34:00:00:0B"
     links = w.find_links([{"id": "st"}, {"id": "ap"}], {"ap": inv(A, B, "bridge", "10.5.0.1"), "st": inv(B, A, "station-bridge", "10.5.0.2")})

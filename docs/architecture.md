@@ -1400,7 +1400,7 @@ Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 
 - **Rozhraní:** Zařízení → Spoje. Seznam se stavem, karta spoje: pásy Provoz (z `/traffic` rozhraní A), Signál,
   Rychlost spoje, Ztrátovost a odezva, CCQ, Šum na společné časové ose; úseky odchylek podbarvené přes
   všechny pásy, čárkovaně normál, najetím hodnoty okamžiku, pod grafem seznam úseků.
-- **60 GHz (w60g):** inventura čte `/interface/w60g` a monitor každého rozhraní (`w60g_monitor`); spoj se pozná
+- **60 GHz (w60g):** inventura čte `/interface/w60g` a monitor každého rozhraní (`wgig_monitor`); spoj se pozná
   podle `remote-address`. Měření bere z monitoru RSSI, `tx-phy-rate` a `tx-packet-error-rate` (uloženo jako
   kvalita = 100 − chybovost ve sloupcích `ccq_*`, v UI „Kvalita přenosu“). Šum ani doba spojení zde nejsou.
 - **Mapa:** čára mezi dvěma zařízeními, mezi nimiž je spoj, je tečkovaná v barvě stavu se značkou ≋; klik

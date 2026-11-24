@@ -39,7 +39,7 @@ FLAPS_24H = 3
 NOISE_RISE_DB = 6
 REG = {"wifi": "/interface/wifi/registration-table", "wireless": "/interface/wireless/registration-table"}
 MONITOR = {"wifi": "/interface/wifi/monitor", "wireless": "/interface/wireless/monitor"}
-SECTIONS = ["interfaces", "wifi", "wireless", "w60g", "w60g_monitor", "wifi_clients", "wireless_clients", "addresses"]
+SECTIONS = ["interfaces", "wifi", "wireless", "wgig", "wgig_monitor", "wifi_clients", "wireless_clients", "addresses"]
 _UNITS = {"": 1, "k": 1e3, "m": 1e6, "g": 1e9}
 _last_discover = 0.0
 
@@ -111,8 +111,8 @@ def ping_summary(rows: Any) -> dict:
 def _radio_macs(inv: dict) -> dict[str, tuple[str, str, bool]]:
     """{MAC: (rozhraní, ovladač, je_AP)} bezdrátových rozhraní zařízení."""
     out: dict[str, tuple[str, str, bool]] = {}
-    for kind in ("wifi", "wireless", "w60g"):
-        for w in _rows(inv, kind):
+    for kind, sec in (("wifi", "wifi"), ("wireless", "wireless"), ("w60g", "wgig")):
+        for w in _rows(inv, sec):
             mac, name = _mac(w.get("mac-address")), str(w.get("name") or "")
             mode = str(w.get("configuration.mode") or w.get("mode") or "")
             if mac and name:
@@ -158,7 +158,7 @@ def find_links(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
         mine = _radio_macs(inv)
         by_iface = {v[0]: (mac, v[1], v[2]) for mac, v in mine.items()}
         # 60 GHz: protistranu hlásí monitor rozhraní (remote-address), ne registrační tabulka
-        w60 = [{"mac-address": m.get("remote-address"), "interface": m.get("name")} for m in _rows(inv, "w60g_monitor")
+        w60 = [{"mac-address": m.get("remote-address"), "interface": m.get("name")} for m in _rows(inv, "wgig_monitor")
                if str(m.get("connected")).lower() in ("true", "yes")]
         for kind, regs in (("wifi", _rows(inv, "wifi_clients")), ("wireless", _rows(inv, "wireless_clients")), ("w60g", w60)):
             for r in regs:
@@ -189,7 +189,7 @@ def discover(db: Database) -> int:
             """SELECT d.id, d.tenant_id, d.site_id FROM device d
                WHERE d.state IN ('adopted', 'offline') AND d.site_id IS NOT NULL
                  AND EXISTS (SELECT 1 FROM device_inventory i WHERE i.device_id = d.id
-                             AND i.section IN ('wifi_clients', 'wireless_clients', 'w60g_monitor')
+                             AND i.section IN ('wifi_clients', 'wireless_clients', 'wgig_monitor')
                              AND i.data <> '[]'::jsonb)""")
         sites = {str(d["site_id"]) for d in devs}
         for sid in sites:
