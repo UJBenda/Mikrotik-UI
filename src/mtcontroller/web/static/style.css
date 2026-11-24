@@ -1433,5 +1433,5 @@ i.pm-tile { cursor: default; }
 .wl-eps { margin-top: 8px; }
 .wl-ep { display: flex; gap: 10px; align-items: center; min-height: 30px; border-top: 1px solid var(--line); font-size: 13px; }
 .wl-ep-t { width: 150px; flex: none; } .wl-ep > span:last-child { margin-left: auto; }
-#devs-tabs button { padding: 5px 5px; font-size: 12px; }
+#devs-tabs button { padding: 5px 2px; font-size: 11.5px; }
 .wl-top .seg { flex: none; } .wl-top .seg button { white-space: nowrap; }
