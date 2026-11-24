@@ -10,6 +10,18 @@ zálohy a firmware. Zařízení se připojují jen odchozím spojením na 443
 Návrh architektury: [docs/architecture.md](architecture.md).
 Instalace na Debian: [docs/install.md](install.md).
 
+## Jak to vypadá
+
+Snímky jsou z vestavěných testovacích dat (vymyšlená zařízení a adresy), rozhraní v angličtině.
+
+| | |
+|---|---|
+| ![Mapa lokality](screenshots/map.png) **Mapa lokality** – skutečné zapojení podle bridge tabulek, porty na obou koncích, časová osa událostí | ![Seznam zařízení](screenshots/devices.png) **Zařízení** – filtry podle role, stavu, verze a modelu |
+| ![Porty](screenshots/ports.png) **Porty** – rychlost, PoE, co je připojeno, chybovost s pravděpodobnou příčinou, provoz, VLAN | ![Karta bezdrátového spoje](screenshots/wireless-link.png) **Bezdrátové spoje** – provoz, signál, rychlost, ztrátovost a šum na jedné časové ose, odchylky zvýrazněné |
+
+![Časová osa](screenshots/timeline.png)
+**Časová osa** – alerty, události portů a klientů a změny konfigurace na jednom místě.
+
 ## Stav
 
 Fáze **F0 – Základ**: připraveno k prvnímu nasazení ([testovací plán](test-plan.md)).

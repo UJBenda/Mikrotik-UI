@@ -13,6 +13,18 @@ no public address.
 
 Česká verze: [docs/README.cs.md](docs/README.cs.md).
 
+## Screenshots
+
+Taken from the built-in test data (made-up devices and addresses).
+
+| | |
+|---|---|
+| ![Site map with uplink ports, STP root and a wireless link](docs/screenshots/map.png) **Site map** – real cabling from the bridge tables, ports on both ends, event timeline | ![Device list with filters](docs/screenshots/devices.png) **Devices** – filters by role, state, version and model |
+| ![Port diagram, errors, traffic and VLANs](docs/screenshots/ports.png) **Ports** – speed, PoE, what is connected, error rate with the likely cause, traffic, VLANs | ![Wireless link card](docs/screenshots/wireless-link.png) **Wireless links** – traffic, signal, rate, loss and noise on one time axis, anomalies highlighted |
+
+![Timeline of events](docs/screenshots/timeline.png)
+**Timeline** – alerts, port and client events and configuration changes in one place.
+
 ## What it does
 
 - **Adoption in one step** – paste one command into the MikroTik terminal, pick a role
