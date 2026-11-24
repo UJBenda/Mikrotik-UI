@@ -4304,7 +4304,7 @@ function renderLinks() {
   for (const w of d.why || []) chips.appendChild(el("span", "▲ " + wlWhy(w), "wl-chip " + (w.code === "down" || (w.code === "loss" && w.now >= 10) ? "bad" : "warn")));
   if (!(d.why || []).length && d.state === "ok") chips.appendChild(el("span", __("Spoj je ve svém normálu."), "muted"));
   for (const [h, t] of [[1, "1 h"], [24, "24 h"], [168, __("7 dní")], [720, __("30 dní")]]) {
-    const b = el("button", t, wl.hours === h ? "on" : ""); b.type = "button"; b.setAttribute("aria-pressed", String(wl.hours === h));
+    const b = el("button", t, wl.hours === h ? "active" : ""); b.type = "button"; b.setAttribute("aria-pressed", String(wl.hours === h));
     b.addEventListener("click", () => { wl.hours = h; loadLink(); }); seg.appendChild(b);
   }
   top.append(chips, seg); main.appendChild(top);
@@ -4320,7 +4320,7 @@ function renderLinks() {
     for (const e of eps.slice(0, 12)) {
       const r = el("div", null, "wl-ep"), bad = e.codes.includes("down") || (e.worst.loss || 0) >= 10;
       const mins = Math.round((new Date(e.to) - new Date(e.from)) / 60000) + Math.round(d.bucket / 60);
-      r.append(el("i", "", "wl-dot " + (bad ? "bad" : "warn")), el("span", new Date(e.from).toLocaleString(LOCALE), "muted wl-ep-t"),
+      r.append(el("i", "", "wl-dot " + (bad ? "bad" : "warn")), el("span", new Date(e.from).toLocaleString(LOCALE, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }), "muted wl-ep-t"),
                el("span", e.codes.map((c) => WL_CODE[c] || c).join(", ") + (e.worst.signal != null && e.codes.includes("signal") ? ` (${wlN(e.worst.signal, "dBm")})` : "") + (e.worst.loss ? `, ${__("ztráta až")} ${wlN(e.worst.loss, "%", 1)}` : "")),
                el("span", mins >= 120 ? __`trvalo ${Math.round(mins / 60)} h` : __`trvalo ${mins} min`, "muted"));
       list.appendChild(r);
@@ -4367,103 +4367,137 @@ function wlBw(side, d) {
   }
 }
 
-// graf spoje: pásy se společnou časovou osou; odchylky podbarvené přes všechny pásy
+// graf spoje: pásy se společnou časovou osou; odchylky podbarvené přes všechny pásy.
+// Kreslí se v pixelech skutečné šířky (písmo se nezvětšuje s oknem), křivky jsou vyhlazené.
+function wlSmooth(run) {
+  // Catmull-Rom → Bézier s mírným napětím; u 2 bodů úsečka
+  if (run.length < 3) return run.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1)).join("");
+  let d = `M${run[0][0].toFixed(1)} ${run[0][1].toFixed(1)}`;
+  for (let i = 0; i < run.length - 1; i++) {
+    const p0 = run[Math.max(0, i - 1)], p1 = run[i], p2 = run[i + 1], p3 = run[Math.min(run.length - 1, i + 2)], k = 0.18;
+    d += `C${(p1[0] + (p2[0] - p0[0]) * k).toFixed(1)} ${(p1[1] + (p2[1] - p0[1]) * k).toFixed(1)} ${(p2[0] - (p3[0] - p1[0]) * k).toFixed(1)} ${(p2[1] - (p3[1] - p1[1]) * k).toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
 function wlChart(box, d, o) {
   if (typeof document.createElementNS !== "function") return;
-  const pts = d.points, u = d.usual || {}, X0 = 150, X1 = 930, W = 1000;
+  const pts = d.points, u = d.usual || {}, now = d.now || {};
+  const W = Math.max(640, Math.round(box.clientWidth || 1000)), X0 = 148, X1 = W - 92;
   const t1 = Date.now(), t0 = t1 - d.hours * 3600e3, gapMs = d.bucket * 2500;
   const X = (t) => X0 + (X1 - X0) * Math.min(1, Math.max(0, (new Date(t).getTime() - t0) / (t1 - t0)));
   const any = (k) => pts.some((p) => p[k] != null);
+  const nice = (v) => { const m = Math.pow(10, Math.floor(Math.log10(v || 1))), f = v / m; return (f <= 1 ? 1 : f <= 1.5 ? 1.5 : f <= 2 ? 2 : f <= 3 ? 3 : f <= 5 ? 5 : f <= 7.5 ? 7.5 : 10) * m; };
   const bands = [];
   const tr = wl.traffic || [];
-  if (tr.length > 1) bands.push({ title: __("Provoz"), h: 110, now: `↓ ${fmtBps((tr[tr.length - 1] || {}).rx || 0)}  ↑ ${fmtBps((tr[tr.length - 1] || {}).tx || 0)}`,
-    lo: 0, hi: Math.max(1e6, ...tr.map((x) => Math.max(x.rx || 0, x.tx || 0))), fmt: (v) => fmtBps(v),
+  if (tr.length > 1) bands.push({ title: __("Provoz"), h: 76, now: `↓ ${fmtBps((tr[tr.length - 1] || {}).rx || 0)}   ↑ ${fmtBps((tr[tr.length - 1] || {}).tx || 0)}`,
+    lo: 0, hi: nice(Math.max(1e6, ...tr.map((x) => Math.max(x.rx || 0, x.tx || 0)))), fmt: (v) => fmtBps(v),
     series: [{ pts: tr, k: "rx", cls: "rx", area: true }, { pts: tr, k: "tx", cls: "tx", area: true }] });
   const sig = pts.flatMap((p) => [p.signal_a, p.signal_b]).filter((v) => v != null);
-  if (sig.length) bands.push({ title: __("Signál"), h: 80, now: wlPair((d.now || {}).signal_a, (d.now || {}).signal_b, "dBm"), sub: u.signal_a != null ? __`obvykle ${wlPair(u.signal_a, u.signal_b)}` : "",
-    lo: Math.min(-80, Math.floor(Math.min(...sig) / 5) * 5 - 5), hi: Math.max(-50, Math.ceil(Math.max(...sig) / 5) * 5 + 5), fmt: (v) => wlN(v, "dBm"),
+  if (sig.length) bands.push({ title: __("Signál"), h: 60, now: wlPair(now.signal_a, now.signal_b, "dBm"), sub: u.signal_a != null ? __`obvykle ${wlPair(u.signal_a, u.signal_b)}` : "",
+    lo: Math.min(-80, Math.floor(Math.min(...sig) / 10) * 10), hi: Math.max(-50, Math.ceil(Math.max(...sig) / 10) * 10), fmt: (v) => wlN(v, "dBm"),
     usual: o.usual ? [u.signal_a, u.signal_b] : [], series: [{ pts, k: "signal_a", cls: "a" }, { pts, k: "signal_b", cls: "b" }] });
   const rates = pts.flatMap((p) => [p.rate_ab, p.rate_ba]).filter((v) => v != null);
-  if (rates.length) bands.push({ title: __("Rychlost spoje"), h: 60, now: wlMb((d.now || {}).rate_ab), sub: u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "",
-    lo: 0, hi: Math.max(...rates) * 1.1, fmt: (v) => wlMb(v), usual: o.usual ? [u.rate_ab] : [], series: [{ pts, k: "rate_ab", cls: "a" }, { pts, k: "rate_ba", cls: "b" }] });
+  if (rates.length) bands.push({ title: __("Rychlost spoje"), h: 44, now: wlMb(now.rate_ab), sub: u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "",
+    lo: 0, hi: nice(Math.max(...rates)), fmt: (v) => wlMb(v), usual: o.usual ? [u.rate_ab] : [], series: [{ pts, k: "rate_ab", cls: "a", step: true }, { pts, k: "rate_ba", cls: "b", step: true }] });
   if (any("loss") || any("rtt_avg")) {
-    const lmax = Math.max(5, ...pts.map((p) => p.loss || 0)), rmax = Math.max(10, ...pts.map((p) => p.rtt_avg || 0)) * 1.1;
-    bands.push({ title: __("Ztrátovost a odezva"), h: 80, now: `${wlN((d.now || {}).loss, "%", 1)} · ${wlN((d.now || {}).rtt_avg, "ms", 1)}`, lo: 0, hi: lmax,
+    const lmax = nice(Math.max(5, ...pts.map((p) => p.loss || 0))), rmax = nice(Math.max(10, ...pts.map((p) => p.rtt_avg || 0)));
+    bands.push({ title: __("Ztrátovost a odezva"), h: 56, now: `${wlN(now.loss, "%", 1)} · ${wlN(now.rtt_avg, "ms", 1)}`, lo: 0, hi: lmax,
       fmt: (v) => `${wlN(v, "%")} · ${wlN(v / lmax * rmax, "ms")}`, series: [{ pts, k: "loss", cls: "loss", area: true }, { pts, k: "rtt_avg", cls: "rtt", lo: 0, hi: rmax }] });
   }
-  if (any("ccq_a") || any("ccq_b")) bands.push({ title: d.kind === "w60g" ? __("Kvalita přenosu") : "CCQ", h: 56, now: wlPair((d.now || {}).ccq_a, (d.now || {}).ccq_b, "%"), lo: 0, hi: 100, fmt: (v) => wlN(v, "%"),
+  if (any("ccq_a") || any("ccq_b")) bands.push({ title: d.kind === "w60g" ? __("Kvalita přenosu") : "CCQ", h: 40, now: wlPair(now.ccq_a, now.ccq_b, "%"), lo: 0, hi: 100, fmt: (v) => wlN(v, "%"),
     series: [{ pts, k: "ccq_a", cls: "a" }, { pts, k: "ccq_b", cls: "b" }] });
   if (any("noise")) { const ns = pts.map((p) => p.noise).filter((v) => v != null);
-    bands.push({ title: __("Šum na kanálu"), h: 56, now: wlN((d.now || {}).noise, "dBm"), sub: u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", lo: Math.min(...ns) - 4, hi: Math.max(...ns) + 4,
+    bands.push({ title: __("Šum na kanálu"), h: 40, now: wlN(now.noise, "dBm"), sub: u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", lo: Math.floor((Math.min(...ns) - 3) / 5) * 5, hi: Math.ceil((Math.max(...ns) + 3) / 5) * 5,
       fmt: (v) => wlN(v, "dBm"), usual: o.usual ? [u.noise] : [], series: [{ pts, k: "noise", cls: "loss" }] }); }
-  let y = 12; for (const b of bands) { b.y = y; y += b.h + 16; }
-  const H = y + 14;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "wl-svg", role: "img", "aria-label": __`Průběh spoje ${d.name}` });
+  let y = 14; for (const b of bands) { b.y = y; y += b.h + 18; }
+  const H = y + 8, bottom = y - 18;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "wl-svg", role: "img", "aria-label": __`Průběh spoje ${d.name}` });
+  // svislé vodicí čáry času (jemné), popisky dole
+  const step = d.hours <= 1 ? 600e3 : d.hours <= 24 ? 3 * 3600e3 : d.hours <= 168 ? 86400e3 : 5 * 86400e3;
+  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
+    const dt = new Date(t), x = X(t).toFixed(1), lab = d.hours <= 24 ? dt.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" }) : dt.toLocaleDateString(LOCALE, { day: "numeric", month: "numeric" });
+    svg.appendChild(svgEl("line", { x1: x, x2: x, y1: 14, y2: bottom, class: "wl-grid" }));
+    svg.appendChild(svgEl("text", { x, y: H - 2, class: "wl-ax mid" }, lab));
+  }
   if (o.marks) for (const e of d.episodes || []) {
-    const bad = e.codes.includes("down") || (e.worst.loss || 0) >= 10, xa = X(e.from) - 2, xb = X(new Date(e.to).getTime() + d.bucket * 1000) + 2;
-    svg.appendChild(svgEl("rect", { x: xa.toFixed(1), y: 12, width: Math.max(4, xb - xa).toFixed(1), height: H - 38, class: "wl-ep-bg " + (bad ? "bad" : "warn") }));
-    svg.appendChild(svgEl("path", { d: `M${((xa + xb) / 2).toFixed(1)} 11 l-5 -8 h10 z`, class: "wl-ep-mark " + (bad ? "bad" : "warn") }));
+    const bad = e.codes.includes("down") || (e.worst.loss || 0) >= 10, xa = X(e.from) - 1, xb = X(new Date(e.to).getTime() + d.bucket * 1000) + 1;
+    svg.appendChild(svgEl("rect", { x: xa.toFixed(1), y: 14, width: Math.max(3, xb - xa).toFixed(1), height: bottom - 14, rx: 2, class: "wl-ep-bg " + (bad ? "bad" : "warn") }));
+    svg.appendChild(svgEl("rect", { x: xa.toFixed(1), y: 10, width: Math.max(3, xb - xa).toFixed(1), height: 3, rx: 1.5, class: "wl-ep-mark " + (bad ? "bad" : "warn") }));
   }
   for (const b of bands) {
-    svg.appendChild(svgEl("rect", { x: X0, y: b.y, width: X1 - X0, height: b.h, class: "wl-band" }));
-    svg.appendChild(svgEl("text", { x: 0, y: b.y + 13, class: "wl-bt" }, b.title));
-    svg.appendChild(svgEl("text", { x: 0, y: b.y + 30, class: "wl-bn" }, b.now));
-    if (b.sub) svg.appendChild(svgEl("text", { x: 0, y: b.y + 45, class: "wl-bs" }, b.sub));
-    svg.appendChild(svgEl("text", { x: X1 + 6, y: b.y + 9, class: "wl-bs" }, b.fmt(b.hi)));
-    svg.appendChild(svgEl("text", { x: X1 + 6, y: b.y + b.h, class: "wl-bs" }, b.fmt(b.lo)));
-    const Y = (v, lo = b.lo, hi = b.hi) => b.y + b.h - Math.min(1, Math.max(0, (v - lo) / ((hi - lo) || 1))) * b.h;
+    const mid = b.y + b.h / 2;
+    svg.appendChild(svgEl("line", { x1: X0, x2: X1, y1: b.y + b.h + 0.5, y2: b.y + b.h + 0.5, class: "wl-base" }));
+    svg.appendChild(svgEl("line", { x1: X0, x2: X1, y1: mid, y2: mid, class: "wl-grid" }));
+    svg.appendChild(svgEl("text", { x: 0, y: b.y + 11, class: "wl-bt" }, b.title));
+    svg.appendChild(svgEl("text", { x: 0, y: b.y + 27, class: "wl-bn" }, b.now));
+    if (b.sub && b.h >= 44) svg.appendChild(svgEl("text", { x: 0, y: b.y + 41, class: "wl-ax" }, b.sub));
+    svg.appendChild(svgEl("text", { x: X1 + 8, y: b.y + 8, class: "wl-ax" }, b.fmt(b.hi)));
+    svg.appendChild(svgEl("text", { x: X1 + 8, y: b.y + b.h, class: "wl-ax" }, b.fmt(b.lo)));
+    const Y = (v, lo = b.lo, hi = b.hi) => b.y + b.h - Math.min(1, Math.max(0, (v - lo) / ((hi - lo) || 1))) * (b.h - 2);
     for (const v of b.usual || []) if (v != null) svg.appendChild(svgEl("line", { x1: X0, x2: X1, y1: Y(v).toFixed(1), y2: Y(v).toFixed(1), class: "wl-usual" }));
     for (const s of b.series) {
+      s.Y = (v) => Y(v, s.lo, s.hi);
       // souvislé úseky: mezera v měření nebo výpadek čáru přeruší
       let run = [], last = 0;
       const flush = () => {
         if (run.length > 1) {
-          const line = run.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" ");
-          if (s.area) svg.appendChild(svgEl("polygon", { points: `${run[0][0].toFixed(1)},${b.y + b.h} ${line} ${run[run.length - 1][0].toFixed(1)},${b.y + b.h}`, class: "wl-a " + s.cls }));
-          svg.appendChild(svgEl("polyline", { points: line, class: "wl-s " + s.cls }));
-        } else if (run.length === 1) svg.appendChild(svgEl("circle", { cx: run[0][0].toFixed(1), cy: run[0][1].toFixed(1), r: 1.6, class: "wl-p " + s.cls }));
+          const line = s.step ? run.map(([x, yy], i) => (i ? `H${x.toFixed(1)}V${yy.toFixed(1)}` : `M${x.toFixed(1)} ${yy.toFixed(1)}`)).join("") : wlSmooth(run);
+          if (s.area) svg.appendChild(svgEl("path", { d: `${line}L${run[run.length - 1][0].toFixed(1)} ${b.y + b.h}L${run[0][0].toFixed(1)} ${b.y + b.h}Z`, class: "wl-a " + s.cls }));
+          svg.appendChild(svgEl("path", { d: line, class: "wl-s " + s.cls }));
+        } else if (run.length === 1) svg.appendChild(svgEl("circle", { cx: run[0][0].toFixed(1), cy: run[0][1].toFixed(1), r: 1.5, class: "wl-p " + s.cls }));
         run = [];
       };
       for (const p of s.pts) {
         const t = new Date(p.t).getTime(), v = p[s.k];
         if (t < t0) continue;
         if (v == null || (last && t - last > gapMs)) flush();
-        if (v != null) { run.push([X(p.t), Y(v, s.lo, s.hi)]); last = t; }
+        if (v != null) { run.push([X(p.t), s.Y(v)]); last = t; }
       }
       flush();
     }
   }
-  const step = d.hours <= 1 ? 600e3 : d.hours <= 24 ? 3 * 3600e3 : d.hours <= 168 ? 86400e3 : 5 * 86400e3;
-  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
-    const dt = new Date(t), lab = d.hours <= 24 ? dt.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" }) : dt.toLocaleDateString(LOCALE, { day: "numeric", month: "numeric" });
-    svg.appendChild(svgEl("text", { x: X(t).toFixed(1), y: H - 4, class: "wl-bs mid" }, lab));
-  }
-  const cur = svgEl("line", { x1: 0, x2: 0, y1: 12, y2: H - 26, class: "wl-cur", visibility: "hidden" }); svg.appendChild(cur);
+  const cur = svgEl("line", { x1: 0, x2: 0, y1: 14, y2: bottom, class: "wl-cur", visibility: "hidden" }); svg.appendChild(cur);
+  const dots = svgEl("g", { visibility: "hidden" }); svg.appendChild(dots);
   box.appendChild(svg);
   const tip = el("div", null, "wl-tip"); tip.hidden = true; box.appendChild(tip);
+  const nearest = (arr, t) => { let best = null; for (const p of arr) if (!best || Math.abs(new Date(p.t) - t) < Math.abs(new Date(best.t) - t)) best = p; return best; };
   svg.addEventListener("mousemove", (ev) => {
     const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width * W;
-    if (x < X0 || x > X1) { tip.hidden = true; cur.setAttribute("visibility", "hidden"); return; }
-    const t = t0 + (x - X0) / (X1 - X0) * (t1 - t0);
-    let best = null; for (const p of pts) if (!best || Math.abs(new Date(p.t) - t) < Math.abs(new Date(best.t) - t)) best = p;
+    if (x < X0 || x > X1) { tip.hidden = true; cur.setAttribute("visibility", "hidden"); dots.setAttribute("visibility", "hidden"); return; }
+    const t = t0 + (x - X0) / (X1 - X0) * (t1 - t0), best = nearest(pts, t);
     if (!best) return;
     const bx = X(best.t); cur.setAttribute("x1", bx); cur.setAttribute("x2", bx); cur.setAttribute("visibility", "visible");
+    // tečky na křivkách v místě kurzoru
+    dots.textContent = ""; dots.setAttribute("visibility", "visible");
+    for (const b of bands) for (const s of b.series) {
+      const p = s.pts === pts ? best : nearest(s.pts, new Date(best.t).getTime());
+      if (p && p[s.k] != null) dots.appendChild(svgEl("circle", { cx: X(p.t).toFixed(1), cy: s.Y(p[s.k]).toFixed(1), r: 3, class: "wl-dotc " + s.cls }));
+    }
     tip.textContent = "";
-    tip.appendChild(el("strong", new Date(best.t).toLocaleString(LOCALE)));
-    const row = (txt) => tip.appendChild(el("div", txt));
-    if (!best.up) row(__("spoj dole"));
+    tip.appendChild(el("strong", new Date(best.t).toLocaleString(LOCALE, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })));
+    const row = (k, v, cls) => { const rr = el("div", null, "wl-tip-r"); rr.append(el("span", k), el("b", v, cls || "")); tip.appendChild(rr); };
+    if (!best.up) row(__("Spoj"), __("dole"), "bad");
     else {
-      row(__`signál ${wlPair(best.signal_a, best.signal_b, "dBm")}`); row(__`rychlost ${wlMb(best.rate_ab)} / ${wlMb(best.rate_ba)}`);
-      if (best.loss != null) row(__`ztrátovost ${wlN(best.loss, "%", 1)}, odezva ${wlN(best.rtt_avg, "ms", 1)}`);
-      if (best.noise != null) row(__`šum ${wlN(best.noise, "dBm")}`);
-      if (best.reconnect) row(__("přepojení"));
+      const tp = tr.length ? nearest(tr, new Date(best.t).getTime()) : null;
+      if (tp) row(__("Provoz"), `↓ ${fmtBps(tp.rx || 0)}  ↑ ${fmtBps(tp.tx || 0)}`);
+      row(__("Signál"), wlPair(best.signal_a, best.signal_b, "dBm"));
+      row(__("Rychlost"), `${wlMb(best.rate_ab)} / ${wlMb(best.rate_ba)}`);
+      if (best.loss != null) row(__("Ztrátovost"), wlN(best.loss, "%", 1), best.loss >= 2 ? "bad" : "");
+      if (best.rtt_avg != null) row(__("Odezva"), wlN(best.rtt_avg, "ms", 1));
+      if (best.noise != null) row(__("Šum"), wlN(best.noise, "dBm"));
     }
     const devs = (d.episodes || []).find((e) => new Date(e.from) <= new Date(best.t) && new Date(best.t) <= new Date(e.to));
-    if (devs) tip.appendChild(el("div", devs.codes.map((c) => WL_CODE[c] || c).join(", "), "wl-tip-w"));
+    if (devs || best.reconnect) tip.appendChild(el("div", (devs ? devs.codes : ["reconnect"]).map((c) => WL_CODE[c] || c).join(", "), "wl-tip-w"));
     tip.hidden = false;
-    tip.setAttribute("style", `left: ${Math.min(r.width - 250, Math.max(0, (bx / W) * r.width + 12))}px; top: ${Math.max(0, ev.clientY - r.top - 20)}px`);
+    const left = (bx / W) * r.width + 14;
+    tip.setAttribute("style", `left: ${left + 216 > r.width ? left - 244 : left}px; top: ${Math.max(0, Math.min(r.height - 150, ev.clientY - r.top - 30))}px`);
   });
-  svg.addEventListener("mouseleave", () => { tip.hidden = true; cur.setAttribute("visibility", "hidden"); });
+  svg.addEventListener("mouseleave", () => { tip.hidden = true; cur.setAttribute("visibility", "hidden"); dots.setAttribute("visibility", "hidden"); });
+}
+// při změně šířky okna se graf překreslí na novou šířku (písmo zůstává stejně velké)
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  let wlResize = 0;
+  window.addEventListener("resize", () => { clearTimeout(wlResize); wlResize = setTimeout(() => { if (wl.sel && wl.data && !$("links-wrap").hidden) renderLinks(); }, 150); });
 }
 
 // --- sekce Porty: schéma portů s připojenými zařízeními, filtry, přehled VLAN a provoz -------------------------
