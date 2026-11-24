@@ -90,6 +90,8 @@ SECTIONS: list[Section] = [
     # wifi rádia a CAPsMAN (bez .proplist – ploché klíče "configuration.ssid" apod.;
     # tajemství odstraní _scrub)
     Section("wifi", "/interface/wifi"),
+    # 60 GHz (Wireless Wire, LHG 60…): vlastní ovladač; protistranu dává až monitor (viz _collect_into)
+    Section("w60g", "/interface/w60g", "name,mac-address,mode,disabled,frequency,ssid"),
     Section("wireless", "/interface/wireless",
             "name,mac-address,ssid,mode,band,frequency,channel-width,running,disabled,master-interface,"
             "interface-type,comment"),
@@ -207,6 +209,22 @@ def _collect_into(api: RosApi, data: dict[str, Any], errors: list[str]) -> None:
     if names:
         _fetch(api, data, errors, "ethernet_monitor", "POST", "/interface/ethernet/monitor",
                body={"numbers": ",".join(names), "once": "true", ".proplist": MONITOR_PROPS})
+    w60 = [str(w["name"]) for w in data.get("w60g") or [] if isinstance(w, dict) and w.get("name")
+           and str(w.get("disabled")).lower() not in ("true", "yes")]
+    if w60:
+        # stav 60GHz spoje (protistrana, RSSI, MCS, chybovost) – jen čtení, selhání není chyba inventury
+        mon: list[dict] = []
+        for n in w60[:8]:
+            try:
+                r = api.request("POST", "/interface/w60g/monitor", {"numbers": n, "once": ""})
+                if isinstance(r, list) and r and isinstance(r[0], dict):
+                    mon.append({**r[0], "name": n})
+            except PinMismatch:
+                raise
+            except RosApiError as e:
+                if e.status in (401, 403):
+                    raise
+        data["w60g_monitor"] = mon
     if names:
         # chybové čítače portů podle druhu – zvlášť od `ethernet`, ať měnící se čísla nehýbou otiskem konfigurace.
         # Které čítače čip vede, se liší; selhání není chyba inventury (zůstane souhrn rx/tx-error z /interface).

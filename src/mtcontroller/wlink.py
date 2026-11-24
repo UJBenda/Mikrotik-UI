@@ -9,7 +9,8 @@ Ping je jediný údaj, který řekne, že spoj zahazuje, i když signál vypadá
 
 **Hodnocení:** proti vlastnímu normálu spoje (medián za 7 dní) – propad signálu, pád rychlosti, ztrátovost,
 nesouměrnost stran, časté přepojování. Prahy jsou odhad a na skutečném zařízení zatím neověřené.
-Ovladač 60 GHz (w60g) se zatím nesbírá.
+U 60 GHz (ovladač w60g) se místo registrace čte monitor rozhraní: RSSI, rychlost PHY a chybovost přenosu
+(uložená jako „kvalita“ = 100 − chybovost do sloupců ccq).
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ FLAPS_24H = 3
 NOISE_RISE_DB = 6
 REG = {"wifi": "/interface/wifi/registration-table", "wireless": "/interface/wireless/registration-table"}
 MONITOR = {"wifi": "/interface/wifi/monitor", "wireless": "/interface/wireless/monitor"}
-SECTIONS = ["interfaces", "wifi", "wireless", "wifi_clients", "wireless_clients", "addresses"]
+SECTIONS = ["interfaces", "wifi", "wireless", "w60g", "w60g_monitor", "wifi_clients", "wireless_clients", "addresses"]
 _UNITS = {"": 1, "k": 1e3, "m": 1e6, "g": 1e9}
 _last_discover = 0.0
 
@@ -110,7 +111,7 @@ def ping_summary(rows: Any) -> dict:
 def _radio_macs(inv: dict) -> dict[str, tuple[str, str, bool]]:
     """{MAC: (rozhraní, ovladač, je_AP)} bezdrátových rozhraní zařízení."""
     out: dict[str, tuple[str, str, bool]] = {}
-    for kind in ("wifi", "wireless"):
+    for kind in ("wifi", "wireless", "w60g"):
         for w in _rows(inv, kind):
             mac, name = _mac(w.get("mac-address")), str(w.get("name") or "")
             mode = str(w.get("configuration.mode") or w.get("mode") or "")
@@ -156,8 +157,11 @@ def find_links(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
         me, inv = str(d["id"]), invs.get(str(d["id"])) or {}
         mine = _radio_macs(inv)
         by_iface = {v[0]: (mac, v[1], v[2]) for mac, v in mine.items()}
-        for kind in ("wifi", "wireless"):
-            for r in _rows(inv, kind + "_clients"):
+        # 60 GHz: protistranu hlásí monitor rozhraní (remote-address), ne registrační tabulka
+        w60 = [{"mac-address": m.get("remote-address"), "interface": m.get("name")} for m in _rows(inv, "w60g_monitor")
+               if str(m.get("connected")).lower() in ("true", "yes")]
+        for kind, regs in (("wifi", _rows(inv, "wifi_clients")), ("wireless", _rows(inv, "wireless_clients")), ("w60g", w60)):
+            for r in regs:
                 peer = owner.get(_mac(r.get("mac-address")))
                 iface = str(r.get("interface") or "")
                 if not peer or peer[0] == me or iface not in by_iface:
@@ -185,7 +189,8 @@ def discover(db: Database) -> int:
             """SELECT d.id, d.tenant_id, d.site_id FROM device d
                WHERE d.state IN ('adopted', 'offline') AND d.site_id IS NOT NULL
                  AND EXISTS (SELECT 1 FROM device_inventory i WHERE i.device_id = d.id
-                             AND i.section IN ('wifi_clients', 'wireless_clients') AND i.data <> '[]'::jsonb)""")
+                             AND i.section IN ('wifi_clients', 'wireless_clients', 'w60g_monitor')
+                             AND i.data <> '[]'::jsonb)""")
         sites = {str(d["site_id"]) for d in devs}
         for sid in sites:
             members = tx.fetchall("""SELECT id, tenant_id FROM device WHERE site_id = %(s)s
@@ -217,19 +222,43 @@ def _reg_row(api: Any, kind: str, iface: str, peer_mac: str) -> dict | None:
     return None
 
 
+def _monitor(api: Any, path: str, iface: str) -> dict:
+    mon = api.request("POST", path, {"numbers": iface, "once": ""})
+    return mon[0] if isinstance(mon, list) and mon and isinstance(mon[0], dict) else {}
+
+
+def side_w60g(m: dict | None, peer_mac: str) -> dict | None:
+    """Monitor 60GHz rozhraní → strana spoje; None = není spojeno s touto protistranou."""
+    if not m or str(m.get("connected")).lower() not in ("true", "yes") or _mac(m.get("remote-address")) != peer_mac:
+        return None
+    rssi, per = _num(m.get("rssi")), _num(m.get("tx-packet-error-rate"))
+    return {"signal": rssi if rssi is not None and -110 <= rssi <= 0 else None, "snr": None,
+            "ccq": max(0, 100 - per) if per is not None else None, "rate_tx": parse_rate(m.get("tx-phy-rate")),
+            "rate_rx": None, "uptime_s": None}
+
+
+def _side_now(api: Any, kind: str, iface: str, peer_mac: str) -> dict | None:
+    """Čerstvý stav jedné strany; None = protistrana není připojená."""
+    if kind == "w60g":
+        return side_w60g(_monitor(api, "/interface/w60g/monitor", iface), peer_mac)
+    row = _reg_row(api, kind, iface, peer_mac)
+    return side(row) if row is not None else None
+
+
 def measure(api_a: Any, api_b: Any, link: dict) -> dict | None:
     """Jedno měření spoje. None = strana A nedostupná (to řeší alert offline, ne spoj)."""
     from .rosapi import RosApiError
 
+    kind = link["kind"]
     try:
-        ra = _reg_row(api_a, link["kind"], link["a_iface"], link["b_mac"])
+        ra = _side_now(api_a, kind, link["a_iface"], link["b_mac"])
     except RosApiError:
         return None
-    a = side(ra)
+    a = ra or {}
     b: dict = {}
     if api_b is not None:
         try:
-            b = side(_reg_row(api_b, link.get("b_kind") or link["kind"], link["b_iface"], link["a_mac"]))
+            b = _side_now(api_b, kind, link["b_iface"], link["a_mac"]) or {}
         except RosApiError:
             b = {}
     out: dict[str, Any] = {
@@ -239,13 +268,12 @@ def measure(api_a: Any, api_b: Any, link: dict) -> dict | None:
         "loss": None, "rtt_avg": None, "rtt_min": None, "rtt_max": None}
     if not out["up"]:
         return out
-    try:
-        mon = api_a.request("POST", MONITOR.get(link["kind"], MONITOR["wifi"]), {"numbers": link["a_iface"], "once": ""})
-        m0 = mon[0] if isinstance(mon, list) and mon and isinstance(mon[0], dict) else {}
-        nf = _num(m0.get("noise-floor"))
-        out["noise"] = nf if nf is not None and -120 <= nf <= -40 else None
-    except RosApiError:
-        pass
+    if kind in MONITOR:
+        try:
+            nf = _num(_monitor(api_a, MONITOR[kind], link["a_iface"]).get("noise-floor"))
+            out["noise"] = nf if nf is not None and -120 <= nf <= -40 else None
+        except RosApiError:
+            pass
     if link.get("ping_ip"):
         try:
             out.update(ping_summary(api_a.request(

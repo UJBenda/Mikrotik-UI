@@ -1435,3 +1435,13 @@ i.pm-tile { cursor: default; }
 .wl-ep-t { width: 150px; flex: none; } .wl-ep > span:last-child { margin-left: auto; }
 #devs-tabs button { padding: 5px 2px; font-size: 11.5px; }
 .wl-top .seg { flex: none; } .wl-top .seg button { white-space: nowrap; }
+
+/* bezdrátový spoj v mapě: čárkovaná čára v barvě stavu, klik otevře kartu spoje */
+#infra-svg .link.wless { stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.4; }
+#infra-svg .link.wless.s-ok { stroke: #17a55a; } #infra-svg .link.wless.s-degraded { stroke: #e8a100; }
+#infra-svg .link.wless.s-bad, #infra-svg .link.wless.s-down { stroke: #dc2626; } #infra-svg .link.wless.s-unknown { stroke: var(--muted); }
+#infra-svg .link.hit { stroke: transparent; stroke-width: 16; cursor: pointer; pointer-events: stroke; }
+#infra-svg .wl-mark { font-size: 15px; font-weight: 700; text-anchor: middle; paint-order: stroke; stroke: var(--card); stroke-width: 5px; pointer-events: none; fill: #17a55a; }
+#infra-svg .wl-mark.s-degraded { fill: #b47700; } #infra-svg .wl-mark.s-bad, #infra-svg .wl-mark.s-down { fill: #dc2626; } #infra-svg .wl-mark.s-unknown { fill: var(--muted); }
+.wl-bw { padding: 4px 0 8px; border-top: 1px solid var(--line); margin-top: 4px; }
+.wl-bw button { width: 100%; }

@@ -4232,7 +4232,7 @@ function renderLinks() {
   kv(__("Rychlost spoje"), wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba), u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "", dev("rate"));
   kv(__("Ztrátovost"), wlN(n.loss, "%", 1), d.ping_ip ? __`ping 10× na ${d.ping_ip}` : __("bez adresy pro ping"), dev("loss") && "wl-bad");
   kv(__("Odezva"), wlN(n.rtt_avg, "ms", 1), n.rtt_max != null ? __`nejvíc ${wlN(n.rtt_max, "ms", 1)}` : "");
-  if (n.ccq_a != null || n.ccq_b != null) kv("CCQ", wlPair(n.ccq_a, n.ccq_b, "%"));
+  if (n.ccq_a != null || n.ccq_b != null) kv(d.kind === "w60g" ? __("Kvalita přenosu") : "CCQ", wlPair(n.ccq_a, n.ccq_b, "%"));
   if (n.noise != null) kv(__("Šum na kanálu"), wlN(n.noise, "dBm"), u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", dev("noise"));
   kv(__("Přepojení za 24 h"), String(d.flaps || 0), "", dev("flap"));
   kv(__("Měřeno"), fmtTime(d.sampled_at));
@@ -4241,6 +4241,7 @@ function renderLinks() {
     const l = el("label", null, "ux-switch"), i = el("input"); i.type = "checkbox"; i.checked = get();
     i.addEventListener("change", () => set(i.checked)); l.append(el("span", label), i, el("i")); side.appendChild(l);
   };
+  wlBw(side, d);
   sw(__("Značky anomálií"), "marks", () => !!o.marks, (v) => { o.marks = v; savePrefs(); renderLinks(); });
   sw(__("Obvyklý stav (čárkovaně)"), "usual", () => !!o.usual, (v) => { o.usual = v; savePrefs(); renderLinks(); });
   sw(__("Nehlásit upozornění"), "muted", () => !!d.muted, async (v) => {
@@ -4278,6 +4279,44 @@ function renderLinks() {
   }
 }
 
+// měření propustnosti přes spoj (existující test mezi dvěma zařízeními): poslední výsledek + tlačítko
+function wlBw(side, d) {
+  const box = el("div", null, "wl-bw"); side.appendChild(box);
+  const key = d.id, st = (wl.bw = wl.bw && wl.bw.key === key ? wl.bw : { key, last: undefined, running: false });
+  const draw = () => {
+    box.textContent = "";
+    const t = st.last, r = t && t.result;
+    const row = el("div", null, "wl-kv"), val = el("span", st.running ? __("měřím…") : r ? `↓ ${fmtBps(r.rx_avg || 0)}  ↑ ${fmtBps(r.tx_avg || 0)}` : t && t.status === "failed" ? __("selhalo") : "–");
+    if (t && !st.running) val.appendChild(el("small", t.status === "failed" ? (t.error || "") : fmtTime(t.finished_at || t.started_at), "muted"));
+    row.append(el("span", __("Propustnost")), val); box.appendChild(row);
+    const b = el("button", __("Změřit propustnost"), "secondary small"); b.type = "button"; b.disabled = st.running || !d.ping_ip || d.state === "down";
+    b.title = d.ping_ip ? __("Test rychlosti přes spoj, asi 10 s. Po dobu testu spoj plně zatíží.") : __("Chybí adresa protistrany ve společné síti.");
+    b.addEventListener("click", async () => {
+      let out;
+      try { out = await api("POST", `/tenants/${tenantId}/devices/${d.a.device_id}/bwtest`, { to: d.b.device_id, address: d.ping_ip, duration: 10, direction: "both", protocol: "tcp" }); }
+      catch (e) { return msg(e.message, true); }
+      st.running = true; draw();
+      for (let i = 0; i < 25 && st.running; i++) {
+        await new Promise((res) => setTimeout(res, 2000));
+        let v; try { v = await api("GET", `/tenants/${tenantId}/devices/${d.a.device_id}/bwtest`); } catch (_e) { continue; }
+        const mine = (v.tests || []).find((x) => x.id === out.id);
+        if (mine && mine.status !== "running") { st.last = mine; st.running = false; }
+      }
+      st.running = false;
+      if (wl.bw === st && wl.sel === key) draw();
+    });
+    box.appendChild(b);
+  };
+  draw();
+  if (st.last === undefined) {
+    st.last = null;
+    api("GET", `/tenants/${tenantId}/devices/${d.a.device_id}/bwtest`).then((v) => {
+      st.last = (v.tests || []).find((x) => x.status !== "running" && [x.from_device, x.to_device].includes(d.b.device_id)) || null;
+      if (wl.bw === st && wl.sel === key) draw();
+    }).catch(() => {});
+  }
+}
+
 // graf spoje: pásy se společnou časovou osou; odchylky podbarvené přes všechny pásy
 function wlChart(box, d, o) {
   if (typeof document.createElementNS !== "function") return;
@@ -4302,7 +4341,7 @@ function wlChart(box, d, o) {
     bands.push({ title: __("Ztrátovost a odezva"), h: 80, now: `${wlN((d.now || {}).loss, "%", 1)} · ${wlN((d.now || {}).rtt_avg, "ms", 1)}`, lo: 0, hi: lmax,
       fmt: (v) => `${wlN(v, "%")} · ${wlN(v / lmax * rmax, "ms")}`, series: [{ pts, k: "loss", cls: "loss", area: true }, { pts, k: "rtt_avg", cls: "rtt", lo: 0, hi: rmax }] });
   }
-  if (any("ccq_a") || any("ccq_b")) bands.push({ title: "CCQ", h: 56, now: wlPair((d.now || {}).ccq_a, (d.now || {}).ccq_b, "%"), lo: 0, hi: 100, fmt: (v) => wlN(v, "%"),
+  if (any("ccq_a") || any("ccq_b")) bands.push({ title: d.kind === "w60g" ? __("Kvalita přenosu") : "CCQ", h: 56, now: wlPair((d.now || {}).ccq_a, (d.now || {}).ccq_b, "%"), lo: 0, hi: 100, fmt: (v) => wlN(v, "%"),
     series: [{ pts, k: "ccq_a", cls: "a" }, { pts, k: "ccq_b", cls: "b" }] });
   if (any("noise")) { const ns = pts.map((p) => p.noise).filter((v) => v != null);
     bands.push({ title: __("Šum na kanálu"), h: 56, now: wlN((d.now || {}).noise, "dBm"), sub: u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", lo: Math.min(...ns) - 4, hi: Math.max(...ns) + 4,
@@ -4861,8 +4900,13 @@ function renderInfraTimeline() {
   $("itl-sum").textContent = d.total ? __`${d.total} událostí` : __("bez událostí");
 }
 
+let infraWl = {};
+function openLink(id) { wl.sel = id; wl.data = null; openSub("devices", "links"); }
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
+  // bezdrátové spoje: čára v mapě dostane barvu podle stavu a otevírá kartu spoje
+  infraWl = {};
+  try { for (const l of (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/links`)).links || []) infraWl[[l.a.device_id, l.b.device_id].sort().join("|")] = l; } catch (_e) { /* mapa funguje i bez nich */ }
   renderInfra();
   loadInfraTimeline();
 }
@@ -5013,7 +5057,18 @@ function drawInfra() {
     const ch = kids[n.id];
     ch.forEach((c, k) => {
       const bx = x + (k - (ch.length - 1) / 2) * 70, by = top + NH + 26;
-      links.appendChild(curve(bx, by + 14, cx(c), leaf(c) ? y(c) : y(c) - 40, leaf(c) ? (c.client ? "client" : "ext") : c.state === "offline" ? "down" : "up"));
+      const wlk = leaf(c) ? null : infraWl[[n.id, c.id].sort().join("|")];
+      const cv = curve(bx, by + 14, cx(c), leaf(c) ? y(c) : y(c) - 40, (leaf(c) ? (c.client ? "client" : "ext") : c.state === "offline" ? "down" : "up") + (wlk ? " wless s-" + wlk.state : ""));
+      links.appendChild(cv);
+      if (wlk) {
+        // širší neviditelná čára = pohodlný cíl pro klik; popisek se stavem spoje
+        const hit = curve(bx, by + 14, cx(c), y(c) - 40, "hit");
+        hit.appendChild(svgEl("title", {}, [__`Bezdrátový spoj ${wlk.name}`, (WL_STATE[wlk.state] || wlk.state) + (wlk.score != null ? ` · ${wlk.score}` : ""),
+          ...(wlk.why || []).map((w) => wlWhy(w)), __("Kliknutím otevřeš kartu spoje.")].join("\n")));
+        hit.addEventListener("click", (e) => { e.stopPropagation(); openLink(wlk.id); });
+        links.appendChild(hit);
+        nodes.appendChild(svgEl("text", { x: (bx + cx(c)) / 2, y: (by + 14 + y(c) - 40) / 2 + 4, class: "wl-mark s-" + wlk.state }, "≋"));
+      }
       const fromHub = n.kind === "hub";
       if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, c.client && c.client.ssid ? "≋" : num(c.parent_port), "down"));
       if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));

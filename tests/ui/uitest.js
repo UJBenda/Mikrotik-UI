@@ -242,9 +242,25 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         const eps = all(m, (n) => n.className === "wl-ep");
         if (eps.length !== 1 || !eps[0].textContent.includes("propad signálu, pád rychlosti, ztrátovost") || !eps[0].textContent.includes("trvalo 20 min")) errors.push("spoje: úseky " + eps.map((e) => e.textContent));
         if (!requests.some((r) => r.includes("/traffic?hours=24&interface=wlan1"))) errors.push("spoje: dotaz na provoz");
+        await tlTick();
+        if (!byId["wl-side"].textContent.includes("↓ 84") || !find(byId["wl-side"], (n) => n.tagName === "BUTTON" && n.textContent === "Změřit propustnost")) errors.push("spoje: propustnost " + byId["wl-side"].textContent);
         const back = find(byId["wl-side"], (n) => n.tagName === "BUTTON" && n.textContent.includes("Všechny spoje"));
         await back.fire("click");
         if (!find(byId["wl-main"], (n) => n.tagName === "TABLE")) errors.push("spoje: návrat na seznam");
+      }
+    }
+    // mapa: bezdrátový spoj je čára v barvě stavu a klik otevře kartu spoje
+    await byId["nav-dash"].fire("click");
+    await tlTick(); await tlTick();
+    {
+      const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      const cls = (n) => String((n.attrs && n.attrs.class) || "");
+      const wless = all(byId["infra-svg"], (n) => cls(n).includes("wless")), hit = all(byId["infra-svg"], (n) => cls(n) === "link hit");
+      if (wless.length !== 1 || !cls(wless[0]).includes("s-degraded") || hit.length !== 1) errors.push(`mapa: bezdrátový spoj ${wless.map(cls)} / ${hit.length}`);
+      else {
+        if (!hit[0].textContent.includes("spoj-hala ↔ spoj-sklad") || !hit[0].textContent.includes("Zhoršený · 48")) errors.push("mapa: popisek spoje " + hit[0].textContent);
+        await hit[0].fire("click", { stopPropagation() {} }); await tlTick(); await tlTick();
+        if (byId["view-devices"].hidden || byId["links-wrap"].hidden || !byId["wl-side"].textContent.includes("Všechny spoje (1)")) errors.push("mapa: klik na spoj neotevřel kartu");
       }
     }
     // sekce Porty: schéma, filtry, tabulka s připojeným zařízením/klientem, přehled VLAN

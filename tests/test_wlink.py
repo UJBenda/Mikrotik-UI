@@ -62,6 +62,40 @@ def test_parsing_and_find_links():
     assert w.find_links([{"id": "b"}, {"id": "a"}], {"a": _ap(), "b": _sta()})[0]["a"]["device"] == "a"
 
 
+def test_w60g_link():
+    """60 GHz: protistrana a hodnoty jsou v monitoru rozhraní, ne v registrační tabulce."""
+    from mtcontroller import wlink as w
+    from mtcontroller.rosapi import RosApiError
+
+    def inv(mac, peer, mode, ip):
+        return {"w60g": [{"name": "wlan60-1", "mac-address": mac, "mode": mode}],
+                "w60g_monitor": [{"name": "wlan60-1", "connected": "true", "remote-address": peer, "rssi": "-52"}],
+                "addresses": [{"address": ip + "/24", "interface": "bridge"}]}
+
+    A, B = "C4:AD:34:00:00:0A", "C4:AD:34:00:00:0B"
+    links = w.find_links([{"id": "st"}, {"id": "ap"}], {"ap": inv(A, B, "bridge", "10.5.0.1"), "st": inv(B, A, "station-bridge", "10.5.0.2")})
+    assert len(links) == 1 and links[0]["kind"] == "w60g" and links[0]["a"]["device"] == "ap" and links[0]["ping_ip"] == "10.5.0.2"
+
+    class Api:
+        def __init__(self, peer, rssi, per, connected="true"):
+            self.m = {"connected": connected, "remote-address": peer, "rssi": str(rssi), "tx-mcs": "8", "tx-phy-rate": "2310000000",
+                      "tx-packet-error-rate": str(per), "distance": "220.3m"}
+
+        def request(self, method, path, body=None, params=None):
+            if path == "/interface/w60g/monitor":
+                return [self.m]
+            if path == "/ping":
+                return [{"sent": "10", "received": "10", "avg-rtt": "400us", "min-rtt": "300us", "max-rtt": "1ms"}]
+            raise RosApiError(404, "no such command")
+
+    link = {"kind": "w60g", "a_iface": "wlan60-1", "a_mac": A, "b_iface": "wlan60-1", "b_mac": B, "ping_ip": "10.5.0.2"}
+    s = w.measure(Api(B, -52, 3), Api(A, -54, 7), link)
+    assert s["up"] and s["signal_a"] == -52 and s["signal_b"] == -54 and s["rate_ab"] == 2310000000 and s["rate_ba"] == 2310000000
+    assert s["ccq_a"] == 97 and s["ccq_b"] == 93 and s["loss"] == 0.0 and s["rtt_avg"] == 0.4 and s["noise"] is None
+    assert w.measure(Api(B, -52, 3, connected="false"), None, link)["up"] is False
+    assert w.measure(Api("00:00:00:00:00:01", -52, 3), None, link)["up"] is False      # připojený někdo jiný
+
+
 def test_measure_and_evaluate():
     from mtcontroller import wlink as w
 
