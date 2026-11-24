@@ -1405,6 +1405,8 @@ Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 
   kvalita = 100 − chybovost ve sloupcích `ccq_*`, v UI „Kvalita přenosu“). Šum ani doba spojení zde nejsou.
 - **Mapa:** čára mezi dvěma zařízeními, mezi nimiž je spoj, je tečkovaná v barvě stavu se značkou ≋; klik
   otevře kartu spoje (`openLink`).
+  Stejné značení má záložka Topologie (`drawTopology`); spoj, který sousedé neohlásili, se tam doplní jako
+  hrana z naměřených spojů. V mapě mají konce bezdrátového spoje značku ≋ místo čísla portu.
 - **Propustnost:** tlačítko na kartě pouští existující test `bwtest` (A → B na `ping_ip`, 10 s, TCP, oba směry)
   a ukazuje poslední výsledek.
 - **Zatím chybí:** vytížení kanálu, sken spektra, PtMP u 60 GHz (více stanic na jednom AP). Na skutečném

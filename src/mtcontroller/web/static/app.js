@@ -1022,6 +1022,11 @@ function svgEl(tag, attrs, text) {
 async function loadTopology() {
   try {
     const t = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/topology`);
+    await loadWlMap();
+    // spoj, který sousedé (LLDP/MNDP) neohlásili, se do topologie doplní z naměřených bezdrátových spojů
+    const have = new Set(t.edges.map((e) => [e.a, e.b].sort().join("|"))), ids = new Set(t.nodes.map((n) => n.id));
+    for (const [k, l] of Object.entries(infraWl)) if (!have.has(k) && ids.has(l.a.device_id) && ids.has(l.b.device_id))
+      t.edges.push({ a: l.a.device_id, b: l.b.device_id, ports: { [l.a.device_id]: l.a.iface, [l.b.device_id]: l.b.iface } });
     drawTopology(t);
   } catch (e) { msg(e.message, true); }
 }
@@ -1079,6 +1084,16 @@ function drawTopology(t) {
     svg.appendChild(svgEl("path", { d: `M${x1} ${y1}H${bus}V${y2}H${x2}`, class: "link" }));
     // výpadek jen na úseku k potomkovi – společná svislice patří i ostatním
     if (byId[id].state === "offline" || byId[p].state === "offline") svg.appendChild(svgEl("path", { d: `M${bus} ${y2}H${x2}`, class: "link down" }));
+    const wlk = wlOf(p, id);
+    if (wlk) {
+      // bezdrátový spoj: úsek k potomkovi tečkovaně v barvě stavu, značka ≋, klik otevře kartu spoje
+      svg.appendChild(svgEl("path", { d: `M${bus} ${y2}H${x2}`, class: "link wless s-" + wlk.state }));
+      svg.appendChild(svgEl("text", { x: bus + 12, y: y2 + 15, class: "wl-mark s-" + wlk.state }, "≋"));
+      const hit = svgEl("path", { d: `M${bus} ${y2}H${x2}`, class: "link hit" });
+      hit.appendChild(svgEl("title", {}, wlTitle(wlk)));
+      hit.addEventListener("click", () => openLink(wlk.id));
+      svg.appendChild(hit);
+    }
     const pp = e.ports[p], pc = e.ports[id];
     const label = [pp, pc].filter(Boolean).map((v) => short(v, 16)).join(" → ");
     if (label) {
@@ -1091,8 +1106,10 @@ function drawTopology(t) {
   for (const e of t.edges) {
     if (via[e.a] === e || via[e.b] === e || !pos[e.a] || !pos[e.b]) continue;
     const xa = X(e.a) + TOPO.boxW, ya = Y(e.a), xb = X(e.b) + TOPO.boxW, yb = Y(e.b), out = Math.max(xa, xb) + 40;
-    const ln = svgEl("path", { d: `M${xa} ${ya}C${out} ${ya} ${out} ${yb} ${xb} ${yb}`, class: "link extra" });
-    ln.appendChild(svgEl("title", {}, __`další spoj: ${byId[e.a].label} ${e.ports[e.a] || ""} ↔ ${byId[e.b].label} ${e.ports[e.b] || ""}`));
+    const wx = wlOf(e.a, e.b);
+    const ln = svgEl("path", { d: `M${xa} ${ya}C${out} ${ya} ${out} ${yb} ${xb} ${yb}`, class: wx ? "link wless s-" + wx.state : "link extra" });
+    ln.appendChild(svgEl("title", {}, wx ? wlTitle(wx) : __`další spoj: ${byId[e.a].label} ${e.ports[e.a] || ""} ↔ ${byId[e.b].label} ${e.ports[e.b] || ""}`));
+    if (wx) { ln.addEventListener("click", () => openLink(wx.id)); ln.setAttribute("style", "cursor: pointer"); }
     svg.appendChild(ln);
   }
   for (const n of t.nodes) {
@@ -4934,12 +4951,18 @@ function renderInfraTimeline() {
 }
 
 let infraWl = {};
+// bezdrátové spoje lokality podle dvojice zařízení – pro mapu i topologii
+async function loadWlMap() {
+  infraWl = {};
+  try { for (const l of (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/links`)).links || []) infraWl[[l.a.device_id, l.b.device_id].sort().join("|")] = l; } catch (_e) { /* mapa funguje i bez nich */ }
+}
+const wlOf = (a, b) => infraWl[[a, b].sort().join("|")];
+const wlTitle = (l) => [__`Bezdrátový spoj ${l.name}`, (WL_STATE[l.state] || l.state) + (l.score != null ? ` · ${l.score}` : ""), ...(l.why || []).map((w) => wlWhy(w)), __("Kliknutím otevřeš kartu spoje.")].join("\n");
 function openLink(id) { wl.sel = id; wl.data = null; openSub("devices", "links"); }
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
   // bezdrátové spoje: čára v mapě dostane barvu podle stavu a otevírá kartu spoje
-  infraWl = {};
-  try { for (const l of (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/links`)).links || []) infraWl[[l.a.device_id, l.b.device_id].sort().join("|")] = l; } catch (_e) { /* mapa funguje i bez nich */ }
+  await loadWlMap();
   renderInfra();
   loadInfraTimeline();
 }
@@ -5096,15 +5119,14 @@ function drawInfra() {
       if (wlk) {
         // širší neviditelná čára = pohodlný cíl pro klik; popisek se stavem spoje
         const hit = curve(bx, by + 14, cx(c), y(c) - 40, "hit");
-        hit.appendChild(svgEl("title", {}, [__`Bezdrátový spoj ${wlk.name}`, (WL_STATE[wlk.state] || wlk.state) + (wlk.score != null ? ` · ${wlk.score}` : ""),
-          ...(wlk.why || []).map((w) => wlWhy(w)), __("Kliknutím otevřeš kartu spoje.")].join("\n")));
+        hit.appendChild(svgEl("title", {}, wlTitle(wlk)));
         hit.addEventListener("click", (e) => { e.stopPropagation(); openLink(wlk.id); });
         links.appendChild(hit);
         nodes.appendChild(svgEl("text", { x: (bx + cx(c)) / 2, y: (by + 14 + y(c) - 40) / 2 + 4, class: "wl-mark s-" + wlk.state }, "≋"));
       }
       const fromHub = n.kind === "hub";
-      if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, c.client && c.client.ssid ? "≋" : num(c.parent_port), "down"));
-      if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, c.uplink_port ? num(c.uplink_port) : "?", "up"));
+      if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, wlk || (c.client && c.client.ssid) ? "≋" : num(c.parent_port), "down"));
+      if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, wlk ? "≋" : c.uplink_port ? num(c.uplink_port) : "?", "up"));
     });
     if (n.client) {
       // klient: avatar (logo / ikona / iniciály výrobce), jméno a MAC

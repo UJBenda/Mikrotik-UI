@@ -1518,3 +1518,11 @@ main { min-height: calc(100vh - 53px); }
 #detail.dev-drawer:not(.wide) .dgrid > div + div { margin-top: 14px; }
 #detail.dev-drawer .kv td, #detail.dev-drawer .kv th { padding-top: 5px; padding-bottom: 5px; }
 header { z-index: 45; }
+
+/* bezdrátový spoj v záložce Topologie (stejné značení jako v mapě) */
+#topo path.link.wless { stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.6; stroke: #17a55a; }
+#topo path.link.wless.s-degraded { stroke: #e8a100; } #topo path.link.wless.s-bad, #topo path.link.wless.s-down { stroke: #dc2626; }
+#topo path.link.wless.s-unknown { stroke: var(--muted); }
+#topo path.link.hit { stroke: transparent; stroke-width: 16; cursor: pointer; pointer-events: stroke; }
+#topo .wl-mark { font-size: 14px; font-weight: 700; text-anchor: middle; fill: #17a55a; pointer-events: none; }
+#topo .wl-mark.s-degraded { fill: #b47700; } #topo .wl-mark.s-bad, #topo .wl-mark.s-down { fill: #dc2626; } #topo .wl-mark.s-unknown { fill: var(--muted); }
