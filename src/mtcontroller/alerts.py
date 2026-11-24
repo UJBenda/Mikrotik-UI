@@ -128,6 +128,11 @@ def conditions(tx: Tx) -> list[Active]:
 
     for r in wlink.alerts(tx):
         out.append(Active(r["tenant_id"], r["device_id"], r["kind"], r["subject"], r["severity"], r["message"]))
+    # nově přibylé nespravované switche (něco, co větví síť bez vědomí správce)
+    from . import unmanaged
+
+    for r in unmanaged.alerts(tx):
+        out.append(Active(r["tenant_id"], r["device_id"], r["kind"], r["subject"], r["severity"], r["message"]))
     # chybovost portů (poměr chyb k rámcům, druh chyby) a pokles optického výkonu SFP
     names = {str(d["id"]): _label(d) for d in devs}
     for r in porthealth.alerts(tx):

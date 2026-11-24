@@ -483,6 +483,7 @@ function alertReactions(a) {
     port_half_duplex: [__("Port jede v half-duplexu – zkontroluj autonegociaci."), []],
     link_down: [__("Bezdrátový spoj je dole – zkontroluj napájení a směrování protistrany."), [actBtn(__("Spoje"), () => openSub("devices", "links"), "small")]],
     link_degraded: [__("Bezdrátový spoj je horší než obvykle – na kartě spoje je vidět, co a kdy se změnilo."), [actBtn(__("Spoje"), () => openSub("devices", "links"), "small")]],
+    unmanaged_switch: [__("Na portu přibylo zařízení, které větví síť a controller ho nespravuje. Pokud o něm víš, schval ho – přestane se hlásit."), [actBtn(__("Nespravované switche"), () => openSub("devices", "links"), "small")]],
     sfp_power: [__("Optický výkon na SFP klesl proti obvyklému – vyčisti konektory, zkontroluj vlákno a modul."), []],
     cpu_high: [__("Vysoké vytížení CPU."), []], memory_high: [__("Málo volné paměti."), []],
     anomaly: [__("Zařízení se chová jinak než obvykle v tuto hodinu (porovnání s posledními 14 dny) – podívej se na časovou osu, co se změnilo."), []],
@@ -1088,7 +1089,7 @@ function drawTopology(t) {
     if (wlk) {
       // bezdrátový spoj: úsek k potomkovi tečkovaně v barvě stavu, značka ≋, klik otevře kartu spoje
       svg.appendChild(svgEl("path", { d: `M${bus} ${y2}H${x2}`, class: "link wless s-" + wlk.state }));
-      svg.appendChild(svgEl("text", { x: bus + 12, y: y2 + 15, class: "wl-mark s-" + wlk.state }, "≋"));
+      svg.appendChild(svgEl("text", { x: bus + 12, y: y2 + 15, class: "wl-mark s-" + wlk.state }, wlForeign(wlk) ? "⇄" : "≋"));
       const hit = svgEl("path", { d: `M${bus} ${y2}H${x2}`, class: "link hit" });
       hit.appendChild(svgEl("title", {}, wlTitle(wlk)));
       hit.addEventListener("click", () => openLink(wlk.id));
@@ -4354,7 +4355,9 @@ $("dbk-ext").addEventListener("click", () => {
 });
 
 // --- bezdrátové spoje: seznam a karta spoje (provoz, signál, rychlost, ztrátovost, rušení na jedné ose) -------
-const wl = { links: null, sel: null, hours: 24, data: null, traffic: null };
+const wl = { links: null, sel: null, hours: 24, data: null, traffic: null, unm: [] };
+const wlForeign = (l) => l && l.kind === "foreign";
+const UNM_STATE = { new: __("Nový"), known: __("Výchozí stav"), approved: __("Schválený") };
 const wlOpt = () => (prefs.wl = prefs.wl || { marks: true, usual: true });
 const WL_STATE = { ok: __("V pořádku"), degraded: __("Zhoršený"), bad: __("Špatný"), down: __("Výpadek"), unknown: __("Bez měření") };
 const WL_CODE = { down: __("výpadek"), signal: __("propad signálu"), weak: __("slabý signál"), rate: __("pád rychlosti"), loss: __("ztrátovost"),
@@ -4365,7 +4368,7 @@ const wlPair = (a, b, unit) => a == null && b == null ? "–" : `${wlN(a)} / ${w
 function wlWhy(w) {
   const sideName = (x) => wl.data && x.side ? " (" + (x.side === "a" ? wl.data.a.device : wl.data.b.device) + ")" : "";
   return ({
-    down: () => __("spoj je dole – protistrana není připojená"),
+    down: () => wlForeign(wl.data) ? __("úsek je dole – protistrana neodpovídá na ping") : __("spoj je dole – protistrana není připojená"),
     signal: () => __`signál ${wlN(w.now, "dBm")}, obvykle ${wlN(w.usual, "dBm")}` + sideName(w),
     weak: () => __`slabý signál ${wlN(w.now, "dBm")}` + sideName(w),
     rate: () => __`rychlost spoje ${wlMb(w.now)}, obvykle ${wlMb(w.usual)}`,
@@ -4380,6 +4383,7 @@ const wlBadge = (st, score) => el("span", (WL_STATE[st] || st) + (score != null 
 async function loadLinks() {
   if (!tenantId || !siteId()) return;
   try { wl.links = (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/links`)).links || []; } catch (e) { return msg(e.message, true); }
+  try { wl.unm = (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/unmanaged`)).ports || []; } catch (_e) { wl.unm = []; }
   if (wl.sel && !wl.links.some((l) => l.id === wl.sel)) wl.sel = null;
   if (wl.sel) return loadLink();
   renderLinks();
@@ -4403,9 +4407,10 @@ function renderLinks() {
   const links = wl.links || [];
   if (!wl.sel || !wl.data) {
     side.appendChild(el("p", __("Bezdrátové spoje mezi spravovanými zařízeními. Každých 5 minut se měří signál obou stran, rychlost spoje a pingem přes spoj ztrátovost a odezva."), "muted wl-note"));
+    side.appendChild(el("p", __("Cizí úsek = dvě spravovaná zařízení, mezi kterými je něco nespravovaného (switch, cizí bezdrátový spoj). Rádio nevidíme, měří se jen ping přes úsek."), "muted wl-note"));
     const bad = links.filter((l) => l.state !== "ok" && l.state !== "unknown").length;
-    for (const [k, v] of [[__("Spojů"), links.length], [__("Mimo normál"), bad]]) { const r = el("div", null, "pm-kv"); r.append(el("span", k), el("span", String(v))); side.appendChild(r); }
-    if (!links.length) { main.appendChild(el("p", __("V této lokalitě zatím žádný bezdrátový spoj mezi spravovanými zařízeními není. Spoj se objeví sám, jakmile jsou obě strany adoptované a vidí se v registraci."), "muted wl-empty")); return; }
+    for (const [k, v] of [[__("Spojů"), links.length], [__("Mimo normál"), bad], [__("Nespravovaných portů"), wl.unm.length], [__("Z toho nových"), wl.unm.filter((u) => u.state === "new").length]]) { const r = el("div", null, "pm-kv"); r.append(el("span", k), el("span", String(v))); side.appendChild(r); }
+    if (!links.length) { main.appendChild(el("p", __("V této lokalitě zatím žádný bezdrátový spoj mezi spravovanými zařízeními není. Spoj se objeví sám, jakmile jsou obě strany adoptované a vidí se v registraci."), "muted wl-empty")); wlUnmanaged(main); return; }
     const t = el("table", null, "wl-t"), th = el("tr");
     for (const h of [__("Spoj"), __("Stav"), __("Signál"), __("Rychlost spoje"), __("Ztrátovost"), __("Odezva"), __("Přepojení 24 h"), __("Měřeno")]) th.appendChild(el("th", h));
     const head = el("thead"); head.appendChild(th); t.appendChild(head);
@@ -4413,40 +4418,43 @@ function renderLinks() {
     for (const l of links) {
       const n = l.now || {}, u = l.usual || {}, tr = el("tr", null, "clickable");
       const nm = el("td"); nm.append(el("strong", l.name), el("small", ` ${l.a.iface} · ${l.b.iface}` + (l.muted ? " · " + __("ztlumený") : ""), "muted"));
+      if (wlForeign(l)) nm.appendChild(el("span", __("cizí úsek"), "wl-tag"));
       const st = el("td"); st.appendChild(wlBadge(l.state, l.score));
       const sg = el("td", wlPair(n.signal_a, n.signal_b, "dBm")); if (u.signal_a != null) sg.appendChild(el("small", " " + __`obvykle ${wlPair(u.signal_a, u.signal_b)}`, "muted"));
-      tr.append(nm, st, sg, el("td", wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba)), el("td", wlN(n.loss, "%", 1), n.loss >= 2 ? "wl-bad" : ""),
+      tr.append(nm, st, sg, el("td", wlForeign(l) ? "–" : wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba)), el("td", wlN(n.loss, "%", 1), n.loss >= 2 ? "wl-bad" : ""),
                 el("td", wlN(n.rtt_avg, "ms", 1)), el("td", String(l.flaps || 0)), el("td", fmtTime(l.sampled_at), "muted"));
       tr.title = (l.why || []).map((w) => wlWhy(w)).join("\n");
       tr.addEventListener("click", () => { wl.sel = l.id; wl.data = null; loadLink(); });
       tb.appendChild(tr);
     }
     t.appendChild(tb); main.appendChild(t);
+    wlUnmanaged(main);
     return;
   }
-  const d = wl.data, n = d.now || {}, u = d.usual || {}, o = wlOpt();
+  const d = wl.data, n = d.now || {}, u = d.usual || {}, o = wlOpt(), fg = wlForeign(d);
   const back = el("button", "‹ " + __`Všechny spoje (${links.length})`, "ux-link"); back.type = "button";
   back.addEventListener("click", () => { wl.sel = null; wl.data = null; renderLinks(); });
   const title = el("div", null, "wl-title"); title.append(el("strong", d.name), wlBadge(d.state, d.score));
   const ends = el("div", null, "wl-ends");
-  for (const [x, cls, role] of [[d.a, "a", "AP"], [d.b, "b", __("klient")]]) {
+  for (const [x, cls, role] of [[d.a, "a", fg ? __("měří") : "AP"], [d.b, "b", fg ? __("za úsekem") : __("klient")]]) {
     const b = el("button", null, "wl-end"); b.type = "button";
     b.append(el("i", "", "wl-dot " + cls), el("strong", x.device), el("small", `${role} · ${x.iface}` + (x.state === "adopted" ? "" : " · offline"), "muted"));
     b.addEventListener("click", () => openDetail(x.device_id)); ends.appendChild(b);
   }
   side.append(back, title, ends);
+  if (fg) side.appendChild(el("p", __("Mezi těmito zařízeními je něco, co controller nespravuje (switch, cizí bezdrátový spoj). Signál cizího rádia neznáme – hlídá se ztrátovost a odezva pingu přes úsek."), "muted wl-note"));
   const kv = (k, v, sub, cls) => { const r = el("div", null, "wl-kv"); const val = el("span", v, cls || ""); if (sub) val.appendChild(el("small", sub, "muted")); r.append(el("span", k), val); side.appendChild(r); };
   const dev = (code) => (d.why || []).some((w) => w.code === code) ? "wl-warn" : "";
-  kv(__("Signál"), wlPair(n.signal_a, n.signal_b, "dBm"), u.signal_a != null ? __`obvykle ${wlPair(u.signal_a, u.signal_b)}` : "", dev("signal") || dev("weak"));
+  if (!fg) kv(__("Signál"), wlPair(n.signal_a, n.signal_b, "dBm"), u.signal_a != null ? __`obvykle ${wlPair(u.signal_a, u.signal_b)}` : "", dev("signal") || dev("weak"));
   if (n.snr_a != null || n.snr_b != null) kv("SNR", wlPair(n.snr_a, n.snr_b, "dB"));
-  kv(__("Rychlost spoje"), wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba), u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "", dev("rate"));
+  if (!fg) kv(__("Rychlost spoje"), wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba), u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "", dev("rate"));
   kv(__("Ztrátovost"), wlN(n.loss, "%", 1), d.ping_ip ? __`ping 10× na ${d.ping_ip}` : __("bez adresy pro ping"), dev("loss") && "wl-bad");
   kv(__("Odezva"), wlN(n.rtt_avg, "ms", 1), n.rtt_max != null ? __`nejvíc ${wlN(n.rtt_max, "ms", 1)}` : "");
   if (n.ccq_a != null || n.ccq_b != null) kv(d.kind === "w60g" ? __("Kvalita přenosu") : "CCQ", wlPair(n.ccq_a, n.ccq_b, "%"));
   if (n.noise != null) kv(__("Šum na kanálu"), wlN(n.noise, "dBm"), u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", dev("noise"));
-  kv(__("Přepojení za 24 h"), String(d.flaps || 0), "", dev("flap"));
+  kv(fg ? __("Výpadky za 24 h") : __("Přepojení za 24 h"), String(d.flaps || 0), "", dev("flap"));
   kv(__("Měřeno"), fmtTime(d.sampled_at));
-  if (!u.signal_a && !u.rate_ab) side.appendChild(el("p", __`Obvyklý stav se teprve učí (${u.n || 0} měření, potřeba aspoň 36).`, "muted wl-note"));
+  if (!fg && !u.signal_a && !u.rate_ab) side.appendChild(el("p", __`Obvyklý stav se teprve učí (${u.n || 0} měření, potřeba aspoň 36).`, "muted wl-note"));
   const sw = (label, key, get, set) => {
     const l = el("label", null, "ux-switch"), i = el("input"); i.type = "checkbox"; i.checked = get();
     i.addEventListener("change", () => set(i.checked)); l.append(el("span", label), i, el("i")); side.appendChild(l);
@@ -4462,14 +4470,15 @@ function renderLinks() {
   // hlavní část: období, štítky odchylek, graf, seznam úseků
   const top = el("div", null, "wl-top"), chips = el("div", null, "wl-chips"), seg = el("div", null, "seg");
   for (const w of d.why || []) chips.appendChild(el("span", "▲ " + wlWhy(w), "wl-chip " + (w.code === "down" || (w.code === "loss" && w.now >= 10) ? "bad" : "warn")));
-  if (!(d.why || []).length && d.state === "ok") chips.appendChild(el("span", __("Spoj je ve svém normálu."), "muted"));
+  if (!(d.why || []).length && d.state === "ok") chips.appendChild(el("span", fg ? __("Úsek je průchozí, bez ztrát.") : __("Spoj je ve svém normálu."), "muted"));
   for (const [h, t] of [[1, "1 h"], [24, "24 h"], [168, __("7 dní")], [720, __("30 dní")]]) {
     const b = el("button", t, wl.hours === h ? "active" : ""); b.type = "button"; b.setAttribute("aria-pressed", String(wl.hours === h));
     b.addEventListener("click", () => { wl.hours = h; loadLink(); }); seg.appendChild(b);
   }
   top.append(chips, seg); main.appendChild(top);
   const lg = el("div", null, "wl-legend");
-  for (const [cls, t] of [["rx", __("příjem")], ["tx", __("odesílání")], ["a", d.a.device], ["b", d.b.device], ["usual", __("obvyklý stav")], ["loss", __("ztrátovost / šum")], ["rtt", __("odezva")]]) { const x = el("span"); x.append(el("i", "", "wl-l " + cls), document.createTextNode(t)); lg.appendChild(x); }
+  for (const [cls, t] of fg ? [["rx", __("příjem")], ["tx", __("odesílání")], ["loss", __("ztrátovost")], ["rtt", __("odezva")]]
+    : [["rx", __("příjem")], ["tx", __("odesílání")], ["a", d.a.device], ["b", d.b.device], ["usual", __("obvyklý stav")], ["loss", __("ztrátovost / šum")], ["rtt", __("odezva")]]) { const x = el("span"); x.append(el("i", "", "wl-l " + cls), document.createTextNode(t)); lg.appendChild(x); }
   main.appendChild(lg);
   const box = el("div", null, "wl-chart"); main.appendChild(box);
   if (!(d.points || []).length) box.appendChild(el("p", __("Za zvolené období není žádné měření."), "muted wl-empty"));
@@ -4487,6 +4496,37 @@ function renderLinks() {
     }
     main.appendChild(list);
   }
+}
+
+// nespravované switche a cizí úseky: porty, za kterými něco větví; nové hlásí alert, dokud je správce neschválí
+function wlUnmanaged(main) {
+  const rows = wl.unm || [];
+  main.appendChild(el("h3", __("Nespravované switche"), "wl-h"));
+  main.appendChild(el("p", __("Porty, za kterými je zařízení, které větví síť a controller ho nespravuje (hloupý switch, cizí AP nebo spoj). Co tu bylo při prvním průchodu lokality, je výchozí stav. Co přibude později, ohlásí upozornění – dokud to neschválíš nebo to nezmizí."), "muted wl-note"));
+  if (!rows.length) { main.appendChild(el("p", __("Žádný takový port v lokalitě není."), "muted")); return; }
+  const t = el("table", null, "wl-t"), th = el("tr");
+  for (const h of [__("Zařízení a port"), __("Za portem"), __("Stav"), __("Poprvé viděn"), __("Poznámka"), ""]) th.appendChild(el("th", h));
+  const head = el("thead"); head.appendChild(th); t.appendChild(head);
+  const tb = el("tbody");
+  for (const u of rows) {
+    const tr = el("tr"), nm = el("td"), who = el("button", u.device, "ux-link"); who.type = "button";
+    who.addEventListener("click", () => openDetail(u.device_id));
+    nm.append(who, el("small", " " + u.port, "muted"));
+    const st = el("td"); st.appendChild(el("span", UNM_STATE[u.state] || u.state, "wl-badge s-" + (u.state === "new" ? "degraded" : u.state === "approved" ? "ok" : "unknown")));
+    if (!u.present) st.appendChild(el("small", " " + __("teď není vidět"), "muted"));
+    const what = (u.clients === 1 ? __("1 klient") : __`${u.clients} klientů`) + (u.shared ? " + " + __("spravované zařízení") : "");
+    const act = el("td"), b = el("button", u.approved ? __("Zrušit schválení") : __("Schválit"), "small"); b.type = "button";
+    b.addEventListener("click", async () => {
+      let note = u.note;
+      if (!u.approved) { note = await askText(__("Schválit nespravované zařízení na tomto portu? Poznámka, co to je a kde (nepovinná):"), u.note || "", __("Schválit"), 200); if (note === null) return; }
+      try { wl.unm = (await api("PUT", `/tenants/${tenantId}/sites/${siteId()}/unmanaged/${u.id}`, { approved: !u.approved, note })).ports || []; } catch (e) { return msg(e.message, true); }
+      renderLinks();
+    });
+    act.appendChild(b);
+    tr.append(nm, el("td", what), st, el("td", fmtTime(u.first_seen), "muted"), el("td", u.note || "", "muted"), act);
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb); main.appendChild(t);
 }
 
 // měření propustnosti přes spoj (existující test mezi dvěma zařízeními): poslední výsledek + tlačítko
@@ -5153,7 +5193,7 @@ async function loadWlMap() {
   try { for (const l of (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/links`)).links || []) infraWl[[l.a.device_id, l.b.device_id].sort().join("|")] = l; } catch (_e) { /* mapa funguje i bez nich */ }
 }
 const wlOf = (a, b) => infraWl[[a, b].sort().join("|")];
-const wlTitle = (l) => [__`Bezdrátový spoj ${l.name}`, (WL_STATE[l.state] || l.state) + (l.score != null ? ` · ${l.score}` : ""), ...(l.why || []).map((w) => wlWhy(w)), __("Kliknutím otevřeš kartu spoje.")].join("\n");
+const wlTitle = (l) => [wlForeign(l) ? __`Cizí úsek ${l.name} (přes nespravované zařízení, měřeno pingem)` : __`Bezdrátový spoj ${l.name}`, (WL_STATE[l.state] || l.state) + (l.score != null ? ` · ${l.score}` : ""), ...(l.why || []).map((w) => wlWhy(w)), __("Kliknutím otevřeš kartu spoje.")].join("\n");
 function openLink(id) { wl.sel = id; wl.data = null; openSub("devices", "links"); }
 async function loadInfra() {
   try { infraData = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra`); } catch (e) { return msg(e.message, true); }
@@ -5309,7 +5349,10 @@ function drawInfra() {
     const ch = kids[n.id];
     ch.forEach((c, k) => {
       const bx = x + (k - (ch.length - 1) / 2) * 70, by = top + NH + 26;
-      const wlk = leaf(c) ? null : infraWl[[n.id, c.id].sort().join("|")];
+      // z uzlu nespravovaného switche vede k potomkovi cizí úsek (měří ho zařízení nad switchem)
+      const up = n.kind === "hub" && n.guess ? wlOf(n.parent, c.id) : null;
+      const wlk = leaf(c) ? null : wlForeign(up) ? up : n.kind === "hub" ? null : wlOf(n.id, c.id);
+      const mark = wlForeign(wlk) ? "⇄" : "≋";
       const cv = curve(bx, by + 14, cx(c), leaf(c) ? y(c) : y(c) - 40, (leaf(c) ? (c.client ? "client" : "ext") : c.state === "offline" ? "down" : "up") + (wlk ? " wless s-" + wlk.state : ""));
       links.appendChild(cv);
       if (wlk) {
@@ -5318,11 +5361,11 @@ function drawInfra() {
         hit.appendChild(svgEl("title", {}, wlTitle(wlk)));
         hit.addEventListener("click", (e) => { e.stopPropagation(); openLink(wlk.id); });
         links.appendChild(hit);
-        nodes.appendChild(svgEl("text", { x: (bx + cx(c)) / 2, y: (by + 14 + y(c) - 40) / 2 + 4, class: "wl-mark s-" + wlk.state }, "≋"));
+        nodes.appendChild(svgEl("text", { x: (bx + cx(c)) / 2, y: (by + 14 + y(c) - 40) / 2 + 4, class: "wl-mark s-" + wlk.state }, mark));
       }
       const fromHub = n.kind === "hub";
-      if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, wlk || (c.client && c.client.ssid) ? "≋" : num(c.parent_port), "down"));
-      if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, wlk ? "≋" : c.uplink_port ? num(c.uplink_port) : "?", "up"));
+      if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, (wlk && !wlForeign(wlk)) || (c.client && c.client.ssid) ? "≋" : num(c.parent_port), "down"));
+      if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, wlk && !wlForeign(wlk) ? "≋" : c.uplink_port ? num(c.uplink_port) : "?", "up"));
     });
     if (n.client) {
       // klient: avatar (logo / ikona / iniciály výrobce), jméno a MAC

@@ -268,6 +268,12 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
       const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
       const main = byId["wl-main"], row = find(main, (n) => n.tagName === "TR" && n.className === "clickable");
+      {
+        // nespravované switche pod seznamem spojů: nový nález se stavem a tlačítkem ke schválení
+        const t = main.textContent;
+        if (!t.includes("Nespravované switche") || !t.includes("sw-hala ether7") || !t.includes("3 klientů + spravované zařízení") || !t.includes("Nový") || !t.includes("Výchozí stav") || !t.includes("Schválit")) errors.push("spoje: nespravované switche " + t.slice(-300));
+        if (!byId["wl-side"].textContent.includes("Z toho nových1")) errors.push("spoje: počet nových nespravovaných portů");
+      }
       if (byId["links-wrap"].hidden || !row) errors.push("spoje: seznam");
       else {
         const txt = row.textContent;

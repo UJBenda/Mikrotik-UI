@@ -95,3 +95,45 @@ def test_map_inserts_unmanaged_switch_node():
     assert [c["port"] for c in n["sw"]["clients"]] == ["ether3"] and len(n["ap"]["clients"]) == 1
     assert [x["id"] for x in out["nodes"]][:3] == ["gw", "sw", "usw-sw-ether7"]
     assert infra.insert_unmanaged(out) == 0                                    # podruhé už není co vkládat
+
+
+def test_wireless_link_is_not_an_unmanaged_switch():
+    """ap (wlan1) ≋ sta: MAC viděná jen na rádiu AP patří někam za stanici – ve vzduchu žádný switch není."""
+    from mtcontroller import infra, unmanaged
+
+    host = lambda mac, port: {"mac-address": mac, "on-interface": port, "local": "false"}  # noqa: E731
+    ap = {"interfaces": [_iface("ether1", "AA:00:00:00:00:01"), {"name": "wlan1", "type": "wlan", "mac-address": "AA:00:00:00:00:02"}],
+          "wireless_clients": [{"interface": "wlan1", "mac-address": "BB:00:00:00:00:02"}],
+          "bridge_hosts": [host("BB:00:00:00:00:02", "wlan1"), host("50:00:00:00:00:01", "wlan1")]}
+    sta = {"interfaces": [_iface("ether1", "BB:00:00:00:00:01"), {"name": "wlan1", "type": "wlan", "mac-address": "BB:00:00:00:00:02"}],
+           "wireless_clients": [{"interface": "wlan1", "mac-address": "AA:00:00:00:00:02"}], "bridge_hosts": []}
+    devs = [{"id": "ap", "identity": "ap", "role": "gateway"}, {"id": "sta", "identity": "sta"}]
+    found = correlate(devs, {"ap": ap, "sta": sta})
+    cl = {c["mac"]: c for c in found}
+    pc = cl["50:00:00:00:00:01"]
+    assert (pc["device"], pc["port"]) == ("sta", "?") and pc["uncertain"] and pc["via_link"] and not pc.get("shared"), pc
+    assert not pc["wifi"] and not pc["unmanaged"]
+    assert unmanaged.detect(found) == {}
+    # stejná MAC na koncovém portu stanice má přednost před rádiem
+    sta["bridge_hosts"] = [host("50:00:00:00:00:01", "ether1")]
+    pc = {c["mac"]: c for c in correlate(devs, {"ap": ap, "sta": sta})}["50:00:00:00:00:01"]
+    assert (pc["device"], pc["port"]) == ("sta", "ether1") and not pc.get("via_link")
+    # mapa: na rádiu AP se uzel nespravovaného switche nevkládá ani se dvěma stanicemi
+    out = {"nodes": [{"id": "ap", "parent": None, "level": 0, "parent_port": None, "clients": []},
+                     {"id": "s1", "parent": "ap", "level": 1, "parent_port": "wlan1", "clients": []},
+                     {"id": "s2", "parent": "ap", "level": 1, "parent_port": "wlan1", "clients": []}]}
+    assert infra.insert_unmanaged(out, {("ap", "wlan1")}) == 0 and len(out["nodes"]) == 3
+    assert infra.insert_unmanaged(out) == 1
+
+
+def test_unmanaged_detect():
+    from mtcontroller import unmanaged
+
+    c = lambda port, **kw: {"device_id": "sw", "port": port, "wifi": None, **kw}  # noqa: E731
+    found = unmanaged.detect([c("ether1"), c("ether1"),                               # telefon + počítač = nic
+                              c("ether2"), c("ether2"), c("ether2"),                  # tři klienti = switch
+                              c("ether3", shared=True),                               # klient + spravované zařízení
+                              c("?", via_link=True, uncertain=True), {"device_id": "ap", "port": "wifi1", "wifi": {"ssid": "x"}}])
+    assert found == {("sw", "ether2"): {"clients": 3, "shared": False}, ("sw", "ether3"): {"clients": 1, "shared": True}}
+    assert unmanaged.what({"clients": 3, "shared": False}) == "3 klienti"
+    assert unmanaged.what({"clients": 1, "shared": True}) == "1 klient a spravované zařízení"

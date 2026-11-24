@@ -88,6 +88,15 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
                 infra_macs.add(_mac(i["mac-address"]))
                 owner.setdefault(_mac(i["mac-address"]), str(d["id"]))
     infra_seen, upstream = port_kinds(devices, invs, owner)
+    # bezdrátový spoj mezi spravovanými zařízeními: (zařízení, rozhraní) → protistrana. Za takovým „portem“
+    # nemůže být switch – MAC viděná jen na spoji patří někam za jeho vzdálenější konec.
+    link_peer: dict[tuple[str, str], str] = {}
+    for d in devices:
+        did = str(d["id"])
+        for r in _rows(invs.get(did, {}), "wifi_clients") + _rows(invs.get(did, {}), "wireless_clients"):
+            peer = owner.get(_mac(r.get("mac-address")))
+            if peer and peer != did and r.get("interface"):
+                link_peer[(did, str(r["interface"]))] = peer
     names = {str(d["id"]): d.get("identity") or d.get("serial") for d in devices}
 
     clients: dict[str, dict] = {}
@@ -176,16 +185,22 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
             pick = min(places, key=lambda p: port_count[(p[0], p[1])])
             c["uncertain"] = True
         did, port, vid, _ = pick
+        far = link_peer.get((did, port))
+        if far and pick[3] != "edge":
+            # jen na bezdrátovém spoji: klient je někde za protistranou, přesný port neznáme
+            c.pop("shared", None)
+            c.update(device_id=far, device=names[far], port="?", vlan=vid, uncertain=True, via_link=True)
+            continue
         c.update(device_id=did, device=names[did], port=port, vlan=vid)
     # kolik drátových klientů sdílí port: víc než jeden (nebo port sdílený se spravovaným zařízením)
     # znamená nespravovaný switch za portem
     per_port: dict[tuple[str, str], int] = defaultdict(int)
     for c in clients.values():
-        if c["device_id"] and not c["wifi"]:
+        if c["device_id"] and not c["wifi"] and not c.get("via_link"):
             per_port[(c["device_id"], c["port"])] += 1
     for c in clients.values():
         if c["device_id"] and not c["wifi"]:
-            c["port_clients"] = per_port[(c["device_id"], c["port"])]
+            c["port_clients"] = per_port.get((c["device_id"], c["port"]), 1)
             c["unmanaged"] = bool(c.get("shared")) or c["port_clients"] > 1
 
     return sorted(clients.values(), key=lambda c: (c["device"] or "~", c["port"] or "", c["ip"] or "", c["mac"]))
@@ -236,8 +251,13 @@ def record(db: Database) -> int:
                                   WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""",
                                {"s": str(s["site_id"])})
             invs = {str(d["id"]): inventory.load(tx, d["id"], SECTIONS) for d in devs}
-            rows = [_row(c) for c in correlate(devs, invs)
+            found = correlate(devs, invs)
+            rows = [_row(c) for c in found
                     if present(c) and re.fullmatch(r"[0-9A-F]{2}(:[0-9A-F]{2}){5}", c["mac"])]
+            # nespravované switche: evidence portů, kde něco větví (nové hlásí alert)
+            from . import unmanaged
+
+            unmanaged.record(tx, s["tenant_id"], s["site_id"], unmanaged.detect(found), have_clients=bool(rows))
             if rows:
                 tx.execute(_UPSERT, {"t": str(s["tenant_id"]), "s": str(s["site_id"]), "rows": rows})
             _sessions(tx, s["tenant_id"], s["site_id"], rows)

@@ -385,11 +385,13 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
 ROLE_ORDER = {"gateway": 0, "switch": 1, "ptp": 2, "ap": 3, "unknown": 4}
 
 
-def insert_unmanaged(out: dict) -> int:
+def insert_unmanaged(out: dict, wireless: set[tuple[str, str]] | None = None) -> int:
     """Nespravovaný switch mezi zařízeními: když na portu, kterým rodič vede ke spravovanému potomkovi, visí
     zároveň drátoví klienti, musí mezi nimi být něco, co větví (hloupý switch, cizí bezdrátový spoj…).
     Do stromu se vloží uzel „hub“ s příznakem `guess`; potomci i klienti z toho portu se přesunou pod něj.
-    Volá se až po doplnění klientů k uzlům. Vrací počet vložených uzlů."""
+    Volá se až po doplnění klientů k uzlům. Vrací počet vložených uzlů.
+    `wireless` = (zařízení, rozhraní) bezdrátových spojů mezi spravovanými zařízeními – ve vzduchu switch není,
+    tam se uzel nevkládá (ani u AP s více spravovanými stanicemi)."""
     nodes = out.get("nodes") or []
     by_id = {n["id"]: n for n in nodes}
     groups: dict[tuple[str, str], list[dict]] = {}
@@ -399,6 +401,8 @@ def insert_unmanaged(out: dict) -> int:
             groups.setdefault((a, p), []).append(n)
     added = 0
     for (a, p), kids in groups.items():
+        if wireless and (a, p) in wireless:
+            continue
         parent = by_id[a]
         wired = [c for c in parent.get("clients") or [] if c.get("port") == p and not c.get("ssid")]
         if not wired and len(kids) < 2:

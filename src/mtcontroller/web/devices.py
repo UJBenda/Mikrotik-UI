@@ -914,6 +914,34 @@ async def link_detail(request: Request, p: Principal, tid: str) -> Response:
     return json_response(out)
 
 
+@endpoint(READ)
+async def site_unmanaged(request: Request, p: Principal, tid: str) -> Response:
+    """Porty s nespravovaným switchem / cizím úsekem. PUT …/{id} {approved, note} = schválit (nehlásit)."""
+    from .. import unmanaged
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    if request.method == "PUT":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        data = await _json(request)
+        uid = _uuid(request.path_params["unmanaged_id"])
+
+        def w():
+            with tenant_scope(st.db, tid) as tx:
+                return unmanaged.approve(tx, tid, uid, bool(data.get("approved")), data.get("note"), p.user_id,
+                                         client_ip(request))
+
+        if not await run_in_threadpool(w):
+            raise NotFound("záznam neexistuje")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return {"ports": unmanaged.site_list(tx, sid)}
+
+    return json_response(await run_in_threadpool(q))
+
+
 # --- lokalita: NTP politika, plány, topologie ------------------------------------------
 
 
@@ -1246,6 +1274,8 @@ async def site_infra(request: Request, p: Principal, tid: str) -> Response:
                    WHERE site_id = %(s)s AND last_seen > now() - interval '10 minutes' AND device_id IS NOT NULL
                    ORDER BY port, mac""", {"s": sid})]
             clientmeta.annotate(tx, cl)
+            wl = {(str(r["a_device"]), r["a_iface"]) for r in tx.fetchall(
+                "SELECT a_device, a_iface FROM wlink WHERE site_id = %(s)s AND kind <> 'foreign'", {"s": sid})}
         out = infra.site_infra(devs, invs)
         by_dev: dict[str, list] = {}
         for c in cl:
@@ -1253,7 +1283,7 @@ async def site_infra(request: Request, p: Principal, tid: str) -> Response:
             by_dev.setdefault(c["device_id"], []).append(c)
         for n in out["nodes"]:
             n["clients"] = by_dev.get(n["id"], [])
-        infra.insert_unmanaged(out)
+        infra.insert_unmanaged(out, wl)
         return out
 
     return json_response(await run_in_threadpool(q))
@@ -2094,6 +2124,8 @@ def routes() -> list[Route]:
         Route(s + "/timeline", site_timeline, methods=["GET"]),
         Route(s + "/availability", site_availability, methods=["GET"]),
         Route(s + "/links", site_links, methods=["GET"]),
+        Route(s + "/unmanaged", site_unmanaged, methods=["GET"]),
+        Route(s + "/unmanaged/{unmanaged_id}", site_unmanaged, methods=["PUT"]),
         Route(T + "/links/{link_id}", link_detail, methods=["GET", "PUT"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),

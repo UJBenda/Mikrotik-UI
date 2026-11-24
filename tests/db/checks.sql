@@ -553,6 +553,30 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20g) evidence nespravovaných switchů izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO unmanaged_port (tenant_id, site_id, device_id, port, clients)
+SELECT d.tenant_id, d.site_id, d.id, 'ether9', 3 FROM device d
+WHERE d.tenant_id = '00000000-0000-0000-0000-0000000000b1' AND d.site_id IS NOT NULL LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM unmanaged_port) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí nespravované porty tenanta B'; END IF;
+  UPDATE unmanaged_port SET approved = true;
+  RAISE NOTICE 'OK 20g nespravované porty izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM unmanaged_port WHERE approved) THEN RAISE EXCEPTION 'FAIL: tenant A schválil nespravovaný port tenanta B'; END IF;
+  IF NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname = 'unmanaged_port') THEN
+    RAISE EXCEPTION 'FAIL: unmanaged_port bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

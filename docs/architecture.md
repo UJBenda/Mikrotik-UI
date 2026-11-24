@@ -1483,3 +1483,30 @@ podle sousedů, takže port AP vyšel jako koncový a drátoví klienti „spadl
   drátoví klienti (nebo víc potomků), vloží do mapy uzel `hub` s `guess: true` („nespravovaný switch (odhad)“)
   a potomky i klienty přesune pod něj.
 - Nejde zjistit, na kterém portu nespravovaného switche co je, ani kolik jich je za sebou.
+
+## Hlídání nespravovaných switchů a cizích úseků
+
+Navazuje na polohu klientů výše. Tři věci:
+
+- **Bezdrátový spoj mezi spravovanými zařízeními není switch.** `clients.correlate` si z registrací (`wifi_clients`,
+  `wireless_clients`) udělá mapu (zařízení, rozhraní) → protistrana. Klient, jehož MAC je vidět jen na takovém
+  rozhraní, se zapíše k protistraně s portem `?`, `uncertain` a `via_link` (je někde za vzdálenějším koncem spoje).
+  `infra.insert_unmanaged(out, wireless)` na portech z tabulky `wlink` uzel „nespravovaný switch“ nevkládá.
+- **Evidence a alert** (`unmanaged.py`, tabulka `unmanaged_port`, migrace 0034). Port je „nespravovaný“, když za ním
+  visí aspoň 3 drátoví klienti (2 = telefon s počítačem), nebo klient spolu se spravovaným zařízením. Zapisuje se
+  při každé inventuře klientů (`clients.record`). Prvních 24 h od prvního průchodu lokality (`site.unmanaged_scanned_at`)
+  se nálezy berou jako výchozí stav (`baseline`) a nehlásí se. Co přibude později a vydrží 10 minut, hlásí alert
+  `unmanaged_switch` (warning), dokud to správce neschválí (`approved`, poznámka, audit `site.unmanaged_approve`)
+  nebo to nezmizí; neschválený zmizelý nález se po 24 h zapomene. API `GET …/sites/{id}/unmanaged`,
+  `PUT …/sites/{id}/unmanaged/{uid}` `{approved, note}`. UI: Zařízení → Spoje, tabulka „Nespravované switche“.
+- **Cizí úsek** (`wlink.find_foreign`, `wlink.kind = 'foreign'`): dvojice rodič → potomek ze stromu topologie, mezi
+  kterými je něco nespravovaného (port rodiče je v evidenci se `shared`, za portem je víc spravovaných zařízení, nebo
+  se vidí jen přes společnou síť). Rádio cizího spoje nevidíme, takže `measure` dělá jen ping z rodiče na adresu
+  potomka ve společné síti (`up` = aspoň jedna odpověď); bez takové adresy se neměří. Hodnocení, graf a alerty
+  `link_down` / `link_degraded` jsou společné s bezdrátovými spoji (text „úsek přes nespravované zařízení“). Měří se,
+  jen dokud ho topologie do 2 h potvrzuje. V mapě je hrana z uzlu nespravovaného switche k potomkovi obarvená stavem
+  úseku (značka ⇄) a klik otevře kartu.
+
+Omezení: počet klientů za portem kolísá (spící zařízení), proto práh 3 a čekání 10 minut; switch, za kterým jsou
+jen 1–2 klienti a žádné spravované zařízení, nepoznáme. Ping přes úsek měří i kabeláž a switche po cestě, ne jen
+cizí rádio. Na skutečné síti zatím neověřeno.

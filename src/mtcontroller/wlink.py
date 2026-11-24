@@ -40,6 +40,10 @@ NOISE_RISE_DB = 6
 REG = {"wifi": "/interface/wifi/registration-table", "wireless": "/interface/wireless/registration-table"}
 MONITOR = {"wifi": "/interface/wifi/monitor", "wireless": "/interface/wireless/monitor"}
 SECTIONS = ["interfaces", "wifi", "wireless", "wgig", "wgig_monitor", "wifi_clients", "wireless_clients", "addresses"]
+# co navíc potřebuje strom topologie (infra.site_infra) pro hledání cizích úseků
+FOREIGN_SECTIONS = ["neighbors", "ethernet_monitor", "stp_bridges", "stp_ports", "bridges", "bridge_ports", "routes_default",
+                    "dhcp_client", "bridge_hosts"]
+FOREIGN_FRESH_H = 2               # cizí úsek se měří, jen dokud ho topologie pořád potvrzuje
 _UNITS = {"": 1, "k": 1e3, "m": 1e6, "g": 1e9}
 _last_discover = 0.0
 
@@ -179,26 +183,67 @@ def find_links(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
     return list(found.values())
 
 
+def find_foreign(devices: list[dict], invs: dict[str, dict], shared: set[tuple[str, str]],
+                 wireless: set[tuple[str, str]]) -> list[dict]:
+    """Cizí úseky: dvě spravovaná zařízení, mezi kterými je něco nespravovaného (switch, cizí bezdrátový spoj).
+    Pozná se to tak, že na portu rodiče směrem k potomkovi visí i klienti (`shared` z evidence nespravovaných
+    portů), že za jedním portem je víc spravovaných zařízení, nebo že se zařízení vidí jen přes společnou síť.
+    Signál cizího rádia neznáme – měří se jen ping přes úsek."""
+    from . import infra
+
+    nodes = infra.site_infra(devices, invs).get("nodes") or []
+    by_id = {n["id"]: n for n in nodes}
+    real = lambda n: n is not None and n.get("kind") != "hub" and n["id"] in invs   # noqa: E731
+    groups: dict[tuple[str, str], list[dict]] = {}
+    sure: set[tuple[str, str]] = set()
+    for n in nodes:
+        if not real(n):
+            continue
+        par = by_id.get(n.get("parent") or "")
+        port = n.get("parent_port")
+        if par is not None and par.get("kind") == "hub":   # společná síť: úsek vede od zařízení nad ní
+            par, port = by_id.get(par.get("parent") or ""), par.get("parent_port")
+            if real(par) and par["id"] != n["id"]:
+                sure.add((par["id"], str(port or "?")))
+        if real(par) and par["id"] != n["id"]:
+            groups.setdefault((par["id"], str(port or "?")), []).append(n)
+    out = []
+    for (a, p), kids in groups.items():
+        if (a, p) in wireless or not ((a, p) in sure or (a, p) in shared or len(kids) >= 2):
+            continue
+        for k in kids:
+            out.append({"kind": "foreign", "a": {"device": a, "iface": p, "mac": "-"},
+                        "b": {"device": k["id"], "iface": str(k.get("uplink_port") or "?"), "mac": "-"},
+                        "ping_ip": _ping_ip(invs.get(a) or {}, invs.get(k["id"]) or {})})
+    return out
+
+
 def discover(db: Database) -> int:
     """Projde inventury a založí/obnoví spoje. Zmizelý spoj se nemaže (historie a alert „spoj je dole“)."""
     from . import inventory
 
     n = 0
     with operator_scope(db) as tx:
-        devs = tx.fetchall(
-            """SELECT d.id, d.tenant_id, d.site_id FROM device d
-               WHERE d.state IN ('adopted', 'offline') AND d.site_id IS NOT NULL
-                 AND EXISTS (SELECT 1 FROM device_inventory i WHERE i.device_id = d.id
-                             AND i.section IN ('wifi_clients', 'wireless_clients', 'wgig_monitor')
-                             AND i.data <> '[]'::jsonb)""")
-        sites = {str(d["site_id"]) for d in devs}
+        sites = [str(r["site_id"]) for r in tx.fetchall(
+            """SELECT site_id FROM device WHERE state IN ('adopted', 'offline') AND site_id IS NOT NULL
+               GROUP BY site_id HAVING count(*) >= 2""")]
         for sid in sites:
-            members = tx.fetchall("""SELECT id, tenant_id FROM device WHERE site_id = %(s)s
-                                     AND state IN ('adopted', 'offline')""", {"s": sid})
+            members = tx.fetchall("""SELECT id, tenant_id, serial, identity, model, role::text AS role, state::text AS state,
+                                            ros_version
+                                     FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
             if len(members) < 2:
                 continue
-            invs = {str(m["id"]): inventory.load(tx, m["id"], SECTIONS) for m in members}
-            for ln in find_links(members, invs):
+            invs = {str(m["id"]): inventory.load(tx, m["id"], SECTIONS + FOREIGN_SECTIONS) for m in members}
+            links = find_links(members, invs)
+            wireless = {(x["device"], x["iface"]) for ln in links for x in (ln["a"], ln["b"])}
+            shared = {(str(r["device_id"]), r["port"]) for r in tx.fetchall(
+                """SELECT device_id, port FROM unmanaged_port WHERE site_id = %(s)s AND shared
+                   AND last_seen > now() - interval '2 hours'""", {"s": sid})}
+            try:
+                links += find_foreign(members, invs, shared, wireless)
+            except Exception:   # topologie je odhad – chyba v ní nesmí zastavit bezdrátové spoje
+                log.exception("lokalita %s: hledání cizích úseků selhalo", sid)
+            for ln in links:
                 tx.execute(
                     """INSERT INTO wlink (tenant_id, site_id, kind, a_device, a_iface, a_mac, b_device, b_iface, b_mac, ping_ip)
                        VALUES (%(t)s, %(s)s, %(k)s, %(ad)s, %(ai)s, %(am)s, %(bd)s, %(bi)s, %(bm)s, %(ip)s)
@@ -250,6 +295,20 @@ def measure(api_a: Any, api_b: Any, link: dict) -> dict | None:
     from .rosapi import RosApiError
 
     kind = link["kind"]
+    if kind == "foreign":
+        # cizí úsek: rádia nevidíme, zbývá ping přes něj. Bez adresy ve společné síti není co měřit.
+        if not link.get("ping_ip"):
+            return None
+        out = {c: None for c in _SAMPLE_COLS}
+        try:
+            out.update(ping_summary(api_a.request(
+                "POST", "/ping", {"address": str(link["ping_ip"]), "count": str(PING_COUNT), "interval": "200ms"})))
+        except RosApiError:
+            return None
+        if out["loss"] is None:
+            return None
+        out["up"] = out["loss"] < 100
+        return out
     try:
         ra = _side_now(api_a, kind, link["a_iface"], link["b_mac"])
     except RosApiError:
@@ -319,8 +378,9 @@ def sample(db: Database, box: Any, limit: int = 100, force: bool = False) -> int
                       b.state AS b_state, host(b.tunnel_ip) AS b_ip, b.api_cert_fingerprint AS b_fp
                FROM wlink l JOIN device a ON a.id = l.a_device JOIN device b ON b.id = l.b_device
                WHERE a.state = 'adopted' AND a.tunnel_ip IS NOT NULL AND a.api_cert_fingerprint IS NOT NULL
+                 AND (l.kind <> 'foreign' OR l.last_seen > now() - make_interval(hours => %(fh)s))
                  AND (%(force)s OR l.sampled_at IS NULL OR l.sampled_at < now() - make_interval(mins => %(m)s))
-               ORDER BY l.sampled_at NULLS FIRST LIMIT %(n)s""", {"m": SAMPLE_EVERY_MIN, "n": limit, "force": force})
+               ORDER BY l.sampled_at NULLS FIRST LIMIT %(n)s""", {"m": SAMPLE_EVERY_MIN, "n": limit, "force": force, "fh": FOREIGN_FRESH_H})
         jobs = []
         for ln in links:
             try:
@@ -496,12 +556,23 @@ def alerts(tx: Tx) -> list[dict]:
     """[{tenant_id, device_id (strana A), kind link_down|link_degraded, subject, severity, message}]."""
     out = []
     for ln in tx.fetchall(
-            """SELECT l.id, l.tenant_id, l.a_device, l.a_iface, coalesce(nullif(a.identity, ''), a.serial) AS a_name,
+            """SELECT l.id, l.tenant_id, l.kind, l.a_device, l.a_iface, coalesce(nullif(a.identity, ''), a.serial) AS a_name,
                       coalesce(nullif(b.identity, ''), b.serial) AS b_name
                FROM wlink l JOIN device a ON a.id = l.a_device JOIN device b ON b.id = l.b_device
                WHERE NOT l.muted AND a.state = 'adopted' AND l.sampled_at > now() - interval '30 minutes'"""):
         a = assess(tx, ln["id"])
         name = f"{ln['a_name']} ↔ {ln['b_name']}"
+        if ln["kind"] == "foreign":
+            what = f"úsek přes nespravované zařízení {name}"
+            if a["state"] == "down":
+                out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_down",
+                            "subject": ln["b_name"], "severity": "critical",
+                            "message": f"{what} je dole (protistrana neodpovídá na ping)"})
+            elif a["state"] in ("bad", "degraded") and a["why"]:
+                out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_degraded",
+                            "subject": ln["b_name"], "severity": "critical" if a["state"] == "bad" else "warning",
+                            "message": f"{what}: {why_text(a['why'])}"})
+            continue
         if a["state"] == "down":
             out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_down", "subject": ln["b_name"],
                         "severity": "critical", "message": f"bezdrátový spoj {name} je dole (protistrana není připojená)"})
