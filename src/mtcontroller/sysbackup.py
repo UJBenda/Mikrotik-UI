@@ -145,6 +145,45 @@ def schema_version(db) -> int:
     return int(r["v"])
 
 
+def pg_major(db) -> int | None:
+    """Hlavní verze PostgreSQL serveru (17 z 170002); None, když ji nejde zjistit."""
+    try:
+        with db.transaction() as tx:
+            r = tx.fetchone("SELECT current_setting('server_version_num') AS v")
+        return int(r["v"]) // 10000
+    except Exception:  # noqa: BLE001 – jen informace do manifestu / kontroly
+        return None
+
+
+def dump_pg_major(dump: Path) -> int | None:
+    """Verze PostgreSQL, ze které dump pochází – z hlavičky `pg_restore -l` (starší zálohy ji nemají v manifestu)."""
+    try:
+        r = subprocess.run(["pg_restore", "-l", str(dump)], capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"Dumped from database version:\s*(\d+)", r.stdout.decode(errors="replace"))
+    return int(m.group(1)) if m else None
+
+
+def local_pg_major() -> int | None:
+    """Hlavní verze PostgreSQL nainstalovaná na tomto stroji (funguje i bez existující databáze)."""
+    try:
+        out = subprocess.run(["pg_restore", "--version"], capture_output=True, timeout=10).stdout.decode()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"(\d+)(?:\.\d+)*\s*(?:\(|$)", out.strip())
+    return int(m.group(1)) if m else None
+
+
+def hosts_of(settings) -> dict:
+    """Adresy, na které se připojují zařízení a správci – při přenosu na jiný server musí vést na něj."""
+    out = {"ui": settings.web.ui_host, "checkin": settings.web.checkin_host}
+    conc = [c.connect_host for c in getattr(settings.tunnel, "concentrators", []) or []]
+    if conc:
+        out["sstp"] = sorted(set(conc))
+    return out
+
+
 def dbname(dsn: str) -> str:
     m = re.search(r"(?:^|\s)dbname=([a-z_][a-z0-9_]{0,62})(?:\s|$)", dsn)
     if not m:
@@ -192,6 +231,7 @@ def create(settings, owner_db, out_dir: Path | None = None, passphrase: str | No
         dump(dbname(settings.database.migrate_dsn), dump_p)
         manifest = {"format": FORMAT, "app_version": __version__, "schema": schema_version(owner_db),
                     "created_at": now.isoformat(), "hostname": socket.gethostname(),
+                    "pg_major": pg_major(owner_db), "hosts": hosts_of(settings),
                     "mode": "local" if settings.tunnel.local else "remote", "reason": reason, "files": []}
         tar_p = tdp / "backup.tar"
         with tarfile.open(tar_p, "w") as tar:
@@ -284,20 +324,93 @@ def check_compatible(manifest: dict, known_schema: int) -> None:
                           f"tato instalace zná schéma jen do {known_schema} – nainstaluj aspoň stejnou verzi balíčku")
 
 
+def _resolve(host: str) -> list[str]:
+    try:
+        return sorted({a[4][0] for a in socket.getaddrinfo(host, None)})
+    except OSError:
+        return []
+
+
+def _backup_hosts(manifest: dict, x: Path) -> dict:
+    """Adresy ze zálohy: z manifestu, u starších záloh z config.toml v záloze."""
+    if isinstance(manifest.get("hosts"), dict):
+        return manifest["hosts"]
+    try:
+        from .config import load_settings
+
+        return hosts_of(load_settings(x / "etc" / "config.toml", environ={}))
+    except Exception:  # noqa: BLE001 – jen informace
+        return {}
+
+
+def report(manifest: dict, x: Path, known_schema: int, local_pg: int | None, *,
+           dump_major: Callable[[Path], int | None] = dump_pg_major, resolve: Callable[[str], list[str]] = _resolve,
+           local_addrs: set[str] | None = None) -> dict:
+    """Posoudí rozbalenou zálohu bez zásahu do systému.
+    {manifest, migrations, backup_pg, local_pg, hosts, moved, problems[] (obnova nepůjde), warnings[] (na co si dát pozor)}."""
+    problems: list[str] = []
+    warnings: list[str] = []
+    try:
+        check_compatible(manifest, known_schema)
+    except BackupError as e:
+        problems.append(str(e))
+    if not (x / "db.dump").is_file() or not (x / "etc" / "master.key").is_file():
+        problems.append("záloha neobsahuje databázi nebo master.key")
+    schema = int(manifest.get("schema") or 0)
+    bpg = manifest.get("pg_major") or (dump_major(x / "db.dump") if (x / "db.dump").is_file() else None)
+    if bpg and local_pg and int(bpg) > int(local_pg):
+        problems.append(f"záloha je z PostgreSQL {bpg}, tento server má PostgreSQL {local_pg} – starší PostgreSQL novější "
+                        f"dump nenačte; nainstaluj PostgreSQL {bpg} nebo novější")
+    elif not bpg or not local_pg:
+        warnings.append("verzi PostgreSQL se nepodařilo ověřit (zálohy z novější verze starší server nenačte)")
+    hosts = _backup_hosts(manifest, x)
+    moved = bool(manifest.get("hostname")) and manifest.get("hostname") != socket.gethostname()
+    names = [h for h in [hosts.get("checkin"), hosts.get("ui"), *(hosts.get("sstp") or [])] if h and h != "localhost"]
+    seen = []
+    for h in dict.fromkeys(names):
+        ips = resolve(h)
+        here = local_addrs is not None and any(i in local_addrs for i in ips)
+        seen.append({"host": h, "resolves": ips, "here": here})
+        if not ips:
+            warnings.append(f"adresa {h}, na kterou se připojují zařízení, se nepřekládá – po obnově ji nasměruj na tento server")
+        elif moved and local_addrs is not None and not here:
+            warnings.append(f"adresa {h} teď vede na {', '.join(ips)}, ne na tento server – zařízení se sem nepřipojí, "
+                            "dokud ji nepřesměruješ (DNS nebo stejná IP)")
+    if moved:
+        warnings.append(f"záloha je z jiného serveru ({manifest.get('hostname')}): původní controller vypni, "
+                        "jinak se o zařízení budou přetahovat dva")
+    return {"manifest": manifest, "migrations": max(0, known_schema - schema), "backup_pg": bpg, "local_pg": local_pg,
+            "hosts": seen, "moved": moved, "problems": problems, "warnings": warnings}
+
+
+def inspect(src: Path, passphrase: str, *, known_schema: int | None = None, local_pg: int | None = None, **kw) -> dict:
+    """Kontrola zálohy nanečisto: rozšifruje do dočasné složky, posoudí a nic nezmění."""
+    from . import migrate
+
+    known = known_schema if known_schema is not None else len(migrate.available())
+    with tempfile.TemporaryDirectory(prefix="mtc-check-") as td:
+        work = Path(td)
+        manifest = open_backup(src, passphrase, work)
+        return report(manifest, work / "x", known, local_pg, **kw)
+
+
 def restore(src: Path, passphrase: str, settings, *, paths: Paths = Paths(),
             recreate_db: Callable[[], None], pg_restore: Callable[[str, Path], None] | None = None,
-            migrate_db: Callable[[], list[int]], known_schema: int | None = None) -> dict:
-    """Obnoví controller ze zálohy. Služby musí stát. Vrací manifest + spuštěné migrace."""
+            migrate_db: Callable[[], list[int]], known_schema: int | None = None, local_pg: int | None = None,
+            dump_major: Callable[[Path], int | None] = dump_pg_major) -> dict:
+    """Obnoví controller ze zálohy. Služby musí stát. Vrací manifest + spuštěné migrace.
+    Všechno, co jde ověřit předem (verze schématu, verze PostgreSQL, obsah), se ověří dřív, než se sáhne na DB."""
     from . import migrate
 
     known = known_schema if known_schema is not None else len(migrate.available())
     with tempfile.TemporaryDirectory(prefix="mtc-restore-") as td:
         work = Path(td)
         manifest = open_backup(src, passphrase, work)
-        check_compatible(manifest, known)
         x = work / "x"
-        if not (x / "db.dump").is_file() or not (x / "etc" / "master.key").is_file():
-            raise BackupError("záloha neobsahuje databázi nebo master.key")
+        rep_ = report(manifest, x, known, local_pg if local_pg is not None else local_pg_major(),
+                      dump_major=dump_major, resolve=lambda h: ["-"])
+        if rep_["problems"]:
+            raise BackupError("; ".join(rep_["problems"]))
         recreate_db()
         (pg_restore or _pg_restore)(dbname(settings.database.migrate_dsn), x / "db.dump")
         paths.etc.mkdir(parents=True, exist_ok=True)

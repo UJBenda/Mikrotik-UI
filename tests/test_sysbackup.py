@@ -114,6 +114,51 @@ def test_open_rejects_unexpected_members(tmp_path):
         sysbackup.open_backup(enc, PW, tmp_path)
 
 
+def test_check_report(tmp_path):
+    """Kontrola nanečisto: verze schématu, PostgreSQL, adresy pro zařízení, přenos na jiný server."""
+    import socket
+
+    from pgwire import PgWireDatabase
+
+    db, name = fresh_db()
+    try:
+        s = make_settings(tmp_path)
+        f = sysbackup.create(s, PgWireDatabase("mtc_owner", name), tmp_path / "bk", PW, _etc(tmp_path),
+                             dump=lambda dbn, p: p.write_bytes(b"DUMP"))
+        known = len(migrate.available())
+        ips = {"checkin.test": ["203.0.113.5"], "admin.test": ["203.0.113.5"], "vpn1.test": []}
+        r = sysbackup.inspect(f, PW, local_pg=99, resolve=lambda h: ips.get(h, []), local_addrs={"203.0.113.5"})
+        m = r["manifest"]
+        assert m["hosts"] == {"ui": "admin.test", "checkin": "checkin.test", "sstp": ["vpn1.test"]} and m["pg_major"] >= 13
+        assert r["problems"] == [] and r["migrations"] == 0 and r["moved"] is False and r["backup_pg"] == m["pg_major"]
+        assert [h["host"] for h in r["hosts"]] == ["checkin.test", "admin.test", "vpn1.test"] and r["hosts"][0]["here"]
+        assert any("vpn1.test" in w and "nepřekládá" in w for w in r["warnings"])
+        # starší PostgreSQL novější dump nenačte; novější schéma starší aplikace taky ne
+        r = sysbackup.inspect(f, PW, local_pg=m["pg_major"] - 1, known_schema=known - 3, resolve=lambda h: ["x"])
+        assert len(r["problems"]) == 2 and "PostgreSQL" in r["problems"][1] and "novější verze" in r["problems"][0]
+        # starší záloha bez údajů v manifestu: verze PG z hlavičky dumpu, adresy z config.toml v záloze
+        import json as _json
+        with __import__("tempfile").TemporaryDirectory() as td:
+            x = Path(td) / "x"
+            (x / "etc").mkdir(parents=True)
+            (x / "db.dump").write_bytes(b"D")
+            (x / "etc" / "master.key").write_text("MK")
+            (x / "etc" / "config.toml").write_text('[web]\nui_host = "old.example"\ncheckin_host = "old.example"\n'
+                                                   '[tunnel]\nprovider = "none"\ncontroller_ip = "192.168.88.10"\n')
+            old = {"format": 1, "schema": known - 2, "app_version": "0.1.0+90", "hostname": "stary-server"}
+            r = sysbackup.report(old, x, known, 17, dump_major=lambda p: 15, resolve=lambda h: ["198.51.100.9"],
+                                 local_addrs={"203.0.113.5"})
+            assert r["problems"] == [] and r["migrations"] == 2 and r["backup_pg"] == 15 and r["moved"] is True
+            assert any("old.example teď vede na 198.51.100.9" in w for w in r["warnings"])
+            assert any("stary-server" in w and "vypni" in w for w in r["warnings"])
+            assert sysbackup.report(old, x, known, 14, dump_major=lambda p: 15, resolve=lambda h: [])["problems"]
+        assert socket.gethostname() == m["hostname"]
+        with pytest.raises(sysbackup.BackupError, match="špatné heslo"):
+            sysbackup.inspect(f, "x" * 20)
+    finally:
+        drop_db(name)
+
+
 def test_real_dump_and_restore(tmp_path):
     """Skutečný pg_dump / pg_restore: data přežijí, starší schéma se domigruje."""
     if not shutil.which("pg_dump"):
@@ -166,6 +211,10 @@ def test_real_dump_and_restore(tmp_path):
             sysbackup.restore(f, PW, s2, paths=dest, recreate_db=lambda: touched.append(1),
                               migrate_db=lambda: [], known_schema=last - 2)
         assert not touched
+        # záloha z novějšího PostgreSQL se pozná předem, ne až uprostřed obnovy
+        with pytest.raises(sysbackup.BackupError, match="PostgreSQL"):
+            sysbackup.restore(f, PW, s2, paths=dest, recreate_db=lambda: touched.append(1), migrate_db=lambda: [], local_pg=9)
+        assert not touched and sysbackup.dump_pg_major(tmp_path / "nic") is None
     finally:
         su = PgConnection("postgres", "postgres")
         su.query(f"DROP DATABASE IF EXISTS {target}")

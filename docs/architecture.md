@@ -1409,3 +1409,14 @@ Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 
   a ukazuje poslední výsledek.
 - **Zatím chybí:** vytížení kanálu, sken spektra, PtMP u 60 GHz (více stanic na jednom AP). Na skutečném
   zařízení neověřeno – zejména názvy polí monitoru w60g.
+
+## Obnova zálohy na jiný server / jinou verzi (doplněk)
+
+- Manifest zálohy nese navíc `pg_major` a `hosts` (`ui`, `checkin`, `sstp`). Starší zálohy bez nich: verze
+  PostgreSQL z hlavičky dumpu (`pg_restore -l`), adresy z `config.toml` v záloze.
+- `sysbackup.report` posoudí rozbalenou zálohu: `problems` (obnova nepůjde – novější schéma, novější
+  PostgreSQL, chybí DB nebo master.key) a `warnings` (adresy nevedou sem, záloha z jiného serveru).
+  `restore` tyto kontroly dělá dřív, než sáhne na databázi; platí i pro obnovu z průvodce.
+- `mtc-admin restore SOUBOR --check` = jen zpráva, návratový kód 1 při problému. Obnova přes data dělá
+  pojistnou zálohu (`reason = pre-restore`), při jejím selhání nezačne (`--no-safety-backup` ji vynechá).
+- Downgrade dat (novější záloha do starší aplikace) se záměrně nedělá.

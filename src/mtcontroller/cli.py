@@ -18,6 +18,7 @@
   setup-apply                   provede nastavení z průvodce (root; spouští mtc-setup-apply.path)
   backup                        šifrovaná záloha controlleru (root; timer mtc-backup a žádost z UI)
   restore SOUBOR [--force]      obnova controlleru ze zálohy .mtcbak (root; zastaví služby)
+  restore SOUBOR --check        jen posoudí zálohu (verze, migrace, PostgreSQL, adresy) – nic nezmění
   recovery-kit                  vypíše záchranné údaje (heslo záloh, DB, cesty) (root)
   tls [status|own|letsencrypt EMAIL|custom CERT KEY|bootstrap] [--slot admin|checkin]
                                 certifikát HTTPS pro nginx (root; jinak Systém → Certifikát HTTPS)
@@ -31,8 +32,10 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import re
 import sys
 
+from . import __version__
 from .config import get_settings
 
 
@@ -344,6 +347,34 @@ def cmd_backup(a) -> int:
     return 0
 
 
+def _local_addrs() -> set[str]:
+    """IP adresy tohoto stroje (pro kontrolu, kam vedou adresy ze zálohy)."""
+    import subprocess
+    try:
+        out = subprocess.run(["ip", "-o", "addr", "show"], capture_output=True, timeout=10).stdout.decode()
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {m.group(1) for m in re.finditer(r"inet6? ([0-9a-fA-F:.]+)/", out)}
+
+
+def _print_restore_report(rep: dict, has_data: bool) -> None:
+    m = rep["manifest"]
+    print(f"Záloha z {m.get('created_at')} · server {m.get('hostname')} · verze {m.get('app_version')} · schéma {m.get('schema')}")
+    print(f"Tato instalace: verze {__version__}; po obnově poběží migrací: {rep['migrations']}")
+    print(f"PostgreSQL: záloha {rep['backup_pg'] or '?'}, tento server {rep['local_pg'] or '?'}")
+    for h in rep["hosts"]:
+        where = "tento server" if h["here"] else (", ".join(h["resolves"]) or "nepřekládá se")
+        print(f"Adresa pro zařízení/správu: {h['host']} → {where}")
+    if has_data:
+        print("Tento controller už má data – obnova je přepíše (před obnovou se udělá pojistná záloha).")
+    for w in rep["warnings"]:
+        print(f"POZOR: {w}")
+    for p in rep["problems"]:
+        print(f"NEJDE: {p}")
+    if not rep["problems"]:
+        print("Zálohu lze obnovit.")
+
+
 def cmd_restore(a) -> int:
     import subprocess
     from pathlib import Path
@@ -352,21 +383,45 @@ def cmd_restore(a) -> int:
     from .config import load_settings
     from .db import PsycopgDatabase, operator_scope
     s = get_settings()
-    if not a.force:
-        try:
-            with operator_scope(_db()) as tx:
-                n = tx.fetchone("SELECT count(*) AS n FROM app_user")["n"]
-        except Exception:  # noqa: BLE001 – DB ještě neexistuje
-            n = 0
-        if n:
-            raise SystemExit("tento controller už má data – obnova je přepíše; potvrď --force")
+    try:
+        with operator_scope(_db()) as tx:
+            n = tx.fetchone("SELECT count(*) AS n FROM app_user")["n"]
+    except Exception:  # noqa: BLE001 – DB ještě neexistuje
+        n = 0
+    if n and not a.force and not a.check:
+        raise SystemExit("tento controller už má data – obnova je přepíše; potvrď --force")
     pw = (Path(a.passphrase_file).read_text().strip() if a.passphrase_file
           else getpass.getpass("Heslo záloh: ").strip())
+    local_pg = sysbackup.local_pg_major()
+    try:
+        rep = sysbackup.inspect(Path(a.file), pw, local_pg=local_pg, local_addrs=_local_addrs())
+    except sysbackup.BackupError as e:
+        raise SystemExit(f"zálohu nejde použít: {e}") from None
+    _print_restore_report(rep, has_data=bool(n))
+    if a.check:
+        return 1 if rep["problems"] else 0
+    if rep["problems"]:
+        raise SystemExit("obnova nezačala – na systém se nesáhlo")
+    if n and not a.no_safety_backup:
+        # pojistka: stav, který obnova přepíše, se nejdřív zazálohuje (dosavadním heslem záloh)
+        try:
+            keep = len(sysbackup.listing(Path(s.backup.dir))) + 1
+            f = sysbackup.create(s, PsycopgDatabase(s.database.migrate_dsn), reason="pre-restore", keep=max(keep, s.backup.keep))
+        except Exception as e:  # noqa: BLE001
+            raise SystemExit(f"pojistná záloha současného stavu selhala ({e}) – obnova nezačala. "
+                             "Oprav příčinu, nebo ji vědomě přeskoč: --no-safety-backup") from None
+        print(f"Pojistná záloha současného stavu: {f} (šifrovaná DOSAVADNÍM heslem záloh – poznamenej si ho, "
+              "obnova ho nahradí heslem z obnovované zálohy)")
     units = ["mtc-web", "mtc-worker", "mtc-syslog"]
     subprocess.run(["systemctl", "stop", *units], check=False)
-    res = sysbackup.restore(
-        Path(a.file), pw, s, recreate_db=lambda: sysbackup.recreate_db_as_postgres(sysbackup.dbname(s.database.migrate_dsn)),
-        migrate_db=lambda: migrate.upgrade(PsycopgDatabase(get_settings().database.migrate_dsn), s.database.app_role))
+    try:
+        res = sysbackup.restore(
+            Path(a.file), pw, s, local_pg=local_pg,
+            recreate_db=lambda: sysbackup.recreate_db_as_postgres(sysbackup.dbname(s.database.migrate_dsn)),
+            migrate_db=lambda: migrate.upgrade(PsycopgDatabase(get_settings().database.migrate_dsn), s.database.app_role))
+    except sysbackup.BackupError as e:
+        subprocess.run(["systemctl", "start", *units], check=False)
+        raise SystemExit(f"obnova selhala: {e}") from None
     cfg = Path("/etc/mtcontroller")
     bk = load_settings(cfg / "config.toml", environ={}).backup.passphrase_file
     import os
@@ -519,6 +574,8 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--now", action="store_true", help="hned, bez ohledu na plán")
     x.add_argument("--from-path", action="store_true"); x.set_defaults(fn=cmd_backup)
     x = sub.add_parser("restore"); x.add_argument("file"); x.add_argument("--force", action="store_true")
+    x.add_argument("--check", action="store_true", help="jen posoudit zálohu, nic neměnit")
+    x.add_argument("--no-safety-backup", action="store_true", help="před obnovou nezálohovat současný stav")
     x.add_argument("--passphrase-file"); x.set_defaults(fn=cmd_restore)
     sub.add_parser("recovery-kit").set_defaults(fn=cmd_recovery_kit)
     x = sub.add_parser("tls"); x.add_argument("action", nargs="?", default="status",

@@ -162,6 +162,24 @@ z cloudu) a zadej heslo záloh. Obnoví se data, uživatelé, cíle záloh, CA c
 certifikát nginx; starší záloha se domigruje. Starý server vypni – oba by zapisovaly do stejné
 složky v cloudu. Z příkazové řádky: `sudo mtc-admin restore SOUBOR`.
 
+### Obnova na jiný server nebo jinou verzi
+
+Nejdřív zálohu posuď nanečisto – nic se nezmění:
+
+    sudo mtc-admin restore SOUBOR --check
+
+Vypíše verzi aplikace a schématu v záloze, kolik migrací po obnově poběží, verzi PostgreSQL zálohy a tohoto
+serveru a adresy, na které se připojují zařízení, i s tím, kam teď vedou.
+
+- **Starší záloha, novější aplikace:** jde. Po obnově databáze se samy pustí chybějící migrace.
+- **Novější záloha, starší aplikace:** obnova se odmítne dřív, než se na cokoli sáhne. Nainstaluj aspoň
+  stejnou verzi balíčku, z jaké záloha pochází.
+- **PostgreSQL:** server musí mít stejnou nebo novější hlavní verzi než ten, kde záloha vznikla.
+- **Adresy:** zařízení se připojují na jména z konfigurace v záloze (`ui_host`, `checkin_host`, adresy SSTP).
+  Nový server musí být dostupný pod stejnými jmény (přesměruj DNS) nebo stejnou IP. Původní controller vypni.
+- **Server, který už data má:** obnova chce `--force` a před přepsáním udělá pojistnou zálohu současného stavu
+  (šifrovanou dosavadním heslem záloh – poznamenej si ho). Vynechat ji jde jen vědomě: `--no-safety-backup`.
+
 ## Užitečné příkazy
 
 ```sh
