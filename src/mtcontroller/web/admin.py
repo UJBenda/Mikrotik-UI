@@ -316,6 +316,12 @@ async def system_backup_target(request: Request, p: Principal, _t) -> Response:
         except cloudbackup.CloudError as e:
             return _err(502, str(e))
         return json_response({"ok": True, "where": where})
+    if action == "verify":
+        try:
+            return json_response(await run_in_threadpool(cloudbackup.verify, st.db, st.box, tid, st.settings.backup.dir,
+                                                         cloudbackup.http, p.user_id, ip))
+        except cloudbackup.CloudError as e:
+            return _err(502, str(e))
     if action == "upload":
         await run_in_threadpool(cloudbackup.request_upload, st.db, tid, p.user_id, ip)
         return json_response({"ok": True})

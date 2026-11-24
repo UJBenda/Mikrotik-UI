@@ -437,7 +437,8 @@
             <button type="submit" class="small">Uložit pravidla</button>
           </form>
           <p class="muted">Zálohy zařízení jsou uložené šifrovaně v databázi controlleru – jsou tedy součástí každé zálohy
-            controlleru i jejích kopií v cloudu.</p>
+            controlleru i jejích kopií v cloudu.
+            <button id="dbk-ext" type="button" class="ux-link">Externí úložiště (Nextcloud, Google Drive, Dropbox) nastavíš ve Správa → Zálohy</button></p>
         </div>
         <div class="card-lite">
           <h3>Zařízení <span id="dbk-count" class="muted small"></span></h3>
@@ -664,10 +665,18 @@
         <p id="bk-ret-sum" class="muted"></p>
         <button type="submit" class="small">Uložit plán a retenci</button>
       </form>
-      <h3>Kopie mimo server <button id="bt-add" type="button" class="small secondary">+ Přidat cíl</button></h3>
-      <p class="muted">Šifrovaná záloha se po vytvoření zkopíruje do všech zapnutých cílů; staré tam controller
-        promaže sám. Cloudu není potřeba věřit – bez hesla záloh je obsah nečitelný.</p>
-      <div class="ptable-wrap"><table><thead><tr><th>Cíl</th><th>Stav</th><th>Poslední kopie</th><th></th></tr></thead>
+      <h3>Externí úložiště <button id="bt-add" type="button" class="small">+ Přidat úložiště</button></h3>
+      <p class="muted">Kam se má záloha kopírovat mimo tento server. Šifrovaná záloha se po vytvoření sama odešle do všech
+        zapnutých úložišť a staré tam controller promaže podle retence úložiště. Úložišti není potřeba věřit – bez hesla
+        záloh je obsah nečitelný.</p>
+      <div id="bt-quick" class="bt-quick" hidden>
+        <span class="muted">Přidat:</span>
+        <button type="button" class="small secondary" data-kind="nextcloud">Nextcloud</button>
+        <button type="button" class="small secondary" data-kind="gdrive">Google Drive</button>
+        <button type="button" class="small secondary" data-kind="dropbox">Dropbox</button>
+        <button type="button" class="small secondary" data-kind="onedrive">OneDrive</button>
+      </div>
+      <div class="ptable-wrap"><table><thead><tr><th>Úložiště</th><th>Stav</th><th>Poslední kopie</th><th>Ověření v úložišti</th><th></th></tr></thead>
         <tbody id="bt-list"></tbody></table></div>
       <h3>Zálohy na serveru</h3>
       <table><thead><tr><th>Soubor</th><th>Velikost</th><th>Vytvořeno</th><th></th></tr></thead><tbody id="backup-list"></tbody></table>

@@ -838,6 +838,25 @@ def check(db: Database, box: SecretBox, tid: str, req: Http = http) -> str:
     return where
 
 
+def verify(db: Database, box: SecretBox, tid: str, backup_dir: Path, req: Http = http,
+           user_id: Any = None, ip: str | None = None) -> dict:
+    """„Ověřit zálohu“ v UI: vypíše úložiště a zkontroluje, že tam nejnovější záloha ze serveru opravdu je
+    a má stejnou velikost. Vrací {ok, count, newest, size_ok, missing, latest_remote, bytes}."""
+    with operator_scope(db) as tx:
+        t = load(tx, box, tid)
+    items = sorted(provider(db, box, t, req).list(), key=lambda x: x["name"][-22:])
+    local = newest_local(backup_dir)
+    found = next((i for i in items if local and i["name"] == local.name), None)
+    size_ok = bool(found) and (not found.get("size") or found["size"] == local.stat().st_size)
+    out = {"ok": bool(found) and size_ok, "count": len(items), "newest": local.name if local else None,
+           "missing": bool(local) and not found, "size_ok": size_ok if found else None,
+           "latest_remote": items[-1]["name"] if items else None, "bytes": sum(int(i.get("size") or 0) for i in items)}
+    with operator_scope(db) as tx:
+        set_status(tx, tid, verified_at=_now(), verified=out, remote_count=len(items))
+        audit(tx, "system.backup_target_verify", user_id=user_id, target=f"backup_target:{tid}", after=out, ip=ip)
+    return out
+
+
 # --- nahrávání (worker) -------------------------------------------------------------------
 
 

@@ -1991,7 +1991,8 @@ function renderTargets() {
       x.addEventListener("click", fn); acts.appendChild(x); return x; };
     if (t.kind !== "nextcloud" && !t.auth) btn(t.authorized ? __("Přihlásit znovu") : __("Přihlásit"), () => targetAuth(t), !!t.authorized);
     if (t.kind === "nextcloud" || t.authorized) {
-      btn(__("Ověřit"), () => targetCheck(t));
+      btn(__("Test spojení"), () => targetCheck(t)).title = __("Zkusí přihlášení a složku, nic nenahrává");
+      btn(__("Ověřit zálohu"), () => targetVerify(t), false).title = __("Zkontroluje, že poslední záloha v úložišti opravdu je a má správnou velikost");
       btn(__("Odeslat teď"), () => targetAction(t, "upload", __("Poslední záloha se odešle")));
     }
     btn(__("Upravit"), () => openTarget(t));
@@ -1999,15 +2000,28 @@ function renderTargets() {
     const actTd = el("td"); actTd.appendChild(acts);
     const nameTd = el("td", `${t.name} `);
     nameTd.append(el("span", `${t.kind_label} · ${retText(t.keep, t.weekly, t.monthly)}`, "muted"), el("br"), el("span", where, "muted small"));
-    tr.append(nameTd, stTd, lastTd, actTd);
+    const v = s.verified, vTd = el("td", !v ? __("zatím neověřeno") : v.ok ? __`✓ záloha je v úložišti (${v.count} celkem)`
+      : v.missing ? __("✗ poslední záloha v úložišti chybí") : v.size_ok === false ? __("✗ záloha má jinou velikost než na serveru") : __("na serveru zatím žádná záloha není"),
+      !v ? "muted" : v.ok ? "sev-ok" : v.newest ? "sev-error" : "muted");
+    if (v) { vTd.appendChild(el("small", " " + fmtTime(s.verified_at), "muted")); vTd.title = [v.newest, v.bytes ? __`v úložišti ${fmtBytes(v.bytes)}` : ""].filter(Boolean).join("\n"); }
+    tr.append(nameTd, stTd, lastTd, vTd, actTd);
     tb.appendChild(tr);
   }
+  $("bt-quick").hidden = bkTargets.length > 0;
   if (!bkTargets.length) {
-    const tr = el("tr"); const td = el("td", __("Zatím jen na tomto serveru – přidej Nextcloud, Google Drive, Dropbox nebo OneDrive."), "muted");
-    td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
+    const tr = el("tr"); const td = el("td", __("Zatím se zálohuje jen na tento server. Přidej externí úložiště tlačítky nahoře."), "muted");
+    td.colSpan = 5; tr.appendChild(td); tb.appendChild(tr);
   }
 }
 
+async function targetVerify(t) {
+  try {
+    const v = await api("POST", `/system/backup-targets/${t.id}/verify`, {});
+    if (v.ok) msg(__`${t.name}: záloha ${v.newest} v úložišti je a velikost sedí (celkem ${v.count} záloh)`);
+    else msg(v.missing ? __`${t.name}: poslední záloha ${v.newest} v úložišti chybí – zkus „Odeslat teď“` : v.newest ? __`${t.name}: záloha v úložišti má jinou velikost – odešli ji znovu` : __("Na serveru zatím žádná záloha není – nejdřív klikni na Zálohovat teď"), true);
+  } catch (e) { msg(e.message, true); }
+  loadBackups();
+}
 async function targetAction(t, action, okMsg) {
   try { await api("POST", `/system/backup-targets/${t.id}/${action}`, {}); if (okMsg) msg(okMsg); } catch (e) { msg(e.message, true); }
   loadBackups();
@@ -2048,11 +2062,11 @@ function btKindUi() {
   $("bt-folder").placeholder = k === "dropbox" ? __("volitelná podsložka") : "MikroTik-Controller";
   $("bt-help").textContent = BT_HELP[k];
 }
-function openTarget(t) {
+function openTarget(t, kind) {
   btEdit = t || null;
   const c = (t && t.config) || {};
-  $("bt-title").textContent = t ? __`Upravit: ${t.name}` : __("Nový cíl záloh");
-  $("bt-kind").value = t ? t.kind : "nextcloud"; $("bt-kind").disabled = !!t;
+  $("bt-title").textContent = t ? __`Upravit: ${t.name}` : __("Nové externí úložiště");
+  $("bt-kind").value = t ? t.kind : kind || "nextcloud"; $("bt-kind").disabled = !!t;
   $("bt-name").value = t ? t.name : ""; $("bt-keep").value = t ? t.keep : 14;
   $("bt-weekly").value = t ? t.weekly || 0 : 0; $("bt-monthly").value = t ? t.monthly || 0 : 0;
   $("bt-url").value = c.url || ""; $("bt-user").value = c.user || ""; $("bt-pass").value = "";
@@ -2065,6 +2079,8 @@ function openTarget(t) {
 function closeTarget() { $("bt-dlg").hidden = true; btEdit = null; }
 $("bt-kind").addEventListener("change", btKindUi);
 $("bt-add").addEventListener("click", () => openTarget(null));
+for (const b of $("bt-quick").getElementsByTagName ? $("bt-quick").getElementsByTagName("button") : [])
+  b.addEventListener("click", () => openTarget(null, b.getAttribute("data-kind")));
 $("bt-close").addEventListener("click", closeTarget);
 $("bt-cancel").addEventListener("click", closeTarget);
 $("bt-save").addEventListener("click", async () => {
@@ -4326,6 +4342,10 @@ async function openDevVersions(d) {
   $("dbv-dlg").hidden = false;
 }
 $("dbv-close").addEventListener("click", () => { $("dbv-dlg").hidden = true; });
+$("dbk-ext").addEventListener("click", () => {
+  if (me && me.superadmin) { showView("backups", true); return; }
+  msg(__("Externí úložiště záloh nastavuje provozovatel controlleru (superadmin) ve Správa → Zálohy."), true);
+});
 
 // --- bezdrátové spoje: seznam a karta spoje (provoz, signál, rychlost, ztrátovost, rušení na jedné ose) -------
 const wl = { links: null, sel: null, hours: 24, data: null, traffic: null };

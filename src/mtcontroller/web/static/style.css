@@ -1604,3 +1604,4 @@ header { z-index: 45; }
 #dbv-list td:first-child { white-space: nowrap; }
 .dbv-list { overflow-x: visible; }
 .dbv-diff { white-space: pre; }
+.bt-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; }

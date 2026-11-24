@@ -170,6 +170,14 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!requests.slice(nb).some((r) => r.startsWith("PUT") && r.endsWith("/system/backup-plan"))) errors.push("zálohy: uložení plánu");
       const drow = byId["bt-list"].children[0];
       if (!drow.textContent.includes("Dropbox · 14 posledních + 12 měsíčních") || !drow.textContent.includes("Otevři Dropbox") || !drow.textContent.includes("Dokončit")) errors.push("zálohy: cíl Dropbox " + drow.textContent);
+      // externí úložiště: ověření, že záloha v úložišti je; tlačítko „Ověřit zálohu“ volá kontrolu
+      const nrow = byId["bt-list"].children[1];
+      if (!nrow.textContent.includes("✓ záloha je v úložišti (12 celkem)") || !nrow.textContent.includes("Ověřit zálohu") || !nrow.textContent.includes("Test spojení")) errors.push("zálohy: ověření v úložišti " + nrow.textContent);
+      if (!byId["bt-list"].children[2].textContent.includes("zatím neověřeno")) errors.push("zálohy: neověřené úložiště");
+      const nv = requests.length, acts = nrow.children[4].children[0].children;
+      await acts.filter((b) => b.textContent === "Ověřit zálohu")[0].fire("click");
+      for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+      if (!requests.slice(nv).some((r) => r.startsWith("POST") && r.endsWith("/verify"))) errors.push("zálohy: ověření neodeslalo dotaz");
       await byId["nav-dash"].fire("click");
       if (byId["hdr-bell"].hidden) errors.push("záhlaví: zvonek");
     }

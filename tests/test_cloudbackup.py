@@ -388,6 +388,17 @@ def test_dropbox_pkce_upload_and_monthly_retention(monkeypatch):
         assert d.files["/zalohy/" + names[-1]] == (tmp / names[-1]).read_bytes()
         assert d.calls.count("files/upload_session/append_v2") == 1 and "files/upload_session/finish" in d.calls
         assert _load(db, box, t).status["remote_count"] == 4
+        # ověření, že záloha v úložišti opravdu je a má správnou velikost
+        v = cloudbackup.verify(db, box, t, tmp, req=d)
+        assert v["ok"] and v["count"] == 4 and v["newest"] == names[-1] and v["size_ok"] and not v["missing"]
+        key = "/zalohy/" + names[-1]
+        d.files[key] = d.files[key][:-10]                                   # poškozená (kratší) kopie
+        v = cloudbackup.verify(db, box, t, tmp, req=d)
+        assert not v["ok"] and v["size_ok"] is False and not v["missing"]
+        del d.files[key]
+        v = cloudbackup.verify(db, box, t, tmp, req=d)
+        assert not v["ok"] and v["missing"] and v["count"] == 3 and _load(db, box, t).status["verified"]["missing"]
+        d.files[key] = (tmp / names[-1]).read_bytes()
         c = __import__("test_flow")._login(app)
         r = c.patch(f"/api/admin/system/backup-targets/{t}", json_body={"monthly": 12, "weekly": 4})
         assert r.status_code == 200 and (_load(db, box, t).monthly, _load(db, box, t).weekly) == (12, 4)

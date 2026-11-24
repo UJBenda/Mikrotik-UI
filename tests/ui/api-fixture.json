@@ -4861,6 +4861,8 @@
      "has_secret": true,
      "status": {
       "authorized": true,
+      "verified_at": "2026-10-21T08:00:00+00:00",
+      "verified": {"ok": true, "count": 12, "newest": "mtc-vm-20261021-023000.mtcbak", "missing": false, "size_ok": true, "latest_remote": "mtc-vm-20261021-023000.mtcbak", "bytes": 42000000},
       "last_ok_at": "2026-10-21T02:31:10+00:00",
       "last_file": "mtc-vm-20261021-023000.mtcbak",
       "last_size": 3500000,
