@@ -1420,3 +1420,16 @@ Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 
 - `mtc-admin restore SOUBOR --check` = jen zpráva, návratový kód 1 při problému. Obnova přes data dělá
   pojistnou zálohu (`reason = pre-restore`), při jejím selhání nezačne (`--no-safety-backup` ji vynechá).
 - Downgrade dat (novější záloha do starší aplikace) se záměrně nedělá.
+
+## Vzhled 2, krok 4: záhlaví a panel detailu podle maket 1 a 2
+
+- **Záhlaví:** značka se jménem, pole „Zákazník“ a „Lokalita“ (popisek uvnitř rámečku, uvnitř zůstává nativní
+  `select`), vedle zákazníka nabídka **Správa** (`#tmenu`) s položkami Lokality / Uživatelé / Systém – ty už
+  nejsou v levém pruhu (ten je jen pro lokalitu). Tlačítka mají dál id `nav-<klíč>` a staví je `buildNav`.
+  Vpravo zvonek s počtem k řešení (stejné číslo jako odznak Aktivity, `setBadge`) a nabídka uživatele (`#umenu`:
+  změna hesla, jazyk, odhlášení). Přepínač jazyka je před přihlášením v záhlaví, po přihlášení se přesune do nabídky.
+- **Detail zařízení:** panel vpravo je užší (600 px) a seznam vedle něj zůstává vidět a klikací; tlačítko ⤢ ho
+  rozšíří (`prefs.detailWide`). Hlavička: jméno, pod ním model · role · stav, akce na vlastním řádku. První dvě
+  upozornění jsou rovnou barevné pruhy (`#d-banners`), zbytek zůstává ve sbaleném seznamu. Záložky jsou podtržené.
+- Zbývá z maket: přejmenování pojmů v celé aplikaci (tenant → zákazník je zatím jen v záhlaví), rozbalovací
+  výběr zákazníka s hledáním, přehled „Připojeno“ v detailu podle makety 2.

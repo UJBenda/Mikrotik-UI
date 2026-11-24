@@ -137,7 +137,22 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     }
     // levá navigace: 6 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
     const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");
-    if (navBtns.length !== 9 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    if (navBtns.length !== 6 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    // správa zákazníka je v nabídce v záhlaví (lokality, uživatelé, systém), zvonek nese počet k řešení, uživatel má vlastní nabídku
+    {
+      const items = byId["tmenu-list"].children.filter((b) => b.tagName === "BUTTON");
+      if (items.length !== 3 || !items[0].textContent.includes("Lokality") || !items[0].textContent.includes("všechny lokality zákazníka")) errors.push("záhlaví: nabídka správy " + items.map((b) => b.textContent));
+      byId["tmenu-list"].hidden = true; byId["umenu-list"].hidden = true;  // falešný DOM nečte atribut hidden z HTML
+      await byId["tmenu-btn"].fire("click", { stopPropagation() {} });
+      if (byId["tmenu-list"].hidden) errors.push("záhlaví: nabídka se neotevřela");
+      await byId["umenu-btn"].fire("click", { stopPropagation() {} });
+      if (!byId["tmenu-list"].hidden || byId["umenu-list"].hidden) errors.push("záhlaví: otevřená má být jen jedna nabídka");
+      if (byId["umenu"].hidden || !byId["umenu-btn"].textContent.includes("@") || !byId["who"].textContent.includes("Odhlásit") || !byId["who"].textContent.includes("Změnit heslo")) errors.push("záhlaví: nabídka uživatele " + byId["who"].textContent);
+      await byId["nav-users"].fire("click");
+      if (!byId["umenu-list"].hidden || byId["view-users"].hidden) errors.push("záhlaví: položka nabídky neotevřela sekci");
+      await byId["nav-dash"].fire("click");
+      if (byId["hdr-bell"].hidden) errors.push("záhlaví: zvonek");
+    }
     if (byId["view-dash"].hidden || !byId["view-activity"].hidden) errors.push("navigace: výchozí pohled");
     await byId["nav-activity"].fire("click");
     if (byId["view-activity"].hidden || !byId["view-dash"].hidden || byId["nav-activity"].className !== "navbtn active") errors.push("navigace: přepnutí na aktivitu");

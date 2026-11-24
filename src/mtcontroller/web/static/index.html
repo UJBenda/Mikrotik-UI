@@ -12,14 +12,24 @@
   <h1><span class="logo" aria-hidden="true"></span>MikroTik Controller</h1>
   <label class="lang-pick" title="Jazyk rozhraní"><span class="sr-only">Jazyk</span><select id="lang-sel" aria-label="Jazyk"></select></label>
   <div id="hdr-tenant" class="hdr-tenant" hidden>
-    <label>Tenant <select id="tenant"></select></label>
-    <label id="nav-site" class="nav-site"><span>Lokalita</span><select id="site-sel"></select></label>
+    <label class="hpill"><span>Zákazník</span><select id="tenant"></select></label>
+    <div class="hmenu" id="tmenu">
+      <button id="tmenu-btn" type="button" class="hbtn" aria-haspopup="true" aria-expanded="false" title="Lokality, uživatelé a systém">Správa</button>
+      <div id="tmenu-list" class="hmenu-list" hidden><div class="hmenu-h">Správa zákazníka</div></div>
+    </div>
+    <label id="nav-site" class="nav-site hpill"><span>Lokalita</span><select id="site-sel"></select></label>
   </div>
   <div id="gs" class="gs" hidden>
     <input id="gs-in" type="search" autocomplete="off" placeholder="Hledat zařízení, nastavení…  (Ctrl+K)" aria-label="Hledat">
     <ul id="gs-list" class="gs-list" hidden></ul>
   </div>
-  <div id="who"></div>
+  <button id="hdr-bell" type="button" class="hbell" hidden title="Upozornění a rozpracované změny" aria-label="Upozornění">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 11V7a4 4 0 0 1 8 0v4l1.3 1.5H2.7zM6.5 14h3"/></svg><span id="hdr-bell-n" class="hbell-n" hidden></span>
+  </button>
+  <div class="hmenu" id="umenu" hidden>
+    <button id="umenu-btn" type="button" class="hbtn user" aria-haspopup="true" aria-expanded="false"></button>
+    <div id="umenu-list" class="hmenu-list right" hidden><div id="who"></div></div>
+  </div>
 </header>
 
 <main>
@@ -674,15 +684,20 @@
 
   <section id="detail" class="dev-drawer" hidden aria-label="Detail zařízení">
     <div class="dd-head">
-      <h2 id="d-title"></h2>
-      <span class="grow"></span>
-      <button id="d-timeline" type="button" class="small secondary" title="Co se na zařízení dělo – události na časové ose">Časová osa</button>
-      <button id="d-backup" type="button" class="small secondary">Zálohovat teď</button>
-      <button id="d-upgrade" type="button" class="small primary" hidden></button>
-      <button id="d-firmware" type="button" class="small secondary" hidden></button>
-      <button id="d-close" type="button" class="icon-btn" title="Zavřít (Esc)">×</button>
+      <div class="dd-top">
+        <div class="dd-name"><h2 id="d-title"></h2><div id="d-sub" class="dd-sub"></div></div>
+        <button id="d-wide" type="button" class="icon-btn" title="Rozšířit panel" aria-label="Rozšířit panel" aria-pressed="false">⤢</button>
+        <button id="d-close" type="button" class="icon-btn" title="Zavřít (Esc)">×</button>
+      </div>
+      <div class="dd-acts">
+        <button id="d-upgrade" type="button" class="small primary" hidden></button>
+        <button id="d-firmware" type="button" class="small secondary" hidden></button>
+        <button id="d-backup" type="button" class="small secondary">Zálohovat teď</button>
+        <button id="d-timeline" type="button" class="small secondary" title="Co se na zařízení dělo – události na časové ose">Časová osa</button>
+      </div>
     </div>
     <div class="dd-body">
+      <div id="d-banners" class="dd-banners"></div>
       <div id="d-live" class="live" hidden></div>
       <div id="d-flow"></div>
       <details class="fold d-issues" id="d-issues" hidden><summary id="d-issues-sum"></summary>

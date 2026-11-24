@@ -16,7 +16,7 @@ Snímky jsou z vestavěných testovacích dat (vymyšlená zařízení a adresy)
 
 | | |
 |---|---|
-| ![Mapa lokality](screenshots/map.png) **Mapa lokality** – skutečné zapojení podle bridge tabulek, porty na obou koncích, časová osa událostí | ![Seznam zařízení](screenshots/devices.png) **Zařízení** – filtry podle role, stavu, verze a modelu |
+| ![Mapa lokality](screenshots/map.png) **Mapa lokality** – skutečné zapojení podle bridge tabulek, porty na obou koncích, časová osa událostí | ![Seznam zařízení](screenshots/device-detail.png) **Zařízení** – seznam s filtry, detail zařízení jako boční panel |
 | ![Porty](screenshots/ports.png) **Porty** – rychlost, PoE, co je připojeno, chybovost s pravděpodobnou příčinou, provoz, VLAN | ![Karta bezdrátového spoje](screenshots/wireless-link.png) **Bezdrátové spoje** – provoz, signál, rychlost, ztrátovost a šum na jedné časové ose, odchylky zvýrazněné |
 
 ![Časová osa](screenshots/timeline.png)

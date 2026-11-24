@@ -274,13 +274,20 @@ async function startApp() {
   show("app");
   const who = $("who");
   who.textContent = "";
-  who.appendChild(el("span", me.email + (me.superadmin ? " (superadmin) " : " ")));
-  const out = el("button", __("Odhlásit"), "small secondary");
+  const id = el("div", null, "hmenu-h"); id.append(el("strong", me.email), el("small", me.superadmin ? " superadmin" : ""));
+  const out = el("button", __("Odhlásit"), "hitem");
+  out.type = "button";
   out.onclick = async () => { await api("POST", "/logout").catch(() => {}); location.reload(); };
-  const pw = el("button", __("Heslo"), "small secondary");
-  pw.onclick = () => { showView("users"); $("pw-card").hidden = false; };
-  who.append(pw, " ");
+  const pw = el("button", __("Změnit heslo"), "hitem");
+  pw.type = "button";
+  pw.onclick = () => { hmenuClose(); showView("users"); $("pw-card").hidden = false; };
+  // jazyk patří k uživateli: po přihlášení se přepínač přestěhuje do jeho nabídky
+  const lang = document.querySelector ? document.querySelector(".lang-pick") : null;
+  who.append(id, pw);
+  if (lang) { lang.classList && lang.classList.add("in-menu"); who.appendChild(lang); }
   who.appendChild(out);
+  $("umenu-btn").textContent = me.email;
+  $("umenu").hidden = false; $("hdr-bell").hidden = false;
   $("hdr-tenant").hidden = false;
   $("tenant-card").hidden = !me.superadmin;
   buildNav();
@@ -2260,21 +2267,39 @@ function navIcon(key) {
   return svg;
 }
 
+// položky správy zákazníka (lokality, uživatelé, systém) nejsou v levém pruhu, ale v nabídce „Správa“ v záhlaví
+const TENANT_MENU = { tenant: __("všechny lokality zákazníka"), users: __("účty, role, dvoufázové přihlášení"), system: __("certifikáty, zálohy, čas a DNS") };
 function buildNav() {
   const nav = $("nav-items"); nav.textContent = "";
+  const menu = $("tmenu-list"); while (menu.children.length > 1) menu.removeChild(menu.children[menu.children.length - 1]);
   for (const [key, label, full] of VIEWS) {
     if (key === "system" && !(me && me.superadmin)) continue;
-    if (key === "tenant") nav.appendChild(el("div", null, "nav-sep"));
-    const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key; b.title = full || label;
+    const inMenu = key in TENANT_MENU;
+    const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key; b.title = inMenu ? "" : full || label;
     const lab = el("span", null, "nlabel");
     lab.append(navIcon(key), document.createTextNode(label));
     b.appendChild(lab);
+    if (inMenu) b.appendChild(el("small", TENANT_MENU[key]));
     const badge = el("span", "", "nbadge"); badge.hidden = true;
     b.appendChild(badge); navBadges[key] = badge;
-    b.addEventListener("click", () => { if ($("app").hidden) { show("app"); loadDevices(); } showView(key, true); });
-    nav.appendChild(b);
+    b.addEventListener("click", () => { hmenuClose(); if ($("app").hidden) { show("app"); loadDevices(); } showView(key, true); });
+    (inMenu ? menu : nav).appendChild(b);
   }
 }
+
+// rozbalovací nabídky v záhlaví (správa zákazníka, uživatel): jedna otevřená, zavře klik mimo nebo Esc
+const HMENUS = [["tmenu-btn", "tmenu-list"], ["umenu-btn", "umenu-list"]];
+function hmenuClose() { for (const [b, l] of HMENUS) { $(l).hidden = true; $(b).setAttribute("aria-expanded", "false"); } }
+for (const [b, l] of HMENUS) $(b).addEventListener("click", (e) => {
+  e.stopPropagation(); const open = $(l).hidden; hmenuClose();
+  if (open) { $(l).hidden = false; $(b).setAttribute("aria-expanded", "true"); }
+});
+for (const [, l] of HMENUS) $(l).addEventListener("click", (e) => e.stopPropagation());
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("click", hmenuClose);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hmenuClose(); });
+}
+$("hdr-bell").addEventListener("click", () => openSub("activity", alertsOpen[0] ? "alerts" : plansOpen ? "plans" : "tl"));
 
 // podzáložky sekcí: [klíč, tlačítko, panel, loader]; loadery jsou definované níž (vyhodnotí se při volání)
 const SUBTABS = {
@@ -2587,6 +2612,7 @@ let plansOpen = 0, alertsOpen = [0, 0];
 function activityBadge() { setBadge("activity", plansOpen + alertsOpen[0], alertsOpen[1] ? "bad" : "warn"); }
 
 function setBadge(key, n, cls) {
+  if (key === "activity") { const hb = $("hdr-bell-n"); hb.textContent = n ? String(n) : ""; hb.hidden = !n; hb.className = "hbell-n" + (cls ? " nb-" + cls : ""); }
   const b = navBadges[key]; if (!b) return;
   b.textContent = n ? String(n) : ""; b.hidden = !n; b.className = "nbadge" + (cls ? " nb-" + cls : "");
 }
@@ -2609,6 +2635,13 @@ function openDetailTab(key) {
   if (DETAIL_LOADERS[shown] && detailId) DETAIL_LOADERS[shown](detailId);
 }
 for (const k of [...DETAIL_TABS, ...DIAG_TABS]) $("dt-" + k).addEventListener("click", () => openDetailTab(k));
+// panel detailu: úzký vedle seznamu, tlačítkem jde rozšířit (volba se pamatuje)
+function detailWide(on) {
+  $("detail").className = "dev-drawer" + (on ? " wide" : "");
+  $("d-wide").setAttribute("aria-pressed", String(!!on)); $("d-wide").title = on ? __("Zúžit panel") : __("Rozšířit panel");
+}
+$("d-wide").addEventListener("click", () => { prefs.detailWide = !prefs.detailWide; savePrefs(); detailWide(prefs.detailWide); });
+detailWide(!!prefs.detailWide);
 
 // přepínač ve stylu segmented control: options = [[hodnota, popisek], …]
 function segmented(box, options, value, onChange) {
@@ -5709,7 +5742,16 @@ async function openDetail(id) {
   renderDevices();
   if (!watch || watch.id !== id) { $("d-live").hidden = true; watchDevice(id, null, true); }
   const dev = d.device, sm = d.summary;
-  $("d-title").textContent = `${dev.identity || dev.serial} · ${dev.model || ""}`;
+  $("d-title").textContent = dev.identity || dev.serial;
+  {
+    // podtitul: model · role · stav; nejdůležitější upozornění rovnou jako pruhy nad záložkami
+    const sub = $("d-sub"); sub.textContent = "";
+    const on = dev.state === "adopted" && !(devOf(id) && devOf(id).online === false);
+    const stName = dev.state === "adopted" ? (on ? "online" : "offline") : dev.state;
+    sub.append(document.createTextNode([dev.model, dev.role && dev.role !== "unknown" ? dev.role : null].filter(Boolean).join(" · ") + " · "), el("i", "", "dot " + (on ? "ok" : "bad")), el("span", stName, on ? "st-ok" : "st-bad"));
+    const bn = $("d-banners"); bn.textContent = "";
+    for (const x of (d.warnings || []).slice(0, 2)) bn.appendChild(el("div", x.text, "dd-banner " + (x.severity === "critical" ? "bad" : "warn")));
+  }
   renderQuickInfo($("d-quick"), devOf(id).id === id && devOf(id).serial ? devOf(id) : { ...dev, id }, d);
   const w = $("d-warn"); w.textContent = "";
   for (const x of d.warnings) w.appendChild(el("p", (x.severity === "critical" ? "⚠ " : "ⓘ ") + x.text, "sev-" + (x.severity === "critical" ? "error" : "warning")));
