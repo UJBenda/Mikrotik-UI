@@ -525,9 +525,10 @@ def retention(db: Database, sample_days: int = 14, hourly_days: int = 400, backu
         wlink.retention(tx)
         tx.execute("DELETE FROM port_error_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
         tx.execute("DELETE FROM port_event WHERE at < now() - make_interval(days => %(d)s)", {"d": event_days})
-        # nejnovější záloha zařízení zůstává vždy
+        # verze záloh zařízení promazává devbackup.prune podle pravidel zákazníka (při každé záloze);
+        # tady jen pojistka pro zařízení, která se už nezálohují: nic staršího než `backup_days`, nejnovější zůstává
         tx.execute(
             """DELETE FROM device_backup b WHERE taken_at < now() - make_interval(days => %(d)s)
                AND id <> (SELECT max(id) FROM device_backup x WHERE x.device_id = b.device_id)""",
-            {"d": backup_days})
+            {"d": max(backup_days, 3700)})
 

@@ -526,6 +526,33 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20f) pravidla záloh zařízení izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_backup_policy (tenant_id, mode, keep) VALUES ('00000000-0000-0000-0000-0000000000b1', 'follow', 30);
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_backup_policy) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí pravidla záloh tenanta B'; END IF;
+  UPDATE device_backup_policy SET keep = 1;
+  BEGIN
+    INSERT INTO device_backup_policy (tenant_id) VALUES ('00000000-0000-0000-0000-0000000000b1');
+    RAISE EXCEPTION 'FAIL: tenant A zapsal pravidla záloh tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR unique_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 20f pravidla záloh zařízení izolovaná';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT keep FROM device_backup_policy) <> 30 THEN RAISE EXCEPTION 'FAIL: tenant A změnil pravidla záloh tenanta B'; END IF;
+  IF NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname = 'device_backup_policy') THEN
+    RAISE EXCEPTION 'FAIL: device_backup_policy bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

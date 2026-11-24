@@ -648,7 +648,8 @@ async def request_backup(request: Request, p: Principal, tid: str) -> Response:
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            n = tx.execute("UPDATE device SET backup_at = NULL WHERE id = %(d)s AND state = 'adopted'", {"d": did})
+            n = tx.execute("""UPDATE device SET backup_at = NULL, backup_retry_at = NULL
+                              WHERE id = %(d)s AND state = 'adopted'""", {"d": did})
             if not n:
                 raise ServiceError("zálohu lze vyžádat jen u adoptovaného zařízení")
             audit(tx, "device.backup_requested", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
@@ -658,6 +659,51 @@ async def request_backup(request: Request, p: Principal, tid: str) -> Response:
     return json_response({"ok": True, "detail": "záloha proběhne do minuty"})
 
 
+@endpoint(READ)
+async def device_backups_overview(request: Request, p: Principal, tid: str) -> Response:
+    """Zálohy zařízení: pravidla zákazníka a zařízení se stavem záloh. PUT = pravidla, POST = výběr zařízení."""
+    from .. import devbackup
+
+    st = get_state(request)
+    site = request.query_params.get("site")
+    sid = _uuid(site) if site else None
+    ip = client_ip(request)
+    if request.method != "GET":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        data = await _json(request)
+
+        def w():
+            with tenant_scope(st.db, tid) as tx:
+                if request.method == "PUT":
+                    devbackup.set_policy(tx, tid, data, p.user_id, ip)
+                else:
+                    ids = [str(_uuid(x)) for x in (data.get("device_ids") or [])]
+                    devbackup.select(tx, tid, ids, bool(data.get("enabled")), p.user_id, ip)
+
+        await run_in_threadpool(w)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return devbackup.overview(tx, st.db, tid, sid, st.settings.backup.keep)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def device_backup_versions(request: Request, p: Principal, tid: str) -> Response:
+    from .. import devbackup
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return {"versions": devbackup.versions(tx, did)}
+
+    return json_response(await run_in_threadpool(q))
+
+
 @endpoint(OPERATE)
 async def backup_diff(request: Request, p: Principal, tid: str) -> Response:
     """Diff zálohy proti předchozí – hesla jsou v diffu skrytá."""
@@ -665,8 +711,19 @@ async def backup_diff(request: Request, p: Principal, tid: str) -> Response:
     did = _uuid(request.path_params["device_id"])
     bid = _int(request.path_params["backup_id"], 0, 0, 2**62)
 
+    against = request.query_params.get("against") or "previous"
+
     def q():
         with tenant_scope(st.db, tid) as tx:
+            if against == "latest":
+                # co by se změnilo návratem k této verzi: aktuální (nejnovější) → vybraná verze
+                last = tx.fetchone("SELECT id FROM device_backup WHERE device_id = %(d)s ORDER BY id DESC LIMIT 1", {"d": did})
+                cur = backup.load_text(tx, st.box, did, last["id"]) if last else ""
+                sel = backup.load_text(tx, st.box, did, bid)
+                audit(tx, "device.backup_diff", tenant_id=tid, user_id=p.user_id, target=f"device:{did}",
+                      after={"backup_id": bid, "against": "latest"}, ip=client_ip(request))
+                return {"diff": backup.diff(cur, sel, names=("aktuální", "vybraná verze")) if last and last["id"] != bid else "",
+                        "latest_id": last["id"] if last else None}
             prev = tx.fetchone("""SELECT id FROM device_backup WHERE device_id = %(d)s AND id < %(b)s
                                   ORDER BY id DESC LIMIT 1""", {"d": did, "b": bid})
             new = backup.load_text(tx, st.box, did, bid)
@@ -1994,6 +2051,8 @@ def routes() -> list[Route]:
         Route(d + "/gateway", device_gateway_put, methods=["PUT"]),
         Route(d + "/internet", device_internet_put, methods=["PUT"]),
         Route(d + "/backup", request_backup, methods=["POST"]),
+        Route(T + "/device-backups", device_backups_overview, methods=["GET", "PUT", "POST"]),
+        Route(d + "/backups", device_backup_versions, methods=["GET"]),
         Route(d + "/backups/{backup_id}/diff", backup_diff, methods=["GET"]),
         Route(d + "/backups/{backup_id}/download", backup_download, methods=["GET"]),
         Route(d + "/vlan-migration", vlan_migration, methods=["GET"]),

@@ -120,7 +120,9 @@ def _ctx(device_id: Any) -> bytes:
 
 
 def store(db: Database, box: SecretBox, tenant_id: Any, device_id: Any, text: str,
-          reason: str = "scheduled") -> dict:
+          reason: str = "scheduled", only_changes: bool = False, policy: dict | None = None) -> dict:
+    """Uloží export jako novou verzi. `only_changes`: beze změny se nová verze nezakládá (jen se posune čas
+    poslední zálohy). `policy`: retence – po uložení se promažou starší verze zařízení."""
     raw = text.encode()
     content_sha = hashlib.sha256(normalize(text).encode()).hexdigest()
     sealed = box.seal(raw, _ctx(device_id))
@@ -129,6 +131,9 @@ def store(db: Database, box: SecretBox, tenant_id: Any, device_id: Any, text: st
             "SELECT content_sha FROM device_backup WHERE device_id = %(d)s ORDER BY id DESC LIMIT 1",
             {"d": str(device_id)})
         changed = prev is None or prev["content_sha"] != content_sha
+        if only_changes and not changed and reason == "scheduled":
+            tx.execute("UPDATE device SET backup_at = now(), backup_error = NULL, backup_retry_at = NULL WHERE id = %(d)s", {"d": str(device_id)})
+            return {"id": None, "changed": False, "skipped": True}
         row = tx.fetchone(
             """INSERT INTO device_backup (tenant_id, device_id, reason, size_bytes, sha256, content_sha,
                    changed, wrapped_key, ciphertext, key_version)
@@ -137,7 +142,11 @@ def store(db: Database, box: SecretBox, tenant_id: Any, device_id: Any, text: st
             {"t": str(tenant_id), "d": str(device_id), "r": reason, "sz": len(raw),
              "sha": hashlib.sha256(raw).hexdigest(), "csha": content_sha, "ch": changed,
              "w": sealed.wrapped_key, "c": sealed.ciphertext, "kv": sealed.key_version})
-        tx.execute("UPDATE device SET backup_at = now() WHERE id = %(d)s", {"d": str(device_id)})
+        tx.execute("UPDATE device SET backup_at = now(), backup_error = NULL, backup_retry_at = NULL WHERE id = %(d)s", {"d": str(device_id)})
+        if policy:
+            from . import devbackup
+
+            devbackup.prune(tx, device_id, policy)
         if changed and prev is not None:
             # změna konfigurace od poslední zálohy – pokud ji neprovedl controller, je to drift
             recent_plan = tx.fetchone(
@@ -171,9 +180,9 @@ def redact(text: str, key: bytes) -> str:
     return _SECRET_RE.sub(sub, text)
 
 
-def diff(old: str, new: str, context: int = 3) -> str:
+def diff(old: str, new: str, context: int = 3, names: tuple[str, str] = ("předchozí", "aktuální")) -> str:
     key = os.urandom(16)
     return "".join(difflib.unified_diff(
         redact(normalize(old), key).splitlines(keepends=True),
         redact(normalize(new), key).splitlines(keepends=True),
-        fromfile="předchozí", tofile="aktuální", n=context))
+        fromfile=names[0], tofile=names[1], n=context))

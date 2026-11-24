@@ -270,6 +270,7 @@
               <button id="net-btn" type="button">Sítě</button>
               <button id="wifi-btn" type="button">Wi-Fi</button>
               <button id="prof-btn" type="button">Profily portů</button>
+              <button id="devbk-btn" type="button">Zálohy zařízení</button>
               <button id="sys-btn" type="button">Systém a nasazení</button>
             </div>
           </div>
@@ -410,6 +411,41 @@
       </div>
       <div id="prof-wrap" class="pane" hidden>
         <div class="card-lite" id="sp-profiles"></div>
+      </div>
+      <div id="devbk-wrap" class="pane" hidden>
+        <div class="card-lite">
+          <h3>Pravidla zálohování <span class="muted small">platí pro všechna vybraná zařízení zákazníka</span></h3>
+          <form id="dbk-form" class="bk-form">
+            <div class="bk-row">
+              <label class="check"><input type="radio" name="dbk-mode" id="dbk-follow" value="follow"> <span id="dbk-follow-l">Řídit se zálohou controlleru</span></label>
+            </div>
+            <div class="bk-row">
+              <label class="check"><input type="radio" name="dbk-mode" id="dbk-custom" value="custom"> Vlastní pravidla:</label>
+              <label>zálohovat <select id="dbk-every">
+                <option value="6">každých 6 hodin</option><option value="12">každých 12 hodin</option>
+                <option value="24">denně</option><option value="168">týdně</option></select></label>
+            </div>
+            <div class="bk-row bk-ret" id="dbk-ret">
+              <label>Posledních <input id="dbk-keep" type="number" min="1" max="365" required> <span class="muted">verzí</span></label>
+              <label>+ týdenní <input id="dbk-weekly" type="number" min="0" max="104" value="0"> <span class="muted">týdnů zpět</span></label>
+              <label>+ měsíční <input id="dbk-monthly" type="number" min="0" max="120" value="0"> <span class="muted">měsíců zpět</span></label>
+            </div>
+            <div class="bk-row">
+              <label class="check"><input type="checkbox" id="dbk-changes"> Novou verzi ukládat jen při změně konfigurace</label>
+            </div>
+            <p id="dbk-sum" class="muted"></p>
+            <button type="submit" class="small">Uložit pravidla</button>
+          </form>
+          <p class="muted">Zálohy zařízení jsou uložené šifrovaně v databázi controlleru – jsou tedy součástí každé zálohy
+            controlleru i jejích kopií v cloudu.</p>
+        </div>
+        <div class="card-lite">
+          <h3>Zařízení <span id="dbk-count" class="muted small"></span></h3>
+          <table class="dbk-t"><thead><tr>
+            <th><input type="checkbox" id="dbk-all" title="Zálohovat všechna zařízení v seznamu" aria-label="Zálohovat všechna zařízení v seznamu"></th>
+            <th>Zařízení</th><th>Režim</th><th>Poslední záloha</th><th>Verzí</th><th>Poslední změna</th><th>Stav</th><th></th></tr></thead>
+            <tbody id="dbk-list"></tbody></table>
+        </div>
       </div>
       <div id="sys-wrap" class="pane" hidden>
       <div class="card-lite">
@@ -933,6 +969,18 @@
     </div>
   </section>
 
+  <div id="dbv-dlg" class="modal" hidden>
+    <div class="modal-box wide" role="dialog" aria-modal="true" aria-labelledby="dbv-title">
+      <div class="sd-head"><h3 id="dbv-title">Verze záloh</h3><button id="dbv-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
+      <p class="muted small">„Porovnat“ ukáže, co by se změnilo návratem k vybrané verzi (hesla jsou zamaskovaná).
+        Obnovu na zařízení controller zatím sám nespouští – export stáhni a nahraj ručně.</p>
+      <div class="dbv-cols">
+        <div class="ptable-wrap dbv-list"><table><thead><tr><th>Verze</th><th>Důvod</th><th>Velikost</th><th></th></tr></thead>
+          <tbody id="dbv-list"></tbody></table></div>
+        <pre id="dbv-diff" class="dbv-diff" hidden></pre>
+      </div>
+    </div>
+  </div>
   <div id="maint-dlg" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="maint-title">
       <div class="sd-head"><h3 id="maint-title">Servisní okno</h3></div>

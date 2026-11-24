@@ -13,6 +13,7 @@ Každých 10 min:
 from __future__ import annotations
 
 import logging
+import uuid
 import os
 import signal
 import threading
@@ -165,26 +166,36 @@ def poll_inventory(db: Database, box: SecretBox, limit: int = 200, urgent: bool 
         return sum(pool.map(one, due))
 
 
-def run_backups(db: Database, box: SecretBox, limit: int = BACKUPS_PER_TICK) -> int:
-    from .. import backup
+def run_backups(db: Database, box: SecretBox, limit: int = BACKUPS_PER_TICK, keep_default: int = 14) -> int:
+    """Zálohy konfigurace zařízení podle pravidel zákazníka (devbackup): jen vybraná zařízení, interval nebo
+    termín plánu controlleru, retence verzí. Vyžádaná záloha (backup_at NULL) jde hned."""
+    from .. import backup, devbackup
 
-    due = _due(db, box, f"backup_at IS NULL OR backup_at < now() - interval '{BACKUP_EVERY_HOURS} hours'", limit)
+    cuts, pols = devbackup.cutoffs(db, keep_default)
+    if cuts:
+        vals = ", ".join(f"('{uuid.UUID(t)}'::uuid, '{c.isoformat()}'::timestamptz)" for t, c in cuts.items())
+        cut = f"coalesce((SELECT c.cut FROM (VALUES {vals}) c(t, cut) WHERE c.t = device.tenant_id), now() - interval '{BACKUP_EVERY_HOURS} hours')"
+    else:
+        cut = f"now() - interval '{BACKUP_EVERY_HOURS} hours'"
+    due = _due(db, box, f"backup_enabled AND (backup_retry_at IS NULL OR backup_retry_at < now()) "
+                        f"AND (backup_at IS NULL OR backup_at < {cut})", limit)
     done = 0
     for d, api in due:
         api.timeout = 30.0
+        pol = pols.get(str(d["tenant_id"])) or devbackup.DEFAULT
         try:
             try:
                 text = backup.fetch_export(api)
             finally:
                 _close(api)
-            backup.store(db, box, d["tenant_id"], d["id"], text)
+            backup.store(db, box, d["tenant_id"], d["id"], text, only_changes=pol["only_changes"], policy=pol)
             done += 1
         except Exception as e:
             log.warning("záloha %s selhala: %s", d["serial"], e)
-            # zkusit znovu až za hodinu, ne v každém ticku
+            # zkusit znovu až za hodinu, ne v každém ticku; chybu ukázat v přehledu záloh
             with operator_scope(db) as tx:
-                tx.execute("UPDATE device SET backup_at = now() - interval '23 hours' WHERE id = %(d)s",
-                           {"d": str(d["id"])})
+                tx.execute("""UPDATE device SET backup_error = %(e)s, backup_retry_at = now() + interval '1 hour'
+                              WHERE id = %(d)s""", {"d": str(d["id"]), "e": str(e)[:300]})
     return done
 
 
@@ -249,7 +260,7 @@ def run(settings: Settings, db: Database, box: SecretBox, providers: list[Tunnel
                            ("requeue", lambda: requeue_stale(db)),
                            ("verify", lambda: verify_provisioning(db, box)),
                            ("inventory", lambda: poll_inventory(db, box, settings=settings)),
-                           ("backup", lambda: run_backups(db, box)),
+                           ("backup", lambda: run_backups(db, box, keep_default=settings.backup.keep)),
                            ("updates", lambda: check_updates(db, box)),
                            ("autoupdate", lambda: autoupdate.run(db)),
                            ("upgrades", lambda: upgrades.advance(db)),

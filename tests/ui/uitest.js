@@ -298,6 +298,34 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         if (byId["view-devices"].hidden || byId["links-wrap"].hidden || !byId["wl-side"].textContent.includes("Všechny spoje (1)")) errors.push("mapa: klik na spoj neotevřel kartu");
       }
     }
+    // zálohy zařízení: pravidla zákazníka, výběr zařízení, verze a porovnání s aktuální konfigurací
+    await byId["nav-settings"].fire("click");
+    await byId["devbk-btn"].fire("click");
+    await tlTick(); await tlTick();
+    {
+      const rows = byId["dbk-list"].children;
+      if (byId["devbk-wrap"].hidden || rows.length !== 3) errors.push("zálohy zařízení: seznam " + rows.length);
+      else {
+        if (!byId["dbk-custom"].checked || byId["dbk-keep"].value != 14 || !byId["dbk-changes"].checked) errors.push("zálohy zařízení: pravidla");
+        if (!byId["dbk-sum"].textContent.includes("nejvýš 26 verzí (14 posledních + 12 měsíčních)") || !byId["dbk-sum"].textContent.includes("seznam změn")) errors.push("zálohy zařízení: souhrn " + byId["dbk-sum"].textContent);
+        if (byId["dbk-count"].textContent !== "2 z 3 se zálohuje" || byId["dbk-all"].checked) errors.push("zálohy zařízení: počet " + byId["dbk-count"].textContent);
+        if (!rows[0].textContent.includes("řízené") || !rows[1].textContent.includes("sledované") || !rows[1].textContent.includes("chyba: export soubor") || !rows[2].textContent.includes("nezálohuje se")) errors.push("zálohy zařízení: řádky " + rows[1].textContent);
+        const n0 = requests.length, cb = rows[2].children[0].children[0];
+        cb.checked = true; await cb.fire("change"); await tlTick();
+        if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/device-backups"))) errors.push("zálohy zařízení: zaškrtnutí neodeslalo výběr");
+        byId["dbk-follow"].checked = true; byId["dbk-custom"].checked = false; await byId["dbk-follow"].fire("change");
+        if (!byId["dbk-keep"].disabled || !byId["dbk-sum"].textContent.includes("jako záloha controlleru (02:30)")) errors.push("zálohy zařízení: režim podle controlleru " + byId["dbk-sum"].textContent);
+        const btn = byId["dbk-list"].children[0].children[7].children[0].children[0];
+        await btn.fire("click"); await tlTick();
+        const vr = byId["dbv-list"].children;
+        if (byId["dbv-dlg"].hidden || vr.length !== 3 || !vr[0].textContent.includes("aktuální") || vr[0].textContent.includes("Porovnat")) errors.push("zálohy zařízení: verze " + vr.length);
+        else {
+          await vr[1].children[3].children[0].children[0].fire("click"); await tlTick();
+          if (byId["dbv-diff"].hidden || !byId["dbv-diff"].textContent.includes("+++ vybraná verze") || vr[1].className !== "selected") errors.push("zálohy zařízení: porovnání");
+        }
+        await byId["dbv-close"].fire("click");
+      }
+    }
     // sekce Porty: schéma, filtry, tabulka s připojeným zařízením/klientem, přehled VLAN
     await byId["nav-ports"].fire("click");
     await tlTick();

@@ -1447,3 +1447,22 @@ Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 
   `device_start` vrátí odkaz (`paste: true`), správce vloží kód přes akci `code` (`auth_code`). Nahrání
   jedním voláním do 100 MiB, větší relací po 8 MiB (`upload_session/start|append_v2|finish`), výpis
   `list_folder`, mazání `delete_v2`. Ověřeno jen proti napodobenému API.
+
+## Zálohy zařízení (výběr, pravidla zákazníka, verze)
+
+Modul `devbackup.py`, migrace 0033 (`device.backup_enabled`, `backup_error`, `backup_retry_at`, tabulka
+`device_backup_policy` s RLS, kontrola 20f). UI: Nastavení → Zálohy zařízení.
+
+- **Výběr:** u každého adoptovaného zařízení (řízeného i jen sledovaného) jde zálohování vypnout.
+- **Pravidla (jedna pro zákazníka):** `follow` = termín a retence podle plánu zálohy controlleru,
+  `custom` = vlastní interval a retence (posledních N + týdenní + měsíční verze, `retention.select_dated`),
+  `only_changes` = nová verze jen při změně konfigurace. Výchozí (bez řádku) odpovídá dřívějšímu chování:
+  denně, 365 verzí. `worker.run_backups` bere jen vybraná zařízení starší než hranice zákazníka
+  (`devbackup.cutoffs`), po uložení promaže verze (`prune`); chyba se zapíše k zařízení a další pokus je za hodinu.
+- **Verze:** `GET …/devices/{id}/backups`; `…/backups/{bid}/diff?against=latest` = co by se změnilo návratem
+  k verzi (hesla maskovaná). Stažení exportu zůstává jen pro správce zákazníka a je auditované.
+- **Součást zálohy controlleru:** verze jsou šifrovaně v DB, takže jsou v každé záloze controlleru i v cloudu.
+- **Obnova na zařízení se zatím nespouští.** Textový export nejde vrátit bez resetu zařízení
+  (`reset-configuration run-after-reset`), při kterém zaniknou certifikáty tunelu a REST – vzdálené zařízení by
+  se odřízlo. Řešení (reset + export + nová adopce v jednom skriptu, nebo binární zálohy na zařízení) je potřeba
+  nejdřív vyzkoušet na skutečném zařízení.

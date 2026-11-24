@@ -39,20 +39,26 @@ def number(key: str, v: Any) -> int:
     return n
 
 
-def select(names: Iterable[str], keep: int, weekly: int = 0, monthly: int = 0) -> set[str]:
-    """Které zálohy zůstanou. Soubory bez času v názvu se nikdy nemažou (nejsou naše)."""
-    dated = sorted(((stamp(n), n) for n in names if stamp(n)), reverse=True)   # nejnovější první
-    kept = {n for n in names if not stamp(n)}
-    kept.update(n for _, n in dated[:max(1, keep)])
+def select_dated(items: Iterable[tuple[dt.datetime, Any]], keep: int, weekly: int = 0, monthly: int = 0) -> set:
+    """Jádro výběru nad dvojicemi (čas, klíč): vrací klíče, které zůstanou."""
+    dated = sorted(items, key=lambda x: x[0], reverse=True)   # nejnovější první
+    kept = {k for _, k in dated[:max(1, keep)]}
     for count, key in ((weekly, lambda d: tuple(d.isocalendar()[:2])), (monthly, lambda d: (d.year, d.month))):
         if count <= 0:
             continue
-        first: dict[tuple, str] = {}
-        for d, n in dated:                 # jde od nejnovější → poslední zápis období je jeho nejstarší záloha
-            first[key(d)] = n
+        first: dict[tuple, Any] = {}
+        for d, k in dated:                 # jde od nejnovější → poslední zápis období je jeho nejstarší záloha
+            first[key(d)] = k
         for period in sorted(first, reverse=True)[:count]:
             kept.add(first[period])
     return kept
+
+
+def select(names: Iterable[str], keep: int, weekly: int = 0, monthly: int = 0) -> set[str]:
+    """Které zálohy zůstanou. Soubory bez času v názvu se nikdy nemažou (nejsou naše)."""
+    names = list(names)
+    kept = {n for n in names if not stamp(n)}
+    return kept | select_dated([(stamp(n), n) for n in names if stamp(n)], keep, weekly, monthly)
 
 
 def describe(keep: int, weekly: int = 0, monthly: int = 0) -> str:

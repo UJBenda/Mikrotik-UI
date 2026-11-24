@@ -1589,3 +1589,18 @@ header { z-index: 45; }
 .bt-pastebox { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .bt-paste { width: 230px; height: 28px; }
 #view-backups .card { border: 0; }
+
+/* --- zálohy zařízení --- */
+.dbk-t { width: 100%; border-collapse: collapse; } .dbk-t tr.off td { color: var(--muted); }
+.dbk-t th:first-child, .dbk-t td:first-child { width: 34px; }
+.dbv-cols { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(0, 1.3fr); gap: 14px; align-items: start; }
+.dbv-list { max-height: 60vh; overflow: auto; }
+.dbv-diff { margin: 0; max-height: 60vh; overflow: auto; font-size: 12px; line-height: 1.45; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--hover); white-space: pre-wrap; }
+#dbv-list tr.selected td { background: var(--accent-weak); }
+.sev-ok { color: var(--ok); }
+@media (max-width: 900px) { .dbv-cols { grid-template-columns: 1fr; } }
+#dbv-dlg .modal-box { width: min(1180px, 96vw); max-width: none; }
+.dbv-cols { grid-template-columns: minmax(570px, 1fr) minmax(0, 1fr); }
+#dbv-list td:first-child { white-space: nowrap; }
+.dbv-list { overflow-x: visible; }
+.dbv-diff { white-space: pre; }

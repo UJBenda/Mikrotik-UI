@@ -2365,6 +2365,7 @@ const SUBTABS = {
   ports: [["ports", null, null, () => loadPortMap()]],
   settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
+             ["devbk", "devbk-btn", "devbk-wrap", () => loadDevBackups()],
              ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
   activity: [["tl", "tl-btn", "tl-wrap", () => loadTimeline()], ["avail", "avail-btn", "avail-wrap", () => loadAvail()], ["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
              ["audit", "audit-btn", "audit-wrap", () => loadAudit()]],
@@ -2413,6 +2414,7 @@ const GS_PLACES = [
   [__("Porty všech switchů"), __("Zařízení"), "porty poe vlan ports", "devices", "sports"],
   [__("Porty: schéma, VLAN, provoz"), __("Porty"), "porty port poe vlan rychlost linka schema ports speed stats provoz", "ports", null],
   [__("Bezdrátové spoje: signál, ztrátovost, anomálie"), __("Zařízení"), "spoje spoj ptp link signal ztratovost odezva ruseni bezdratovy wireless", "devices", "links"],
+  [__("Zálohy zařízení: výběr, pravidla, verze"), __("Nastavení"), "zaloha zalohy zarizeni konfigurace export verze obnova retence backup restore", "settings", "devbk"],
   [__("Klienti"), __("Klienti"), "klienti wifi mac ip clients history historie", "clients", null],
   [__("Sítě (VLAN, podsítě)"), __("Nastavení"), "site vlan podsit dhcp subnet networks zamer", "settings", "net"],
   [__("Wi-Fi (SSID, hesla, kanály)"), __("Nastavení"), "wifi ssid heslo capsman kanaly channels password", "settings", "wifi"],
@@ -4231,6 +4233,99 @@ function drawMlag() {
   box.appendChild(f);
 }
 
+
+// --- zálohy zařízení: které zálohovat, společná pravidla zákazníka, verze a porovnání ----------------------
+let dbk = null;
+const DBK_REASON = { scheduled: __("plánovaná"), manual: __("ruční"), request: __("vyžádaná"), "pre-change": __("před změnou") };
+function dbkSum() {
+  if (!dbk) return;
+  const follow = $("dbk-follow").checked, pl = dbk.plan || {};
+  const k = follow ? pl.keep : Number($("dbk-keep").value) || 0, w = follow ? pl.weekly : Number($("dbk-weekly").value) || 0, m = follow ? pl.monthly : Number($("dbk-monthly").value) || 0;
+  for (const id of ["dbk-every", "dbk-keep", "dbk-weekly", "dbk-monthly"]) $(id).disabled = follow;
+  const when = follow ? (pl.enabled ? __`ve stejný čas jako záloha controlleru (${pl.time})` : __("denně (plán zálohy controlleru je vypnutý)")) : $("dbk-every").selectedOptions && $("dbk-every").selectedOptions[0] ? $("dbk-every").selectedOptions[0].textContent : "";
+  $("dbk-sum").textContent = __`Každé vybrané zařízení se zálohuje ${when}; u každého zůstane nejvýš ${k + (w || 0) + (m || 0)} verzí (${retText(k, w, m)}).`
+    + ($("dbk-changes").checked ? " " + __("Verze beze změny se neukládají, takže seznam verzí = seznam změn.") : "");
+}
+async function loadDevBackups(method, body) {
+  if (!tenantId) return;
+  try {
+    if (method) await api(method, `/tenants/${tenantId}/device-backups`, body);
+    dbk = await api("GET", `/tenants/${tenantId}/device-backups?site=${siteId() || ""}`);
+  } catch (e) { return msg(e.message, true); }
+  const p = dbk.policy, pl = dbk.plan || {};
+  $("dbk-follow").checked = p.mode === "follow"; $("dbk-custom").checked = p.mode !== "follow";
+  $("dbk-follow-l").textContent = __("Řídit se zálohou controlleru") + (pl.enabled ? ` (${pl.time}, ${retText(pl.keep, pl.weekly, pl.monthly)})` : " " + __("(plán je vypnutý)"));
+  $("dbk-every").value = String([6, 12, 24, 168].includes(p.every_hours) ? p.every_hours : 24);
+  $("dbk-keep").value = p.keep; $("dbk-weekly").value = p.weekly; $("dbk-monthly").value = p.monthly; $("dbk-changes").checked = !!p.only_changes;
+  dbkSum();
+  const tb = $("dbk-list"); tb.textContent = "";
+  const devs = dbk.devices || [];
+  $("dbk-count").textContent = __`${devs.filter((d) => d.enabled).length} z ${devs.length} se zálohuje`;
+  $("dbk-all").checked = devs.length > 0 && devs.every((d) => d.enabled);
+  for (const d of devs) {
+    const tr = el("tr", null, d.enabled ? "" : "off");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = !!d.enabled; cb.setAttribute("aria-label", __`Zálohovat ${d.name}`);
+    cb.addEventListener("change", () => loadDevBackups("POST", { device_ids: [d.id], enabled: cb.checked }));
+    const c0 = el("td"); c0.appendChild(cb);
+    const nm = el("td"); nm.append(el("strong", d.name), el("small", " " + (d.model || ""), "muted"));
+    const st = el("td", !d.enabled ? __("nezálohuje se") : d.error ? __("chyba: ") + d.error : !d.reachable || d.state !== "adopted" ? __("zařízení není dostupné") : d.versions ? __("v pořádku") : __("čeká na první zálohu"),
+                  !d.enabled ? "muted" : d.error ? "sev-error" : d.versions && d.reachable ? "sev-ok" : "muted");
+    const acts = el("td"), box = el("div", null, "bt-acts");
+    const vb = el("button", __`Verze (${d.versions})`, "small secondary"); vb.type = "button"; vb.disabled = !d.versions;
+    vb.addEventListener("click", () => openDevVersions(d));
+    const nb = el("button", __("Zálohovat teď"), "small secondary"); nb.type = "button"; nb.disabled = !d.enabled || d.state !== "adopted";
+    nb.addEventListener("click", async () => {
+      try { await api("POST", `/tenants/${tenantId}/devices/${d.id}/backup`, {}); msg(__`${d.name}: záloha proběhne do minuty`); } catch (e) { msg(e.message, true); }
+    });
+    box.append(vb, nb); acts.appendChild(box);
+    tr.append(c0, nm, el("td", d.managed ? __("řízené") : __("sledované"), "muted"), el("td", d.backup_at ? fmtTime(d.backup_at) : "–"),
+              el("td", d.versions ? `${d.versions}` + (d.bytes ? ` · ${fmtBytes(d.bytes)}` : "") : "–"), el("td", d.last_change ? fmtTime(d.last_change) : "–"), st, acts);
+    tb.appendChild(tr);
+  }
+  if (!devs.length) { const tr = el("tr"), td = el("td", __("V této lokalitě není žádné adoptované zařízení."), "muted"); td.colSpan = 8; tr.appendChild(td); tb.appendChild(tr); }
+}
+for (const id of ["dbk-follow", "dbk-custom", "dbk-every", "dbk-keep", "dbk-weekly", "dbk-monthly", "dbk-changes"]) {
+  $(id).addEventListener("change", dbkSum); $(id).addEventListener("input", dbkSum);
+}
+$("dbk-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await loadDevBackups("PUT", { mode: $("dbk-follow").checked ? "follow" : "custom", every_hours: Number($("dbk-every").value), only_changes: $("dbk-changes").checked,
+                                keep: Number($("dbk-keep").value), weekly: Number($("dbk-weekly").value) || 0, monthly: Number($("dbk-monthly").value) || 0 });
+  msg(__("Pravidla záloh zařízení uložena"));
+});
+$("dbk-all").addEventListener("change", () => {
+  if (!dbk) return;
+  loadDevBackups("POST", { device_ids: dbk.devices.map((d) => d.id), enabled: $("dbk-all").checked });
+});
+async function openDevVersions(d) {
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/devices/${d.id}/backups`); } catch (e) { return msg(e.message, true); }
+  $("dbv-title").textContent = __`Verze záloh: ${d.name}`;
+  const tb = $("dbv-list"); tb.textContent = ""; $("dbv-diff").hidden = true;
+  for (const v of r.versions) {
+    const tr = el("tr");
+    const when = el("td"); when.append(document.createTextNode(new Date(v.taken_at).toLocaleString(LOCALE)), el("small", v.latest ? " · " + __("aktuální") : v.changed ? " · " + __("změna") : "", v.latest ? "sev-ok" : "muted"));
+    const acts = el("td"), box = el("div", null, "bt-acts");
+    if (!v.latest) {
+      const cmp = el("button", __("Porovnat s aktuální"), "small secondary"); cmp.type = "button";
+      cmp.addEventListener("click", async () => {
+        try {
+          const x = await api("GET", `/tenants/${tenantId}/devices/${d.id}/backups/${v.id}/diff?against=latest`);
+          const pre = $("dbv-diff"); pre.textContent = x.diff || __("Tato verze je stejná jako aktuální konfigurace."); pre.hidden = false;
+          for (const row of tb.children) row.className = row === tr ? "selected" : "";
+        } catch (e) { msg(e.message, true); }
+      });
+      box.appendChild(cmp);
+    }
+    const a = el("a", __("Stáhnout"), "small"); a.href = `/api/admin/tenants/${tenantId}/devices/${d.id}/backups/${v.id}/download`;
+    a.title = __("Celý export včetně hesel (jen admin tenanta, auditováno)");
+    box.appendChild(a); acts.appendChild(box);
+    tr.append(when, el("td", DBK_REASON[v.reason] || v.reason, "muted"), el("td", fmtBytes(v.size), "muted"), acts);
+    tb.appendChild(tr);
+  }
+  $("dbv-dlg").hidden = false;
+}
+$("dbv-close").addEventListener("click", () => { $("dbv-dlg").hidden = true; });
 
 // --- bezdrátové spoje: seznam a karta spoje (provoz, signál, rychlost, ztrátovost, rušení na jedné ose) -------
 const wl = { links: null, sel: null, hours: 24, data: null, traffic: null };
