@@ -1414,7 +1414,13 @@ function renderClients() {
     const wifi = clIsWifi(c);
     conn.appendChild(el("span", wifi ? __("Wi-Fi") : __("Kabel"), "cl-kind " + (wifi ? "wifi" : "wired")));
     conn.appendChild(document.createTextNode(" " + (c.device || "?")));
-    conn.appendChild(el("div", wifi ? (ssid || "") : (c.port || "") + (c.uncertain ? " ?" : ""), "muted small"));
+    const where = el("div", wifi ? (ssid || "") : (c.port || "") + (c.uncertain ? " ?" : ""), "muted small");
+    if (!wifi && c.unmanaged) {
+      where.appendChild(el("span", " · " + __("za nespravovaným switchem"), "cl-usw"));
+      where.title = c.shared ? __("Na stejném portu visí i spravované zařízení – mezi nimi je nespravovaný switch nebo cizí spoj.")
+        : __`Tento port sdílí ${c.port_clients} klientů – za portem je nespravovaný switch.`;
+    } else if (!wifi && c.uncertain) where.title = __("Poloha je nejistá: klient je vidět jako koncový na více zařízeních, nebo jen na portech mezi zařízeními.");
+    conn.appendChild(where);
     const sig = el("td");
     if (signal) { sig.appendChild(signalBars(signal)); sig.appendChild(el("span", ` ${signal} dBm`, "muted small")); }
     const macTd = el("td", c.mac, "mono");
@@ -5325,7 +5331,10 @@ function drawInfra() {
       pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH + 6, rx: 8 }));
       if (c.logo) pill.appendChild(svgEl("image", { href: logoUrl(c.logo), x: x - EW / 2 + 6, y: top + 7, width: 32, height: 32, preserveAspectRatio: "xMidYMid meet" }));
       else {
-        pill.appendChild(svgEl("circle", { cx: x - EW / 2 + 22, cy: top + 23, r: 15, class: "cav-c", style: `--h:${vendorHue(c.vendor_key || c.vendor)}` }));
+        const cav = svgEl("circle", { cx: x - EW / 2 + 22, cy: top + 23, r: 15, class: "cav-c" });
+        // barva podle výrobce přes CSSOM (atribut style blokuje CSP)
+        if (cav.style && cav.style.setProperty) cav.style.setProperty("--h", String(vendorHue(c.vendor_key || c.vendor)));
+        pill.appendChild(cav);
         pill.appendChild(svgEl("text", { x: x - EW / 2 + 22, y: top + 28, class: c.icon ? "cav-e" : "cav-t" },
           c.icon && CLIENT_ICONS[c.icon] ? CLIENT_ICONS[c.icon] : vendorInitials(c.vendor)));
       }
@@ -5354,10 +5363,15 @@ function drawInfra() {
     if (n.kind === "hub") {
       // nespravovaný switch / síť: zařízení se na něm vidí navzájem (MNDP), přímé spoje nejdou určit
       const hub = g("hub");
-      hub.appendChild(svgEl("title", {}, __("Zařízení se vidí na stejném portu – je mezi nimi nespravovaný switch nebo síť.\nPro přesnou mapu zapni LLDP.")));
+      const ncl = (n.clients || []).length;
+      hub.appendChild(svgEl("title", {}, n.guess
+        ? __("Na tomto portu visí spravované zařízení i drátoví klienti zároveň – mezi nimi je něco, co větví\n(nespravovaný switch, cizí bezdrátový spoj). Controller ho nevidí, jen odvodil z tabulek MAC adres.")
+        : __("Zařízení se vidí na stejném portu – je mezi nimi nespravovaný switch nebo síť.\nPro přesnou mapu zapni LLDP.")));
       hub.appendChild(svgEl("rect", { x: x - NW / 2, y: top + 8, width: NW, height: NH - 16, rx: 10, class: "card" }));
-      hub.appendChild(svgEl("text", { x, y: top + 31, class: "title c" }, __("⇄ nespravovaný switch / síť")));
-      hub.appendChild(svgEl("text", { x, y: top + 48, class: "sub c" }, __`propojuje ${n.members.length} zařízení`));
+      hub.appendChild(svgEl("text", { x, y: top + 31, class: "title c" }, n.guess ? __("⇄ nespravovaný switch") : __("⇄ nespravovaný switch / síť")));
+      hub.appendChild(svgEl("text", { x, y: top + 48, class: "sub c" }, n.guess
+        ? __`odhad · ${n.members.length - 1} zařízení` + (ncl ? __`, ${ncl} klientů` : "")
+        : __`propojuje ${n.members.length} zařízení`));
       nodes.appendChild(hub);
       continue;
     }

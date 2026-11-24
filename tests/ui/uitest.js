@@ -138,7 +138,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // CSP (style-src 'self') blokuje atribut style – styly se smí nastavovat jen přes CSSOM nebo třídy
     {
       const src = require("fs").readFileSync(process.argv[2], "utf8");
-      if (/setAttribute\(\s*["']style["']/.test(src) || /style\s*=\s*["'`][^"'`]*:/.test(src.replace(/\.style\.[a-zA-Z]+ = /g, ""))) errors.push("app.js nastavuje atribut style – v produkci ho zablokuje CSP");
+      if (/setAttribute\(\s*["']style["']/.test(src) || /[{,]\s*style:\s*[`"']/.test(src) || /style\s*=\s*["'`][^"'`]*:/.test(src.replace(/\.style\.[a-zA-Z]+ = /g, ""))) errors.push("app.js nastavuje atribut style – v produkci ho zablokuje CSP");
       if (/\sstyle="/.test(require("fs").readFileSync(process.argv[3], "utf8"))) errors.push("index.html obsahuje atribut style – zablokuje ho CSP");
     }
     // levá navigace: 6 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání

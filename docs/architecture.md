@@ -1466,3 +1466,20 @@ Modul `devbackup.py`, migrace 0033 (`device.backup_enabled`, `backup_error`, `ba
   (`reset-configuration run-after-reset`), při kterém zaniknou certifikáty tunelu a REST – vzdálené zařízení by
   se odřízlo. Řešení (reset + export + nová adopce v jednom skriptu, nebo binární zálohy na zařízení) je potřeba
   nejdřív vyzkoušet na skutečném zařízení.
+
+## Poloha klientů za nespravovaným switchem („fantomoví klienti pod AP“)
+
+Problém: AP zapojené přes hloupý switch nebo cizí bezdrátový spoj vidí na svém ethernetu MAC adresy celé sítě
+a přes takový úsek neslyší žádného spravovaného souseda (MNDP/LLDP). Dřív se uplink u klientů poznával jen
+podle sousedů, takže port AP vyšel jako koncový a drátoví klienti „spadli“ pod AP.
+
+- `clients.port_kinds`: z tabulek MAC adres určí, která spravovaná zařízení jsou za každým portem, a port
+  **nahoru** (kudy zařízení vidí bránu; bez označené brány port s nejvíc spravovanými zařízeními).
+- `clients.correlate` dělí místa výskytu MAC na `edge` (za portem nic spravovaného), `shared` (za portem je
+  i spravované zařízení) a `up`. Klient jde na `edge`; jinak na nejhlubší `shared` port (příznak `shared`);
+  port nahoru se použije jen z nouze a s příznakem `uncertain`. Stejná MAC na koncovém portu dvou zařízení =
+  `uncertain`. `port_clients` a `unmanaged` říkají, že port sdílí víc klientů / je za ním nespravovaný switch.
+- `infra.insert_unmanaged`: kde rodič vede jedním portem ke spravovanému potomkovi a zároveň na něm visí
+  drátoví klienti (nebo víc potomků), vloží do mapy uzel `hub` s `guess: true` („nespravovaný switch (odhad)“)
+  a potomky i klienty přesune pod něj.
+- Nejde zjistit, na kterém portu nespravovaného switche co je, ani kolik jich je za sebou.

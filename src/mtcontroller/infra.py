@@ -383,3 +383,44 @@ def site_infra(devices: list[dict], invs: dict[str, dict]) -> dict:
 
 
 ROLE_ORDER = {"gateway": 0, "switch": 1, "ptp": 2, "ap": 3, "unknown": 4}
+
+
+def insert_unmanaged(out: dict) -> int:
+    """Nespravovaný switch mezi zařízeními: když na portu, kterým rodič vede ke spravovanému potomkovi, visí
+    zároveň drátoví klienti, musí mezi nimi být něco, co větví (hloupý switch, cizí bezdrátový spoj…).
+    Do stromu se vloží uzel „hub“ s příznakem `guess`; potomci i klienti z toho portu se přesunou pod něj.
+    Volá se až po doplnění klientů k uzlům. Vrací počet vložených uzlů."""
+    nodes = out.get("nodes") or []
+    by_id = {n["id"]: n for n in nodes}
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for n in nodes:
+        a, p = n.get("parent"), n.get("parent_port")
+        if a in by_id and p and by_id[a].get("kind") != "hub" and n.get("kind") != "hub":
+            groups.setdefault((a, p), []).append(n)
+    added = 0
+    for (a, p), kids in groups.items():
+        parent = by_id[a]
+        wired = [c for c in parent.get("clients") or [] if c.get("port") == p and not c.get("ssid")]
+        if not wired and len(kids) < 2:
+            continue
+        added += 1
+        hid = f"usw-{a}-{p}"
+        hub = {"id": hid, "kind": "hub", "guess": True, "label": "Nespravovaný switch (odhad)", "model": None, "role": "hub",
+               "state": "adopted", "version": None, "cpu": None, "mem": None, "poe_w": 0, "stp_root": False,
+               "stp_priority": None, "ports": [], "wans": [], "members": [a] + [k["id"] for k in kids],
+               "parent": a, "level": parent.get("level", 0) + 1, "uplink_port": None, "parent_port": p, "clients": wired}
+        parent["clients"] = [c for c in parent.get("clients") or [] if c not in wired]
+        for k in kids:
+            k["parent"], k["parent_port"] = hid, None
+        nodes.insert(nodes.index(parent) + 1, hub)
+        by_id[hid] = hub
+
+        def bump(nid: str, seen: set[str]) -> None:   # potomci jsou o patro níž
+            for x in nodes:
+                if x.get("parent") == nid and x["id"] not in seen:
+                    seen.add(x["id"])
+                    x["level"] = by_id[nid]["level"] + 1
+                    bump(x["id"], seen)
+
+        bump(hid, {hid})
+    return added

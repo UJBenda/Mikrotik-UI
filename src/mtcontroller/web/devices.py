@@ -1107,7 +1107,7 @@ async def site_clients(request: Request, p: Principal, tid: str) -> Response:
             if history:
                 return clientmeta.annotate(tx, [dict(r) for r in clients.history(
                     tx, sid, _int(request.query_params.get("days"), 30, 1, 90))])
-            devs = tx.fetchall("""SELECT id, serial, identity FROM device
+            devs = tx.fetchall("""SELECT id, serial, identity, role::text AS role FROM device
                                   WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
             invs = {str(d["id"]): inventory.load(tx, d["id"], clients.SECTIONS) for d in devs}
             seen = {r["mac"]: r for r in tx.fetchall(
@@ -1253,6 +1253,7 @@ async def site_infra(request: Request, p: Principal, tid: str) -> Response:
             by_dev.setdefault(c["device_id"], []).append(c)
         for n in out["nodes"]:
             n["clients"] = by_dev.get(n["id"], [])
+        infra.insert_unmanaged(out)
         return out
 
     return json_response(await run_in_threadpool(q))

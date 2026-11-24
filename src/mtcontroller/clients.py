@@ -45,12 +45,49 @@ def uplink_ports(inv: dict, infra_macs: set[str]) -> set[str]:
     return out
 
 
+def port_kinds(devices: list[dict], invs: dict[str, dict], owner: dict[str, str]) -> tuple[dict, dict]:
+    """Z tabulek MAC adres: ({(zařízení, port): spravovaná zařízení viděná za portem}, {zařízení: port nahoru}).
+
+    Port „nahoru“ je ten, kterým zařízení vidí bránu (kořen sítě). Takový port nikdy není portem klienta –
+    zařízení přes něj vidí celou síť. Stejné pravidlo používá mapa; sousedé z MNDP/LLDP na to nestačí
+    (AP za nespravovaným switchem nebo cizím bezdrátovým spojem žádné spravované zařízení „neslyší“).
+    Bez známé brány se bere port, za kterým je vidět nejvíc spravovaných zařízení."""
+    infra_seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for d in devices:
+        did = str(d["id"])
+        for h in _rows(invs.get(did, {}), "bridge_hosts"):
+            if _true(h.get("local")):
+                continue
+            b = owner.get(_mac(h.get("mac-address")))
+            port = str(h.get("on-interface") or "")
+            if b and b != did and port:
+                infra_seen[(did, port)].add(b)
+    root = next((str(d["id"]) for d in devices if d.get("role") == "gateway"), None)
+    upstream: dict[str, str] = {}
+    for d in devices:
+        did = str(d["id"])
+        mine = {p: bs for (a, p), bs in infra_seen.items() if a == did}
+        if not mine or did == root:
+            continue
+        via_root = sorted((-len(bs), p) for p, bs in mine.items() if root in bs) if root else []
+        if via_root:
+            upstream[did] = via_root[0][1]
+        elif not root:
+            best = sorted((-len(bs), p) for p, bs in mine.items())
+            if len(best) == 1 or best[0][0] < best[1][0]:
+                upstream[did] = best[0][1]
+    return infra_seen, upstream
+
+
 def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
     infra_macs: set[str] = set()
+    owner: dict[str, str] = {}
     for d in devices:
         for i in _rows(invs.get(str(d["id"]), {}), "interfaces"):
             if i.get("mac-address"):
                 infra_macs.add(_mac(i["mac-address"]))
+                owner.setdefault(_mac(i["mac-address"]), str(d["id"]))
+    infra_seen, upstream = port_kinds(devices, invs, owner)
     names = {str(d["id"]): d.get("identity") or d.get("serial") for d in devices}
 
     clients: dict[str, dict] = {}
@@ -93,9 +130,12 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
             c["ip"] = c["ip"] or r.get("last-ip")
             wifi_seen.add(mac)
 
-    # 3) poloha: drát z bridge host tabulek
+    # 3) poloha: drát z bridge host tabulek. Druh portu, kde je MAC vidět:
+    #    edge   – za portem není žádné spravované zařízení → tady klient opravdu je,
+    #    shared – za portem je i spravované zařízení (klient visí na nespravovaném switchi mezi nimi),
+    #    up     – port nahoru k bráně; přes něj zařízení vidí celou síť, klient tam nikdy není.
     port_count: dict[tuple[str, str], int] = defaultdict(int)
-    seen: dict[str, list[tuple[str, str, Any, bool]]] = defaultdict(list)
+    seen: dict[str, list[tuple[str, str, Any, str]]] = defaultdict(list)
     for d in devices:
         did = str(d["id"])
         inv = invs.get(did, {})
@@ -108,7 +148,9 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
             if not mac or not port or mac in infra_macs:
                 continue
             port_count[(did, port)] += 1
-            seen[mac].append((did, port, h.get("vid"), port in uplinks))
+            kind = ("up" if upstream.get(did) == port else
+                    "shared" if port in uplinks or infra_seen.get((did, port)) else "edge")
+            seen[mac].append((did, port, h.get("vid"), kind))
     for mac, places in seen.items():
         c = get(mac)
         if mac in wifi_seen:
@@ -117,18 +159,34 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
                 if did == c["device_id"] and vid:
                     c["vlan"] = vid
             continue
-        edge = [p for p in places if not p[3]]
-        pick = None
+        edge = [p for p in places if p[3] == "edge"]
+        shared = [p for p in places if p[3] == "shared"]
         if edge:
             pick = min(edge, key=lambda p: port_count[(p[0], p[1])])
             c["candidates"] = len(edge)
+            if len({p[0] for p in edge}) > 1:
+                # koncový port na dvou zařízeních zároveň: klient se stěhuje, smyčka nebo vadný switch
+                c["uncertain"] = True
+        elif shared:
+            # nejhlouběji = port, za kterým je nejméně spravovaných zařízení (a nejméně MAC)
+            pick = min(shared, key=lambda p: (len(infra_seen.get((p[0], p[1]), ())), port_count[(p[0], p[1])]))
+            c["shared"] = True
         else:
-            # MAC je vidět jen na portech mezi spravovanými zařízeními (např. klient právě
-            # odpojený nebo chybí informace o sousedech) – nejpravděpodobnější je port s nejméně MAC
+            # MAC je vidět jen na portech nahoru (klient právě odpojený, neúplné tabulky) – nejméně špatný odhad
             pick = min(places, key=lambda p: port_count[(p[0], p[1])])
             c["uncertain"] = True
         did, port, vid, _ = pick
         c.update(device_id=did, device=names[did], port=port, vlan=vid)
+    # kolik drátových klientů sdílí port: víc než jeden (nebo port sdílený se spravovaným zařízením)
+    # znamená nespravovaný switch za portem
+    per_port: dict[tuple[str, str], int] = defaultdict(int)
+    for c in clients.values():
+        if c["device_id"] and not c["wifi"]:
+            per_port[(c["device_id"], c["port"])] += 1
+    for c in clients.values():
+        if c["device_id"] and not c["wifi"]:
+            c["port_clients"] = per_port[(c["device_id"], c["port"])]
+            c["unmanaged"] = bool(c.get("shared")) or c["port_clients"] > 1
 
     return sorted(clients.values(), key=lambda c: (c["device"] or "~", c["port"] or "", c["ip"] or "", c["mac"]))
 
@@ -174,7 +232,7 @@ def record(db: Database) -> int:
     n = 0
     for s in sites:
         with tenant_scope(db, s["tenant_id"]) as tx:
-            devs = tx.fetchall("""SELECT id, serial, identity FROM device
+            devs = tx.fetchall("""SELECT id, serial, identity, role::text AS role FROM device
                                   WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""",
                                {"s": str(s["site_id"])})
             invs = {str(d["id"]): inventory.load(tx, d["id"], SECTIONS) for d in devs}
