@@ -119,8 +119,16 @@ i certifikáty nginx. Plán a cíle: UI **Systém → Zálohy**. Bez hesla zálo
 
 ### Kopie mimo server
 
+Všechno kolem záloh je v administraci pod **Správa → Zálohy**: kdy zálohovat, jak dlouho zálohy držet
+a kam je kopírovat.
+
+**Retence** má tři stupně, které se sčítají: posledních N záloh, týdenní (po jedné z každého z posledních
+W týdnů) a měsíční (po jedné z každého z posledních M měsíců). Z týdne a měsíce se nechává první záloha.
+Příklad „14 záloh zpět a k tomu měsíční po dobu roku“ = posledních 14, měsíční 12. Retenci má zvlášť
+server a zvlášť každý cíl v cloudu – na serveru tak může zůstat krátká historie a v cloudu dlouhý archiv.
+
 Controller po každé záloze zkopíruje soubor do všech zapnutých cílů a promaže tam staré (každý
-cíl má vlastní „nechat posledních“). Cloudu není potřeba věřit – záloha je šifrovaná už na serveru.
+cíl má vlastní retenci). Cloudu není potřeba věřit – záloha je šifrovaná už na serveru.
 Každý controller potřebuje vlastní složku (retence maže nejstarší zálohy ve složce).
 
 **Nextcloud** – v Nextcloudu Nastavení → Zabezpečení → *Vytvořit nové heslo aplikace*; do cíle
@@ -140,6 +148,16 @@ přihlášení a založí složku.
 
 Controller vidí jen soubory, které sám vytvořil (složka *MikroTik-Controller*), ne celý disk.
 
+**Dropbox** – jednou si vytvoř vlastní aplikaci:
+
+1. [Dropbox App Console](https://www.dropbox.com/developers/apps) → *Create app*: **Scoped access**,
+   **App folder**, libovolný název.
+2. Záložka *Permissions*: zaškrtni `files.content.write` a `files.content.read`, *Submit*.
+3. **App key** (ne App secret) vlož do cíle v administraci, *Uložit*. V tabulce se ukáže odkaz – otevři
+   ho pod účtem, kam se má zálohovat, povol přístup a kód, který Dropbox zobrazí, vlož do pole vedle.
+
+Zálohy budou ve složce *Aplikace/<název aplikace>* (volitelně v podsložce); controller jinam nevidí.
+
 **OneDrive** (osobní i firemní):
 
 1. [Microsoft Entra](https://entra.microsoft.com/) → *Registrace aplikací → Nová registrace*:
@@ -152,7 +170,7 @@ Controller vidí jen soubory, které sám vytvořil (složka *MikroTik-Controlle
 
 Zálohy budou ve složce *Aplikace/<název aplikace>*; controller jinam nevidí.
 
-Stav cílů ukazuje Systém → Zálohy a `mtc-admin doctor`; když záloha chybí déle, než plán dovoluje,
+Stav cílů ukazuje Správa → Zálohy a `mtc-admin doctor`; když záloha chybí déle, než plán dovoluje,
 nebo se kopie dvakrát nepovede, přijde notifikace cílům `[[notify]]` bez omezení na tenanty.
 
 ### Obnova na čistém serveru

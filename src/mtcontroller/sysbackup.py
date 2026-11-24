@@ -212,7 +212,8 @@ def _add_bytes(tar: tarfile.TarFile, name: str, data: bytes, mode: int = 0o600) 
 
 
 def create(settings, owner_db, out_dir: Path | None = None, passphrase: str | None = None, paths: Paths = Paths(),
-           dump: Callable[[str, Path], None] = _pg_dump, reason: str = "scheduled", keep: int | None = None) -> Path:
+           dump: Callable[[str, Path], None] = _pg_dump, reason: str = "scheduled", keep: int | None = None,
+           weekly: int = 0, monthly: int = 0) -> Path:
     """Vytvoří šifrovanou zálohu a promaže staré (nechá `keep` – plán z administrace –,
     jinak `backup.keep` posledních)."""
     out_dir = Path(out_dir or settings.backup.dir)
@@ -257,7 +258,7 @@ def create(settings, owner_db, out_dir: Path | None = None, passphrase: str | No
             encrypt_stream(src, dst, passphrase)
         _group(part)
         os.replace(part, final)
-    prune(out_dir, keep or settings.backup.keep)
+    prune(out_dir, keep or settings.backup.keep, weekly, monthly)
     log.info("záloha %s (%d B)", final, final.stat().st_size)
     return final
 
@@ -284,11 +285,16 @@ def listing(out_dir: Path) -> list[dict]:
     return sorted(out, key=lambda x: x["name"][-22:], reverse=True)
 
 
-def prune(out_dir: Path, keep: int) -> list[str]:
-    old = listing(out_dir)[keep:]
-    for b in old:
-        (out_dir / b["name"]).unlink(missing_ok=True)
-    return [b["name"] for b in old]
+def prune(out_dir: Path, keep: int, weekly: int = 0, monthly: int = 0) -> list[str]:
+    """Promaže staré zálohy podle retence: posledních `keep` + týdenní a měsíční (retention.select)."""
+    from . import retention
+
+    names = [b["name"] for b in listing(out_dir)]
+    kept = retention.select(names, keep, weekly, monthly)
+    old = [n for n in names if n not in kept]
+    for n in old:
+        (out_dir / n).unlink(missing_ok=True)
+    return old
 
 
 # --- obnova -------------------------------------------------------------------------------

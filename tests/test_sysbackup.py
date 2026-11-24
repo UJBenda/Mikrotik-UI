@@ -81,7 +81,7 @@ def test_create_content_and_prune(tmp_path):
                 p.write_bytes(b"DUMP%d" % i)
             f = sysbackup.create(s, owner, out, PW, paths, dump=dump)
             os.utime(f, (1000 + i, 1000 + i))
-            made.append(f.rename(out / f"mtc-x-2026010{i}-000000.mtcbak"))
+            made.append(f.rename(out / f"mtc-x-2026010{i + 1}-000000.mtcbak"))
         assert oct(made[0].stat().st_mode & 0o777) == "0o640"
         assert sysbackup.prune(out, 2) == [made[0].name]
         assert [b["name"] for b in sysbackup.listing(out)] == [made[2].name, made[1].name]

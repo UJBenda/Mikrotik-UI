@@ -1578,3 +1578,14 @@ header { z-index: 45; }
 .wl-chart { overflow: hidden; }
 .wl-tip { left: 0; top: 0; }
 #wl-main { overflow: visible; }
+
+/* --- Zálohy: plán, stupňovaná retence, cíle --- */
+.bk-form h3 { margin: 14px 0 6px; }
+.bk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 4px 0; }
+.bk-ret label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; }
+.bk-ret input { width: 68px; }
+.bk-presets { margin-top: 6px; }
+#bk-ret-sum { margin: 8px 0 10px; max-width: 760px; }
+.bt-pastebox { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bt-paste { width: 230px; height: 28px; }
+#view-backups .card { border: 0; }

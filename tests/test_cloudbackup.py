@@ -237,8 +237,9 @@ def _env():
 
 def test_plan_validation_and_due():
     p = backupplan.validate({"time": "03:15", "days": [7, 1, 1], "keep": "30"})
-    assert p == {"enabled": True, "time": "03:15", "days": [1, 7], "keep": 30}
-    for bad in ({"time": "25:00"}, {"days": []}, {"days": [8]}, {"keep": 0}, {"time": "3:15"}):
+    assert p == {"enabled": True, "time": "03:15", "days": [1, 7], "keep": 30, "weekly": 0, "monthly": 0}
+    assert backupplan.validate({"keep": 14, "weekly": "8", "monthly": 12})["monthly"] == 12
+    for bad in ({"time": "25:00"}, {"days": []}, {"days": [8]}, {"keep": 0}, {"time": "3:15"}, {"monthly": 121}, {"weekly": -1}):
         try:
             backupplan.validate(bad)
             raise AssertionError(bad)
@@ -257,6 +258,142 @@ def test_plan_validation_and_due():
     assert not backupplan.due({**p, "enabled": False}, mon, None)
     assert backupplan.max_gap_hours(p) == 6 * 24  # neděle → pondělí 1 den, pondělí → neděle 6 dní
     assert backupplan.max_gap_hours(backupplan.defaults()) == 24
+
+
+def test_tiered_retention(tmp_path):
+    """Posledních N + týdenní + měsíční: z období zůstává nejstarší záloha, cizí soubory se nemažou."""
+    from mtcontroller import retention, sysbackup
+
+    daily = [f"mtc-vm-{d:%Y%m%d}-023000.mtcbak" for d in (dt.date(2025, 9, 1) + dt.timedelta(days=i) for i in range(450))]
+    kept = retention.select(daily, 14, 0, 12)
+    newest = sorted(daily)[-14:]
+    assert set(newest) <= kept and len(kept) == 14 + 12                      # posledních 14 + první záloha 12 měsíců
+    monthly = sorted(kept - set(newest))
+    assert all(n[-16:-14] == "01" for n in monthly)
+    assert monthly[0] == "mtc-vm-20251201-023000.mtcbak" and monthly[-1] == "mtc-vm-20261101-023000.mtcbak"
+    assert retention.select(daily, 14) == set(newest)                        # bez stupňů jako dřív
+    wk = retention.select(daily, 3, 4, 0)
+    assert len(wk) == 6 and "mtc-vm-20261123-023000.mtcbak" in wk            # 3 poslední + pondělky 3 starších týdnů
+    assert "poznamky.txt" in retention.select(daily + ["poznamky.txt"], 1)   # bez času v názvu = nemazat
+    assert retention.describe(14, 0, 12) == "posledních 14, měsíční 12×"
+    # lokální promazání: zálohy jen 1. a 15. den v měsíci, nechat 2 poslední + 3 měsíční
+    for n in [x for x in daily if x[-16:-14] in ("01", "15")][-10:]:
+        (tmp_path / n).write_bytes(b"x")
+    removed = sysbackup.prune(tmp_path, 2, 0, 3)
+    left = sorted(p.name[-22:-7] for p in tmp_path.iterdir())
+    assert left == ["20260901-023000", "20261001-023000", "20261101-023000", "20261115-023000"] and len(removed) == 6
+
+
+class FakeDropbox:
+    """Napodobené API Dropboxu: PKCE výměna kódu, nahrání jedním voláním i relací, výpis, mazání."""
+
+    def __init__(self):
+        self.files: dict[str, bytes] = {}
+        self.sessions: dict[str, bytearray] = {}
+        self.verifier_ok = None
+        self.calls = []
+
+    def __call__(self, method, url, headers=None, body=None, timeout=None):
+        headers = headers or {}
+        self.calls.append(url.rsplit("/2/", 1)[-1] if "/2/" in url else url)
+        if url == cloudbackup.URLS["dropbox_token"]:
+            f = dict(urllib.parse.parse_qsl(body.decode()))
+            if f["grant_type"] == "authorization_code":
+                import hashlib
+                ch = base64.urlsafe_b64encode(hashlib.sha256(f["code_verifier"].encode()).digest()).rstrip(b"=").decode()
+                self.verifier_ok = ch == self.challenge and "client_secret" not in f
+                if f["code"] != "KOD-Z-DROPBOXU-123":
+                    return Resp(400, {}, b'{"error": "invalid_grant"}')
+                return Resp(200, {}, b'{"access_token": "at-1", "refresh_token": "rt-dropbox", "expires_in": 14400}')
+            if f.get("refresh_token") != "rt-dropbox":
+                return Resp(400, {}, b'{"error": "invalid_grant"}')
+            return Resp(200, {}, b'{"access_token": "at-2", "expires_in": 14400}')
+        if headers.get("Authorization") != "Bearer at-2":
+            return Resp(401, {}, b"{}")
+        arg = json.loads(headers["Dropbox-API-Arg"]) if "Dropbox-API-Arg" in headers else json.loads(body or b"null")
+        ep = url.rsplit("/2/", 1)[-1]
+        if ep == "users/get_current_account":
+            return Resp(200, {}, b'{"email": "it@firma.cz"}')
+        if ep == "files/upload":
+            self.files[arg["path"]] = body
+            return Resp(200, {}, b"{}")
+        if ep == "files/upload_session/start":
+            self.sessions["S1"] = bytearray(body)
+            return Resp(200, {}, b'{"session_id": "S1"}')
+        if ep in ("files/upload_session/append_v2", "files/upload_session/finish"):
+            buf = self.sessions[arg["cursor"]["session_id"]]
+            assert arg["cursor"]["offset"] == len(buf), "offset musí sedět"
+            buf += body
+            if ep.endswith("finish"):
+                self.files[arg["commit"]["path"]] = bytes(buf)
+            return Resp(200, {}, b"{}")
+        if ep == "files/list_folder":
+            ent = [{".tag": "file", "name": k.rsplit("/", 1)[1], "path_lower": k.lower(), "size": len(v)}
+                   for k, v in self.files.items() if k.rsplit("/", 1)[0] == arg["path"]]
+            if not ent and arg["path"]:
+                return Resp(409, {}, b'{"error_summary": "path/not_found/"}')
+            return Resp(200, {}, json.dumps({"entries": ent + [{".tag": "file", "name": "cizi.txt"}], "has_more": False}).encode())
+        if ep == "files/delete_v2":
+            for k in list(self.files):
+                if k.lower() == arg["path"]:
+                    del self.files[k]
+            return Resp(200, {}, b"{}")
+        return Resp(400, {}, ep.encode())
+
+
+def test_dropbox_pkce_upload_and_monthly_retention(monkeypatch):
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        d = FakeDropbox()
+        for bad in ({"client_id": "Velke-Pismeno"}, {"client_id": "abc"}, {"client_id": "abcd1234efgh", "folder": "../x"}):
+            try:
+                cloudbackup.validate("dropbox", bad)
+                raise AssertionError(bad)
+            except ServiceError:
+                pass
+        t = cloudbackup.create(db, box, {"kind": "dropbox", "client_id": "abcd1234efgh567", "folder": "zalohy",
+                                         "keep": 2, "monthly": 3})
+        assert cloudbackup.needs_auth(_load(db, box, t))
+        dev = cloudbackup.device_start(db, box, t)
+        q = _q(dev["url"])
+        assert dev["paste"] and dev["url"].startswith("https://www.dropbox.com/oauth2/authorize?")
+        assert q["client_id"] == "abcd1234efgh567" and q["token_access_type"] == "offline" and q["code_challenge_method"] == "S256"
+        assert "redirect_uri" not in q and "client_secret" not in dev["url"]
+        d.challenge = q["code_challenge"]
+        pub = [x for x in cloudbackup.listing(db) if x["id"] == t][0]
+        assert pub["auth"]["paste"] and pub["monthly"] == 3 and "code_verifier" not in json.dumps(pub)
+        assert cloudbackup.device_poll(db, box, t, req=d)["state"] == "pending"
+        try:
+            cloudbackup.auth_code(db, box, t, "SPATNY-KOD-000000", req=d)
+            raise AssertionError("špatný kód prošel")
+        except cloudbackup.CloudError as e:
+            assert "znovu" in str(e)
+        dev = cloudbackup.device_start(db, box, t)                # po chybě nový pokus (nový verifier)
+        d.challenge = _q(dev["url"])["code_challenge"]
+        assert cloudbackup.auth_code(db, box, t, " KOD-Z-DROPBOXU-123 ", req=d) == {"state": "done"} and d.verifier_ok
+        tt = _load(db, box, t)
+        assert tt.secret["refresh_token"] == "rt-dropbox" and "code_verifier" not in tt.secret and tt.status["authorized"]
+        assert "client_secret" not in tt.secret
+        assert cloudbackup.check(db, box, t, req=d) == "it@firma.cz · /zalohy"   # složka ještě není – nevadí
+        # zálohy 1. a 15. v měsíci přes 4 měsíce: zůstanou 2 poslední + první z posledních 3 měsíců
+        tmp = Path(tempfile.mkdtemp())
+        names = [f"mtc-vm-2026{m:02d}{day:02d}-023000.mtcbak" for m in (8, 9, 10, 11) for day in (1, 15)]
+        monkeypatch.setattr(cloudbackup, "DROPBOX_SMALL", 1024 * 1024)
+        monkeypatch.setattr(cloudbackup, "DROPBOX_CHUNK", 512 * 1024)
+        for i, n in enumerate(names):
+            f = tmp / n
+            f.write_bytes(os.urandom(1300 * 1024 if i == len(names) - 1 else 2048))   # poslední jde relací po částech
+            assert cloudbackup.upload_one(db, box, _load(db, box, t), f, d)["ok"]
+        assert sorted(k.rsplit("/", 1)[1][7:15] for k in d.files) == ["20260901", "20261001", "20261101", "20261115"]
+        assert d.files["/zalohy/" + names[-1]] == (tmp / names[-1]).read_bytes()
+        assert d.calls.count("files/upload_session/append_v2") == 1 and "files/upload_session/finish" in d.calls
+        assert _load(db, box, t).status["remote_count"] == 4
+        c = __import__("test_flow")._login(app)
+        r = c.patch(f"/api/admin/system/backup-targets/{t}", json_body={"monthly": 12, "weekly": 4})
+        assert r.status_code == 200 and (_load(db, box, t).monthly, _load(db, box, t).weekly) == (12, 4)
+        assert c.post(f"/api/admin/system/backup-targets/{t}/code", json_body={"code": "x"}).status_code == 400
+    finally:
+        drop_db(name)
 
 
 def test_nextcloud_upload_chunked_and_retention():

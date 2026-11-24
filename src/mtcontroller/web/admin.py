@@ -302,6 +302,14 @@ async def system_backup_target(request: Request, p: Principal, _t) -> Response:
         return json_response(await run_in_threadpool(cloudbackup.device_start, st.db, st.box, tid, p.user_id, ip))
     if action == "poll":
         return json_response(await run_in_threadpool(cloudbackup.device_poll, st.db, st.box, tid))
+    if action == "code":
+        # Dropbox: kód, který správce opsal ze stránky Dropboxu po schválení
+        data = await _json(request)
+        try:
+            return json_response(await run_in_threadpool(cloudbackup.auth_code, st.db, st.box, tid, data.get("code"),
+                                                         p.user_id, ip))
+        except cloudbackup.CloudError as e:
+            return _err(502, str(e))
     if action == "check":
         try:
             where = await run_in_threadpool(cloudbackup.check, st.db, st.box, tid)

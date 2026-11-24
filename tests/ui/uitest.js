@@ -147,7 +147,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // správa zákazníka je v nabídce v záhlaví (lokality, uživatelé, systém), zvonek nese počet k řešení, uživatel má vlastní nabídku
     {
       const items = byId["tmenu-list"].children.filter((b) => b.tagName === "BUTTON");
-      if (items.length !== 3 || !items[0].textContent.includes("Lokality") || !items[0].textContent.includes("všechny lokality zákazníka")) errors.push("záhlaví: nabídka správy " + items.map((b) => b.textContent));
+      if (items.length !== 4 || !items[2].textContent.includes("Zálohy") || !items[0].textContent.includes("Lokality") || !items[0].textContent.includes("všechny lokality zákazníka")) errors.push("záhlaví: nabídka správy " + items.map((b) => b.textContent));
       byId["tmenu-list"].hidden = true; byId["umenu-list"].hidden = true;  // falešný DOM nečte atribut hidden z HTML
       await byId["tmenu-btn"].fire("click", { stopPropagation() {} });
       if (byId["tmenu-list"].hidden) errors.push("záhlaví: nabídka se neotevřela");
@@ -156,6 +156,20 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["umenu"].hidden || !byId["umenu-btn"].textContent.includes("@") || !byId["who"].textContent.includes("Odhlásit") || !byId["who"].textContent.includes("Změnit heslo")) errors.push("záhlaví: nabídka uživatele " + byId["who"].textContent);
       await byId["nav-users"].fire("click");
       if (!byId["umenu-list"].hidden || byId["view-users"].hidden) errors.push("záhlaví: položka nabídky neotevřela sekci");
+      // Zálohy: vlastní sekce ve správě – plán, stupňovaná retence, cíl Dropbox s vložením kódu
+      await byId["nav-backups"].fire("click");
+      for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+      if (byId["view-backups"].hidden || !byId["view-system"].hidden) errors.push("zálohy: sekce");
+      if (byId["bk-keep"].value != 14 || byId["bk-monthly"].value != 12 || !byId["bk-ret-sum"].textContent.includes("nejvýš 26 záloh (14 posledních + 12 měsíčních)")) errors.push("zálohy: retence " + byId["bk-ret-sum"].textContent);
+      if (!byId["backup-summary"].textContent.includes("14 posledních + 12 měsíčních")) errors.push("zálohy: souhrn " + byId["backup-summary"].textContent);
+      byId["bk-keep"].value = "30"; byId["bk-weekly"].value = "8"; byId["bk-monthly"].value = "24"; await byId["bk-keep"].fire("input");
+      if (!byId["bk-ret-sum"].textContent.includes("nejvýš 62 záloh") || !byId["bk-ret-sum"].textContent.includes("2 roky")) errors.push("zálohy: přepočet retence " + byId["bk-ret-sum"].textContent);
+      const nb = requests.length;
+      await byId["bk-plan"].fire("submit", { preventDefault() {} });
+      for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+      if (!requests.slice(nb).some((r) => r.startsWith("PUT") && r.endsWith("/system/backup-plan"))) errors.push("zálohy: uložení plánu");
+      const drow = byId["bt-list"].children[0];
+      if (!drow.textContent.includes("Dropbox · 14 posledních + 12 měsíčních") || !drow.textContent.includes("Otevři Dropbox") || !drow.textContent.includes("Dokončit")) errors.push("zálohy: cíl Dropbox " + drow.textContent);
       await byId["nav-dash"].fire("click");
       if (byId["hdr-bell"].hidden) errors.push("záhlaví: zvonek");
     }

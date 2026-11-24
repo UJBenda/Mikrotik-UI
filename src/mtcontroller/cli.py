@@ -335,7 +335,8 @@ def cmd_backup(a) -> int:
         return 0  # timer běží co 15 minut, plán z administrace rozhodne
     sysbackup.write_status(s.paths.data_dir, state="running", reason=reason)
     try:
-        f = sysbackup.create(s, PsycopgDatabase(s.database.migrate_dsn), reason=reason, keep=plan["keep"])
+        f = sysbackup.create(s, PsycopgDatabase(s.database.migrate_dsn), reason=reason, keep=plan["keep"],
+                             weekly=plan.get("weekly", 0), monthly=plan.get("monthly", 0))
     except Exception as e:  # noqa: BLE001
         sysbackup.write_status(s.paths.data_dir, state="error", error=str(e)[:500], reason=reason)
         _audit_system("system.backup_failed", {"error": str(e)[:300], "reason": reason, "by": who})

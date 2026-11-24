@@ -1435,3 +1435,15 @@ Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 
   upozornění jsou rovnou barevné pruhy (`#d-banners`), zbytek zůstává ve sbaleném seznamu. Záložky jsou podtržené.
 - Zbývá z maket: přejmenování pojmů v celé aplikaci (tenant → zákazník je zatím jen v záhlaví), rozbalovací
   výběr zákazníka s hledáním, přehled „Připojeno“ v detailu podle makety 2.
+
+## Zálohy controlleru: vlastní sekce, stupňovaná retence, Dropbox
+
+- **Sekce:** Správa → Zálohy (`view-backups`, jen provozovatel); karta se přestěhovala ze Systému.
+- **Retence (`retention.py`):** `keep` posledních + `weekly` + `monthly`; z období zůstává nejstarší záloha
+  (v cloudu se pak nepřepisuje). Čas se bere z názvu souboru, soubory bez času se nemažou. Plán
+  (`system_setting.backup`) nese `weekly`/`monthly` pro server, cíle mají sloupce `keep_weekly`/`keep_monthly`
+  (migrace 0032). Používá `sysbackup.prune` i `cloudbackup.upload_one`.
+- **Dropbox (`cloudbackup.Dropbox`):** OAuth s PKCE bez přesměrování a bez tajemství aplikace –
+  `device_start` vrátí odkaz (`paste: true`), správce vloží kód přes akci `code` (`auth_code`). Nahrání
+  jedním voláním do 100 MiB, větší relací po 8 MiB (`upload_session/start|append_v2|finish`), výpis
+  `list_folder`, mazání `delete_v2`. Ověřeno jen proti napodobenému API.

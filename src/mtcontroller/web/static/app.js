@@ -1875,9 +1875,22 @@ const BT_HELP = {
   nextcloud: __("Heslo aplikace vytvoříš v Nextcloudu: Nastavení → Zabezpečení → Vytvořit nové heslo aplikace."),
   gdrive: __("Google Cloud Console → API a služby: zapni Google Drive API, OAuth klient typu „TVs and Limited Input devices“. ")
     + __("Aplikaci přepni do produkce, jinak přihlášení po 7 dnech vyprší. Controller uvidí jen soubory, které sám vytvoří."),
+  dropbox: __("Dropbox App Console → Create app: „Scoped access“, „App folder“, v Permissions zaškrtni files.content.write a files.content.read. ")
+    + __("Stačí App key, tajemství aplikace se nezadává. Zálohy budou ve složce Aplikace/<název aplikace>."),
   onedrive: __("Microsoft Entra → Registrace aplikací: účty v libovolné organizaci i osobní, „Povolit toky veřejného klienta“ = Ano, ")
     + __("oprávnění Files.ReadWrite.AppFolder. Zálohy budou ve složce Aplikace/<název aplikace>."),
 };
+// retence slovy: „14 posledních + 12 měsíčních“
+function retText(keep, weekly, monthly) {
+  return [__`${keep} posledních`, weekly ? __`${weekly} týdenních` : "", monthly ? __`${monthly} měsíčních` : ""].filter(Boolean).join(" + ");
+}
+function bkRetSum() {
+  const k = Number($("bk-keep").value) || 0, w = Number($("bk-weekly").value) || 0, m = Number($("bk-monthly").value) || 0;
+  const yrs = m / 12;
+  const reach = m ? (m % 12 === 0 ? (yrs === 1 ? __("1 rok") : yrs < 5 ? __`${yrs} roky` : __`${yrs} let`) : __`${m} měsíců`) : w ? __`${w} týdnů` : __`${k} záloh`;
+  $("bk-ret-sum").textContent = __`Na serveru zůstane nejvýš ${k + w + m} záloh (${retText(k, w, m)}), nejstarší sahá asi ${reach} zpět. `
+    + (w || m ? __("Z každého týdne a měsíce se nechává první záloha.") : "");
+}
 let bkTargets = [];
 let btEdit = null;
 const btPolls = {};
@@ -1903,8 +1916,8 @@ async function loadBackups() {
   const txt = b.pending ? __("Záloha čeká na spuštění…")
     : st.state === "running" ? __("Záloha právě běží…")
     : st.state === "error" ? __`Poslední záloha selhala: ${st.error || "?"}`
-    : last ? __`Poslední záloha ${fmtTime(last.at)} · ${when} · ponechává se ${b.keep} posledních v ${b.dir}`
-    : __`Zatím žádná záloha · ${when} · ponechává se ${b.keep} posledních v ${b.dir}`;
+    : last ? __`Poslední záloha ${fmtTime(last.at)} · ${when} · ponechává se ${retText(plan.keep || b.keep, plan.weekly, plan.monthly)} v ${b.dir}`
+    : __`Zatím žádná záloha · ${when} · ponechává se ${retText(plan.keep || b.keep, plan.weekly, plan.monthly)} v ${b.dir}`;
   const p = $("backup-summary"); p.textContent = "";
   p.appendChild(el("span", txt, st.state === "error" ? "sev-error" : ""));
   const limit = (b.max_gap_hours || 24) + 6;
@@ -1914,6 +1927,7 @@ async function loadBackups() {
   for (const a of Object.values(b.alerts || {})) al.appendChild(el("li", a.message, a.severity === "critical" ? "sev-error" : "sev-warning"));
   // plán
   $("bk-en").checked = !!plan.enabled; $("bk-time").value = plan.time || "02:30"; $("bk-keep").value = plan.keep || 14;
+  $("bk-weekly").value = plan.weekly || 0; $("bk-monthly").value = plan.monthly || 0; bkRetSum();
   for (let d = 1; d <= 7; d++) $("bk-day-" + d).checked = (plan.days || []).includes(d);
   // cíle
   bkTargets = b.targets || [];
@@ -1949,10 +1963,21 @@ function renderTargets() {
   for (const t of bkTargets) {
     const tr = el("tr");
     const where = t.status.where || (t.kind === "nextcloud" ? `${t.config.url} · ${t.config.folder}`
-      : t.kind === "gdrive" ? __`Google Drive · ${t.config.folder}` : __("OneDrive · složka aplikace"));
+      : t.kind === "gdrive" ? __`Google Drive · ${t.config.folder}`
+      : t.kind === "dropbox" ? __`Dropbox · složka aplikace${t.config.folder ? "/" + t.config.folder : ""}` : __("OneDrive · složka aplikace"));
     const [label, cls] = targetState(t);
     const stTd = el("td", label, cls);
-    if (t.auth) {
+    if (t.auth && t.auth.paste) {
+      // Dropbox: otevřít odkaz, schválit a kód, který Dropbox ukáže, vložit sem
+      const a = el("a", __("1. Otevři Dropbox a povol přístup")); a.href = t.auth.url; a.target = "_blank"; a.rel = "noopener";
+      const inp = el("input"); inp.placeholder = __("2. sem vlož kód z Dropboxu"); inp.className = "bt-paste"; inp.setAttribute("aria-label", __("Kód z Dropboxu"));
+      const ok = el("button", __("Dokončit"), "small"); ok.type = "button";
+      ok.addEventListener("click", async () => {
+        try { await api("POST", `/system/backup-targets/${t.id}/code`, { code: inp.value.trim() }); msg(__`${t.name}: přihlášeno`); } catch (e) { msg(e.message, true); }
+        loadBackups();
+      });
+      const box = el("div", null, "bt-pastebox"); box.append(a, inp, ok); stTd.textContent = ""; stTd.appendChild(box);
+    } else if (t.auth) {
       stTd.append(__("Zadej kód "), el("span", t.auth.user_code, "bt-code"), " na ");
       const a = el("a", t.auth.url); a.href = t.auth.url; a.target = "_blank"; a.rel = "noopener";
       stTd.append(a);
@@ -1973,12 +1998,12 @@ function renderTargets() {
     btn("×", () => deleteTarget(t)).title = __("Smazat cíl");
     const actTd = el("td"); actTd.appendChild(acts);
     const nameTd = el("td", `${t.name} `);
-    nameTd.append(el("span", __`${t.kind_label} · nechat ${t.keep}`, "muted"), el("br"), el("span", where, "muted small"));
+    nameTd.append(el("span", `${t.kind_label} · ${retText(t.keep, t.weekly, t.monthly)}`, "muted"), el("br"), el("span", where, "muted small"));
     tr.append(nameTd, stTd, lastTd, actTd);
     tb.appendChild(tr);
   }
   if (!bkTargets.length) {
-    const tr = el("tr"); const td = el("td", __("Zatím jen na tomto serveru – přidej Nextcloud, Google Drive nebo OneDrive."), "muted");
+    const tr = el("tr"); const td = el("td", __("Zatím jen na tomto serveru – přidej Nextcloud, Google Drive, Dropbox nebo OneDrive."), "muted");
     td.colSpan = 4; tr.appendChild(td); tb.appendChild(tr);
   }
 }
@@ -2019,7 +2044,8 @@ function btKindUi() {
   const show = (cls, on) => { for (const x of document.getElementsByClassName(cls)) x.hidden = !on; };
   show("bt-nc", k === "nextcloud"); show("bt-oauth", k !== "nextcloud"); show("bt-gd", k === "gdrive");
   show("bt-od", k === "onedrive"); show("bt-folder", k !== "onedrive");
-  $("bt-cid-l").textContent = k === "onedrive" ? __("Application (client) ID") : __("Client ID");
+  $("bt-cid-l").textContent = k === "onedrive" ? __("Application (client) ID") : k === "dropbox" ? __("App key") : __("Client ID");
+  $("bt-folder").placeholder = k === "dropbox" ? __("volitelná podsložka") : "MikroTik-Controller";
   $("bt-help").textContent = BT_HELP[k];
 }
 function openTarget(t) {
@@ -2028,6 +2054,7 @@ function openTarget(t) {
   $("bt-title").textContent = t ? __`Upravit: ${t.name}` : __("Nový cíl záloh");
   $("bt-kind").value = t ? t.kind : "nextcloud"; $("bt-kind").disabled = !!t;
   $("bt-name").value = t ? t.name : ""; $("bt-keep").value = t ? t.keep : 14;
+  $("bt-weekly").value = t ? t.weekly || 0 : 0; $("bt-monthly").value = t ? t.monthly || 0 : 0;
   $("bt-url").value = c.url || ""; $("bt-user").value = c.user || ""; $("bt-pass").value = "";
   $("bt-cid").value = c.client_id || ""; $("bt-csec").value = ""; $("bt-tenant").value = c.tenant || "";
   $("bt-folder").value = c.folder || "";
@@ -2042,12 +2069,14 @@ $("bt-close").addEventListener("click", closeTarget);
 $("bt-cancel").addEventListener("click", closeTarget);
 $("bt-save").addEventListener("click", async () => {
   const k = $("bt-kind").value;
-  const body = { name: $("bt-name").value.trim(), keep: Number($("bt-keep").value) };
+  const body = { name: $("bt-name").value.trim(), keep: Number($("bt-keep").value), weekly: Number($("bt-weekly").value) || 0,
+                 monthly: Number($("bt-monthly").value) || 0 };
   if (k === "nextcloud") Object.assign(body, { url: $("bt-url").value.trim(), user: $("bt-user").value.trim(),
     password: $("bt-pass").value, folder: $("bt-folder").value.trim() });
   if (k === "gdrive") Object.assign(body, { client_id: $("bt-cid").value.trim(), client_secret: $("bt-csec").value,
     folder: $("bt-folder").value.trim() });
   if (k === "onedrive") Object.assign(body, { client_id: $("bt-cid").value.trim(), tenant: $("bt-tenant").value.trim() || "common" });
+  if (k === "dropbox") Object.assign(body, { client_id: $("bt-cid").value.trim(), folder: $("bt-folder").value.trim() });
   if (btEdit && k === "nextcloud" && !body.password) delete body.password;
   if (btEdit && k === "gdrive" && !body.client_secret) delete body.client_secret;
   try {
@@ -2057,17 +2086,23 @@ $("bt-save").addEventListener("click", async () => {
       if (k !== "nextcloud") await api("POST", `/system/backup-targets/${r.id}/auth`, {});
     }
     closeTarget();
-    msg(k === "nextcloud" ? __("Cíl uložen – ověř spojení") : __("Uloženo – dokonči přihlášení kódem v tabulce"));
+    msg(k === "nextcloud" ? __("Cíl uložen – ověř spojení") : k === "dropbox" ? __("Uloženo – dokonči přihlášení: odkaz a pole pro kód jsou v tabulce") : __("Uloženo – dokonči přihlášení kódem v tabulce"));
   } catch (e) { msg(e.message, true); return; }
   loadBackups();
 });
 
+for (const id of ["bk-keep", "bk-weekly", "bk-monthly"]) $(id).addEventListener("input", bkRetSum);
+for (const b of $("bk-plan").getElementsByTagName ? $("bk-plan").getElementsByTagName("button") : []) {
+  const ret = b.getAttribute && b.getAttribute("data-ret");
+  if (ret) b.addEventListener("click", () => { [$("bk-keep").value, $("bk-weekly").value, $("bk-monthly").value] = ret.split(","); bkRetSum(); });
+}
 $("bk-plan").addEventListener("submit", async (e) => {
   e.preventDefault();
   const days = [1, 2, 3, 4, 5, 6, 7].filter((d) => $("bk-day-" + d).checked);
   try {
     await api("PUT", "/system/backup-plan", { enabled: $("bk-en").checked, time: $("bk-time").value, days,
-                                              keep: Number($("bk-keep").value) });
+                                              keep: Number($("bk-keep").value), weekly: Number($("bk-weekly").value) || 0,
+                                              monthly: Number($("bk-monthly").value) || 0 });
     msg(__("Plán záloh uložen"));
   } catch (err) { msg(err.message, true); }
   loadBackups();
@@ -2264,7 +2299,7 @@ function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(pre
 // [klíč, popisek v ikonové liště, celý název (tooltip)]
 const VIEWS = [["dash", __("Přehled"), __("Přehled a topologie")], ["devices", __("Zařízení")], ["ports", __("Porty")], ["clients", __("Klienti")],
   ["settings", __("Nastavení"), __("Nastavení lokality")], ["activity", __("Aktivita"), __("Aktivita a audit")],
-  ["tenant", __("Lokality"), __("Všechny lokality")], ["users", __("Uživatelé")], ["system", __("Systém")]];
+  ["tenant", __("Lokality"), __("Všechny lokality")], ["users", __("Uživatelé")], ["backups", __("Zálohy")], ["system", __("Systém")]];
 const SITE_VIEWS = ["dash", "devices", "ports", "clients", "settings", "activity"];
 const navBadges = {};
 
@@ -2275,6 +2310,7 @@ const NAV_ICON = {
   settings: "M3 4h10M3 8h10M3 12h10M6 2.5v3M10 6.5v3M5 10.5v3", activity: "M1.5 8h3l2-5 3 10 2-5h3",
   tenant: "M2 14V4l5-2v12M7 6l7 2v6M1 14h14", users: "M8 8a3 3 0 100-6 3 3 0 000 6zM2.5 14c.6-3 2.7-4.5 5.5-4.5s4.9 1.5 5.5 4.5",
   system: "M3 3h10v4H3zM3 9h10v4H3zM5.5 5h.01M5.5 11h.01",
+  backups: "M4.5 12.5a3 3 0 0 1-.4-6 4 4 0 0 1 7.7-.6 3.2 3.2 0 0 1-.3 6.6zM8 11V7.5M6.3 9 8 7.3 9.7 9",
 };
 function navIcon(key) {
   const NS = "http://www.w3.org/2000/svg";
@@ -2285,12 +2321,13 @@ function navIcon(key) {
 }
 
 // položky správy zákazníka (lokality, uživatelé, systém) nejsou v levém pruhu, ale v nabídce „Správa“ v záhlaví
-const TENANT_MENU = { tenant: __("všechny lokality zákazníka"), users: __("účty, role, dvoufázové přihlášení"), system: __("certifikáty, zálohy, čas a DNS") };
+const TENANT_MENU = { tenant: __("všechny lokality zákazníka"), users: __("účty, role, dvoufázové přihlášení"),
+  backups: __("plán, retence, kopie do cloudu"), system: __("certifikáty, čas a DNS") };
 function buildNav() {
   const nav = $("nav-items"); nav.textContent = "";
   const menu = $("tmenu-list"); while (menu.children.length > 1) menu.removeChild(menu.children[menu.children.length - 1]);
   for (const [key, label, full] of VIEWS) {
-    if (key === "system" && !(me && me.superadmin)) continue;
+    if ((key === "system" || key === "backups") && !(me && me.superadmin)) continue;
     const inMenu = key in TENANT_MENU;
     const b = el("button", null, "navbtn"); b.type = "button"; b.id = "nav-" + key; b.title = inMenu ? "" : full || label;
     const lab = el("span", null, "nlabel");
@@ -2353,7 +2390,7 @@ function openSub(view, key) {
 for (const [view, tabs] of Object.entries(SUBTABS)) for (const [k, btn] of tabs) if (btn) $(btn).addEventListener("click", () => openSub(view, k));
 
 function showView(key, load) {
-  if (!VIEWS.some(([k]) => k === key) || (key === "system" && !(me && me.superadmin))) key = "dash";
+  if (!VIEWS.some(([k]) => k === key) || ((key === "system" || key === "backups") && !(me && me.superadmin))) key = "dash";
   prefs.view = key; savePrefs();
   for (const [k] of VIEWS) {
     const v = $("view-" + k); if (v) v.hidden = k !== key;
@@ -2363,6 +2400,7 @@ function showView(key, load) {
   const t = subOf(key);
   if (t) { activateSub(key, t[0]); if (load && tenantId && siteId()) t[3](); }
   if (key === "dash") renderOverview();
+  if (key === "backups" && load) loadBackups();
 }
 
 // --- rychlé hledání v záhlaví (Ctrl+K): kde co je + zařízení ----------------------------------------------
@@ -2388,7 +2426,8 @@ const GS_PLACES = [
   [__("Audit"), __("Aktivita"), "audit log kdo co historie", "activity", "audit"],
   [__("Všechny lokality"), __("Lokality"), "lokality sites tenant", "tenant", null],
   [__("Uživatelé a přístupy"), __("Uživatelé"), "uzivatele hesla mfa role users", "users", null],
-  [__("Systém (certifikáty, čas a DNS, zálohy)"), __("Systém"), "system certifikat dns ntp zaloha backup smtp", "system", null],
+  [__("Systém (certifikáty, čas a DNS)"), __("Systém"), "system certifikat dns ntp smtp", "system", null],
+  [__("Zálohy controlleru: plán, retence, Nextcloud, Google Drive, Dropbox"), __("Zálohy"), "zaloha zalohy backup retence rotace plan cloud nextcloud dropbox google drive onedrive obnova", "backups", null],
 ];
 const gsNorm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 let gsItems = [], gsSel = 0;

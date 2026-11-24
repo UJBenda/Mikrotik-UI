@@ -1,4 +1,4 @@
-"""Kopie záloh controlleru do cloudu: Nextcloud (WebDAV), Google Drive, OneDrive.
+"""Kopie záloh controlleru do cloudu: Nextcloud (WebDAV), Google Drive, OneDrive, Dropbox.
 
 Záloha (.mtcbak) je šifrovaná heslem záloh už na serveru – cloud ji jen uchovává, nemusí být
 důvěryhodný. Cílů může být víc; každý má vlastní počet uchovávaných záloh (starší controller
@@ -11,6 +11,9 @@ Přihlášení:
   (Google Cloud: OAuth klient „TVs and Limited Input devices“, scope drive.file – controller
   vidí jen soubory, které sám vytvořil; Microsoft Entra: veřejný klient, Files.ReadWrite.AppFolder
   – jen složka Aplikace/<název aplikace>). Postup je v docs/install.md.
+- Dropbox: OAuth s PKCE bez přesměrování – administrace ukáže odkaz, Dropbox po schválení zobrazí kód
+  a správce ho vloží zpět. Potřebuje vlastní aplikaci (App Console: „Scoped access“, „App folder“, práva
+  files.content.write a files.content.read); stačí App key, tajemství aplikace se nepoužívá.
 
 Tajemství (heslo aplikace, client secret, refresh token, rozpracovaný device code) jsou jen
 v `backup_target` šifrovaně (SecretBox, kontext `backup_target:<id>`). Nahrává worker (uživatel
@@ -34,14 +37,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from . import retention
 from .db import Database, Tx, operator_scope
 from .security import SealedSecret, SecretBox
 from .services import NotFound, ServiceError, audit
 
 log = logging.getLogger("mtcontroller.cloudbackup")
 
-KINDS = ("nextcloud", "gdrive", "onedrive")
-KIND_LABEL = {"nextcloud": "Nextcloud", "gdrive": "Google Drive", "onedrive": "OneDrive"}
+KINDS = ("nextcloud", "gdrive", "onedrive", "dropbox")
+KIND_LABEL = {"nextcloud": "Nextcloud", "gdrive": "Google Drive", "onedrive": "OneDrive", "dropbox": "Dropbox"}
+OAUTH_KINDS = ("gdrive", "onedrive", "dropbox")
+DROPBOX_CHUNK = 8 * 1024 * 1024   # části relace musí být násobek 4 MiB
+DROPBOX_SMALL = 100 * 1024 * 1024  # menší soubor jedním voláním (limit Dropboxu je 150 MB)
 NAME_RE = re.compile(r"^mtc-[A-Za-z0-9-]{1,40}-\d{8}-\d{6}\.mtcbak$")
 CHUNK = 10 * 1024 * 1024          # Nextcloud v2 ≥ 5 MiB; OneDrive násobek 320 KiB; Google násobek 256 KiB
 SMALL = CHUNK                     # menší soubor jedním PUT
@@ -55,6 +62,10 @@ URLS = {
     "google_upload": "https://www.googleapis.com/upload/drive/v3/files",
     "ms_login": "https://login.microsoftonline.com",
     "ms_graph": "https://graph.microsoft.com/v1.0",
+    "dropbox_authorize": "https://www.dropbox.com/oauth2/authorize",
+    "dropbox_token": "https://api.dropboxapi.com/oauth2/token",
+    "dropbox_api": "https://api.dropboxapi.com/2",
+    "dropbox_content": "https://content.dropboxapi.com/2",
 }
 GOOGLE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 MS_SCOPE = "offline_access Files.ReadWrite.AppFolder"
@@ -146,6 +157,8 @@ class Target:
     config: dict
     secret: dict
     status: dict
+    weekly: int = 0
+    monthly: int = 0
 
 
 def _ctx(tid: str) -> bytes:
@@ -174,7 +187,8 @@ def _row(tx: Tx, tid: str) -> dict:
 def load(tx: Tx, box: SecretBox, tid: str) -> Target:
     r = _row(tx, tid)
     return Target(str(r["id"]), r["kind"], r["name"], r["enabled"], r["keep"], r["config"] or {},
-                  _open_secret(box, r), r["status"] or {})
+                  _open_secret(box, r), r["status"] or {},
+                  weekly=int(r.get("keep_weekly") or 0), monthly=int(r.get("keep_monthly") or 0))
 
 
 def store_secret(tx: Tx, box: SecretBox, tid: str, secret: dict) -> None:
@@ -236,18 +250,28 @@ def validate(kind: str, data: dict, old_secret: dict | None = None) -> tuple[dic
             raise ServiceError("tenant: common, consumers, organizations nebo ID / doména")
         sec = {k: v for k, v in old.items() if k == "refresh_token"} if old.get("client_id") == cid else {}
         return {"client_id": cid, "tenant": ten}, {**sec, "client_id": cid}
+    if kind == "dropbox":
+        key = str(data.get("client_id") or "").strip()
+        if not re.match(r"^[a-z0-9]{8,32}$", key):
+            raise ServiceError("App key z Dropbox App Console (malá písmena a číslice)")
+        folder = str(data.get("folder") or "").strip().strip("/")
+        if folder:
+            folder = _folder(folder, "")
+        sec = {k: v for k, v in old.items() if k == "refresh_token"} if old.get("client_id") == key else {}
+        return {"client_id": key, "folder": folder}, {**sec, "client_id": key}
     raise ServiceError("neznámý typ cíle")
 
 
 def needs_auth(t: Target) -> bool:
-    return t.kind in ("gdrive", "onedrive") and not t.secret.get("refresh_token")
+    return t.kind in OAUTH_KINDS and not t.secret.get("refresh_token")
 
 
 def public(r: dict) -> dict:
     """Pro UI – bez tajemství."""
     st = r["status"] or {}
     return {"id": str(r["id"]), "kind": r["kind"], "kind_label": KIND_LABEL[r["kind"]], "name": r["name"],
-            "enabled": r["enabled"], "keep": r["keep"], "config": r["config"] or {},
+            "enabled": r["enabled"], "keep": r["keep"], "weekly": int(r.get("keep_weekly") or 0),
+            "monthly": int(r.get("keep_monthly") or 0), "config": r["config"] or {},
             "has_secret": r["wrapped_key"] is not None, "status": {k: v for k, v in st.items() if k != "device"},
             "auth": st.get("device"), "authorized": bool(st.get("authorized"))}
 
@@ -264,15 +288,16 @@ def create(db: Database, box: SecretBox, data: dict, user_id: Any = None, ip: st
     cfg, sec = validate(kind, data)
     name = str(data.get("name") or KIND_LABEL[kind]).strip()[:80] or KIND_LABEL[kind]
     keep = _keep(data.get("keep", 14))
+    weekly, monthly = retention.number("weekly", data.get("weekly", 0)), retention.number("monthly", data.get("monthly", 0))
     tid = str(uuid.uuid4())
     with operator_scope(db) as tx:
-        tx.execute("""INSERT INTO backup_target (id, kind, name, keep, config, created_by, status)
-                      VALUES (%(i)s, %(k)s, %(n)s, %(keep)s, %(c)s, %(u)s, %(s)s)""",
-                   {"i": tid, "k": kind, "n": name, "keep": keep, "c": cfg, "u": user_id,
+        tx.execute("""INSERT INTO backup_target (id, kind, name, keep, keep_weekly, keep_monthly, config, created_by, status)
+                      VALUES (%(i)s, %(k)s, %(n)s, %(keep)s, %(w)s, %(m)s, %(c)s, %(u)s, %(s)s)""",
+                   {"i": tid, "k": kind, "n": name, "keep": keep, "w": weekly, "m": monthly, "c": cfg, "u": user_id,
                     "s": {"authorized": kind == "nextcloud"}})
         store_secret(tx, box, tid, sec)
         audit(tx, "system.backup_target_create", user_id=user_id, target=f"backup_target:{tid}",
-              after={"kind": kind, "name": name, "keep": keep, "config": cfg}, ip=ip)
+              after={"kind": kind, "name": name, "keep": keep, "weekly": weekly, "monthly": monthly, "config": cfg}, ip=ip)
     return tid
 
 
@@ -291,22 +316,26 @@ def update(db: Database, box: SecretBox, tid: str, data: dict, user_id: Any = No
         t = load(tx, box, tid)
         cfg, sec = t.config, t.secret
         if any(k in data for k in ("url", "user", "password", "folder", "client_id", "client_secret", "tenant")):
-            cfg, sec = validate(t.kind, {**t.config, **data}, t.secret)
+            cfg, sec = validate(t.kind, {**t.config, **data}, {k: v for k, v in t.secret.items() if k != "code_verifier"})
             if t.kind == "gdrive" and cfg.get("folder") == t.config.get("folder"):
                 cfg["folder_id"] = t.config.get("folder_id")
             cfg = {k: v for k, v in cfg.items() if v is not None}
         name = str(data.get("name", t.name)).strip()[:80] or t.name
         keep = _keep(data.get("keep", t.keep))
+        weekly = retention.number("weekly", data.get("weekly", t.weekly))
+        monthly = retention.number("monthly", data.get("monthly", t.monthly))
         enabled = bool(data.get("enabled", t.enabled))
-        tx.execute("""UPDATE backup_target SET name = %(n)s, keep = %(k)s, enabled = %(e)s, config = %(c)s,
-                      updated_at = now() WHERE id = %(i)s""", {"n": name, "k": keep, "e": enabled, "c": cfg, "i": tid})
+        tx.execute("""UPDATE backup_target SET name = %(n)s, keep = %(k)s, keep_weekly = %(w)s, keep_monthly = %(m)s,
+                      enabled = %(e)s, config = %(c)s, updated_at = now() WHERE id = %(i)s""",
+                   {"n": name, "k": keep, "w": weekly, "m": monthly, "e": enabled, "c": cfg, "i": tid})
         if sec != t.secret:
             store_secret(tx, box, tid, sec)
             if t.kind != "nextcloud" and not sec.get("refresh_token"):
                 set_status(tx, tid, authorized=False)
         audit(tx, "system.backup_target_update", user_id=user_id, target=f"backup_target:{tid}",
-              before={"name": t.name, "keep": t.keep, "enabled": t.enabled, "config": t.config},
-              after={"name": name, "keep": keep, "enabled": enabled, "config": cfg,
+              before={"name": t.name, "keep": t.keep, "weekly": t.weekly, "monthly": t.monthly, "enabled": t.enabled,
+                      "config": t.config},
+              after={"name": name, "keep": keep, "weekly": weekly, "monthly": monthly, "enabled": enabled, "config": cfg,
                      "secret_changed": sec != t.secret}, ip=ip)
 
 
@@ -344,6 +373,8 @@ def device_start(db: Database, box: SecretBox, tid: str, user_id: Any = None, ip
     elif t.kind == "onedrive":
         r = req("POST", _ms(t, "devicecode"), {"Content-Type": "application/x-www-form-urlencoded"},
                 _form({"client_id": t.secret["client_id"], "scope": MS_SCOPE}))
+    elif t.kind == "dropbox":
+        return _dropbox_start(db, box, t, user_id, ip)
     else:
         raise ServiceError("Nextcloud se přihlašuje heslem aplikace")
     if r.status != 200:
@@ -362,12 +393,61 @@ def device_start(db: Database, box: SecretBox, tid: str, user_id: Any = None, ip
     return dev
 
 
+def _dropbox_start(db: Database, box: SecretBox, t: Target, user_id: Any, ip: str | None) -> dict:
+    """Dropbox neumí „device code“: správce otevře odkaz, schválí a Dropbox mu ukáže kód k vložení (PKCE)."""
+    import base64
+    import hashlib
+    import secrets as pysecrets
+
+    verifier = pysecrets.token_urlsafe(64)[:96]
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    url = URLS["dropbox_authorize"] + "?" + urllib.parse.urlencode({
+        "client_id": t.secret["client_id"], "response_type": "code", "token_access_type": "offline",
+        "code_challenge": challenge, "code_challenge_method": "S256"})
+    dev = {"url": url, "paste": True, "expires_at": time.time() + 900}
+    with operator_scope(db) as tx:
+        store_secret(tx, box, t.id, {**t.secret, "code_verifier": verifier})
+        set_status(tx, t.id, device=dev)
+        audit(tx, "system.backup_target_auth_start", user_id=user_id, target=f"backup_target:{t.id}", ip=ip)
+    return dev
+
+
+def auth_code(db: Database, box: SecretBox, tid: str, code: str, user_id: Any = None, ip: str | None = None,
+              req: Http = http) -> dict:
+    """Dokončí přihlášení Dropboxu kódem, který Dropbox správci zobrazil."""
+    code = str(code or "").strip()
+    if not re.match(r"^[A-Za-z0-9_-]{10,200}$", code):
+        raise ServiceError("vlož kód, který Dropbox zobrazil po schválení")
+    with operator_scope(db) as tx:
+        t = load(tx, box, tid)
+    if t.kind != "dropbox" or not t.secret.get("code_verifier"):
+        raise ServiceError("nejdřív klikni na Přihlásit")
+    r = req("POST", URLS["dropbox_token"], {"Content-Type": "application/x-www-form-urlencoded"},
+            _form({"code": code, "grant_type": "authorization_code", "client_id": t.secret["client_id"],
+                   "code_verifier": t.secret["code_verifier"]}))
+    j = r.json()
+    if r.status != 200 or not j.get("refresh_token"):
+        msg = "kód neplatí nebo vypršel – začni přihlášení znovu" if r.status == 400 else str(_err(r, "přihlášení selhalo"))
+        _device_end(db, box, t, error=msg)
+        raise CloudError(msg)
+    sec = {k: v for k, v in t.secret.items() if k != "code_verifier"} | {"refresh_token": j["refresh_token"]}
+    with operator_scope(db) as tx:
+        store_secret(tx, box, t.id, sec)
+        tx.execute("UPDATE backup_target SET status = (status - 'device') || %(s)s WHERE id = %(i)s",
+                   {"s": {"authorized": True, "authorized_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                          "last_error": None, "auth_error": None}, "i": t.id})
+        audit(tx, "system.backup_target_authorized", user_id=user_id, target=f"backup_target:{t.id}", ip=ip)
+    return {"state": "done"}
+
+
 def device_poll(db: Database, box: SecretBox, tid: str, req: Http = http, now: float | None = None) -> dict:
     """Dotaz, jestli už správce kód zadal. Vrací {state: pending|done|error, …}."""
     now = now or time.time()
     with operator_scope(db) as tx:
         t = load(tx, box, tid)
     dev = t.status.get("device")
+    if t.kind == "dropbox":   # čeká se na vložení kódu, není co dotazovat
+        return {"state": "done"} if t.secret.get("refresh_token") else ({"state": "pending", **dev} if dev else {"state": "none"})
     if not dev or not t.secret.get("device_code"):
         return {"state": "done" if t.secret.get("refresh_token") else "none"}
     if now > dev["expires_at"]:
@@ -409,7 +489,7 @@ def device_poll(db: Database, box: SecretBox, tid: str, req: Http = http, now: f
 
 def _device_end(db: Database, box: SecretBox, t: Target, error: str) -> None:
     with operator_scope(db) as tx:
-        store_secret(tx, box, t.id, {k: v for k, v in t.secret.items() if k != "device_code"})
+        store_secret(tx, box, t.id, {k: v for k, v in t.secret.items() if k not in ("device_code", "code_verifier")})
         tx.execute("UPDATE backup_target SET status = (status - 'device') || %(s)s WHERE id = %(i)s",
                    {"s": {"auth_error": error}, "i": t.id})
 
@@ -422,6 +502,9 @@ def _access_token(db: Database, box: SecretBox, t: Target, req: Http) -> str:
         r = req("POST", URLS["google_token"], {"Content-Type": "application/x-www-form-urlencoded"},
                 _form({"client_id": t.secret["client_id"], "client_secret": t.secret["client_secret"],
                        "refresh_token": rt, "grant_type": "refresh_token"}))
+    elif t.kind == "dropbox":
+        r = req("POST", URLS["dropbox_token"], {"Content-Type": "application/x-www-form-urlencoded"},
+                _form({"client_id": t.secret["client_id"], "refresh_token": rt, "grant_type": "refresh_token"}))
     else:
         r = req("POST", _ms(t, "token"), {"Content-Type": "application/x-www-form-urlencoded"},
                 _form({"client_id": t.secret["client_id"], "refresh_token": rt, "grant_type": "refresh_token",
@@ -654,6 +737,83 @@ class OneDrive:
             raise _err(r, "smazání staré zálohy selhalo")
 
 
+class Dropbox:
+    """Složka aplikace na Dropboxu (kořen = Apps/<název aplikace>), volitelně podsložka."""
+
+    def __init__(self, t: Target, req: Http, token: str):
+        self.t, self.req = t, req
+        self.auth = {"Authorization": f"Bearer {token}"}
+        self.dir = ("/" + t.config["folder"]) if t.config.get("folder") else ""
+
+    def _rpc(self, path: str, arg: dict | None) -> Resp:
+        if arg is None:  # volání bez argumentů: tělo „null“
+            return self.req("POST", f"{URLS['dropbox_api']}/{path}", {**self.auth, "Content-Type": "application/json"}, b"null")
+        return self.req("POST", f"{URLS['dropbox_api']}/{path}", {**self.auth, "Content-Type": "application/json"},
+                        json.dumps(arg).encode())
+
+    def _content(self, path: str, arg: dict, body: bytes) -> Resp:
+        return self.req("POST", f"{URLS['dropbox_content']}/{path}",
+                        {**self.auth, "Content-Type": "application/octet-stream", "Dropbox-API-Arg": json.dumps(arg)}, body)
+
+    def check(self) -> str:
+        r = self._rpc("users/get_current_account", None)
+        if r.status != 200:
+            raise _err(r, "Dropbox účet není dostupný")
+        self.list()
+        return f"{r.json().get('email', '')} · {self.dir or '/'}".strip(" ·")
+
+    def upload(self, path: Path) -> None:
+        size = path.stat().st_size
+        if size == 0:
+            raise CloudError("prázdný soubor")
+        commit = {"path": f"{self.dir}/{path.name}", "mode": "overwrite", "mute": True}
+        if size <= DROPBOX_SMALL:
+            r = self._content("files/upload", commit, path.read_bytes())
+            if r.status != 200:
+                raise _err(r, "nahrání na Dropbox selhalo")
+            return
+        sid = ""
+        for off, b in _chunks(path, DROPBOX_CHUNK):
+            last = off + len(b) == size
+            if not sid:
+                r = self._content("files/upload_session/start", {"close": False}, b)
+                sid = r.json().get("session_id", "") if r.status == 200 else ""
+                if not sid:
+                    raise _err(r, "nahrání na Dropbox nejde zahájit")
+            elif last:
+                r = self._content("files/upload_session/finish",
+                                  {"cursor": {"session_id": sid, "offset": off}, "commit": commit}, b)
+                if r.status != 200:
+                    raise _err(r, "nahrání na Dropbox nejde dokončit")
+                return
+            else:
+                r = self._content("files/upload_session/append_v2",
+                                  {"cursor": {"session_id": sid, "offset": off}, "close": False}, b)
+                if r.status != 200:
+                    raise _err(r, "nahrání na Dropbox selhalo")
+        raise CloudError("nahrání na Dropbox nedokončeno")
+
+    def list(self) -> list[dict]:
+        r = self._rpc("files/list_folder", {"path": self.dir, "limit": 2000})
+        out: list[dict] = []
+        while True:
+            if r.status == 409:      # složka ještě neexistuje (vznikne prvním nahráním)
+                return out
+            if r.status != 200:
+                raise _err(r, "výpis Dropboxu selhal")
+            j = r.json()
+            out += [{"id": e.get("path_lower") or f"{self.dir}/{e['name']}", "name": e["name"], "size": int(e.get("size") or 0)}
+                    for e in j.get("entries", []) if e.get(".tag") == "file" and NAME_RE.match(e.get("name", ""))]
+            if not j.get("has_more"):
+                return out
+            r = self._rpc("files/list_folder/continue", {"cursor": j.get("cursor")})
+
+    def delete(self, item: dict) -> None:
+        r = self._rpc("files/delete_v2", {"path": item["id"]})
+        if r.status not in (200, 409):
+            raise _err(r, "smazání staré zálohy selhalo")
+
+
 def provider(db: Database, box: SecretBox, t: Target, req: Http = http):
     if t.kind == "nextcloud":
         return Nextcloud(t, req)
@@ -663,6 +823,8 @@ def provider(db: Database, box: SecretBox, t: Target, req: Http = http):
             with operator_scope(db) as tx:
                 tx.execute("UPDATE backup_target SET config = %(c)s WHERE id = %(i)s", {"c": cfg, "i": t.id})
         return GoogleDrive(t, req, token, save)
+    if t.kind == "dropbox":
+        return Dropbox(t, req, token)
     return OneDrive(t, req, token)
 
 
@@ -694,15 +856,16 @@ def backoff(attempts: int) -> float:
 
 
 def upload_one(db: Database, box: SecretBox, t: Target, path: Path, req: Http = http) -> dict:
-    """Nahraje soubor a promaže v cíli staré zálohy (nechá `keep` posledních). Zapíše stav a audit."""
+    """Nahraje soubor a promaže v cíli staré zálohy podle retence cíle. Zapíše stav a audit."""
     t0 = time.monotonic()
     try:
         p = provider(db, box, t, req)
         p.upload(path)
         removed = []
         items = sorted(p.list(), key=lambda x: x["name"][-22:])
-        for item in items[:-t.keep] if len(items) > t.keep else []:
-            if item["name"] != path.name:
+        kept = retention.select([i["name"] for i in items], t.keep, t.weekly, t.monthly)
+        for item in items:
+            if item["name"] not in kept and item["name"] != path.name:
                 p.delete(item)
                 removed.append(item["name"])
     except Exception as e:  # noqa: BLE001 – stav a audit chyby
@@ -719,7 +882,7 @@ def upload_one(db: Database, box: SecretBox, t: Target, path: Path, req: Http = 
     with operator_scope(db) as tx:
         set_status(tx, t.id, last_ok_at=_now(), last_file=path.name, last_size=path.stat().st_size,
                    last_seconds=secs, last_error=None, attempts=0, force=False, next_try=None, failed_file=None,
-                   remote_count=min(len(items), t.keep))
+                   remote_count=len(items) - len(removed))
         audit(tx, "system.backup_upload", target=f"backup_target:{t.id}",
               after={"file": path.name, "size": path.stat().st_size, "seconds": secs, "removed": removed})
     return {"ok": True, "removed": removed}

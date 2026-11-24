@@ -4834,8 +4834,7 @@
      6,
      7
     ],
-    "keep": 14
-   },
+    "keep": 14, "weekly": 0, "monthly": 12},
    "max_gap_hours": 24,
    "alerts": {
     "cloud_x": {
@@ -4846,6 +4845,7 @@
     }
    },
    "targets": [
+    {"id": "7a1e0000-0000-4000-8000-0000000000d0", "kind": "dropbox", "kind_label": "Dropbox", "name": "Dropbox archiv", "enabled": true, "keep": 14, "weekly": 0, "monthly": 12, "config": {"client_id": "abcd1234efgh567", "folder": "zalohy"}, "has_secret": true, "status": {}, "auth": {"url": "https://www.dropbox.com/oauth2/authorize?client_id=abcd1234efgh567&response_type=code", "paste": true, "expires_at": 1900000000}, "authorized": false},
     {
      "id": "7a1e0000-0000-4000-8000-000000000001",
      "kind": "nextcloud",

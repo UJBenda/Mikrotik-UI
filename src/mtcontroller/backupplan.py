@@ -12,6 +12,7 @@ import datetime as dt
 import re
 from typing import Any
 
+from . import retention
 from .db import Database, operator_scope
 from .services import ServiceError, audit
 
@@ -22,7 +23,7 @@ RETRY_AFTER = dt.timedelta(hours=1)
 
 
 def defaults(keep: int = 14) -> dict:
-    return {"enabled": True, "time": "02:30", "days": list(DAYS), "keep": keep}
+    return {"enabled": True, "time": "02:30", "days": list(DAYS), "keep": keep, "weekly": 0, "monthly": 0}
 
 
 def validate(data: dict, keep_default: int = 14) -> dict:
@@ -42,14 +43,10 @@ def validate(data: dict, keep_default: int = 14) -> dict:
         if not days or any(d not in DAYS for d in days):
             raise ServiceError("vyber aspoň jeden den v týdnu")
         out["days"] = days
-    if "keep" in data:
-        try:
-            keep = int(data["keep"])
-        except (TypeError, ValueError):
-            raise ServiceError("počet záloh 1–365") from None
-        if not 1 <= keep <= 365:
-            raise ServiceError("počet záloh 1–365")
-        out["keep"] = keep
+    # retence: posledních N + volitelně týdenní a měsíční zálohy (viz retention.py)
+    for k in ("keep", "weekly", "monthly"):
+        if k in data:
+            out[k] = retention.number(k, data[k])
     return out
 
 

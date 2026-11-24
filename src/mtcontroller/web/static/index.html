@@ -602,23 +602,31 @@
       </form>
     </div>
       </div>
-      <div id="view-system" class="view" hidden>
-    <div class="card" id="system-card" hidden>
-      <h2>Systém <button id="system-refresh" type="button" class="small secondary">Obnovit</button></h2>
-      <p id="system-summary"></p>
-      <table><thead><tr><th>Krok workeru</th><th>Trvání</th><th>Výsledek</th></tr></thead><tbody id="system-steps"></tbody></table>
-    </div>
+      <div id="view-backups" class="view" hidden>
     <div class="card" id="backup-card" hidden>
       <h2>Zálohy controlleru <button id="backup-now" type="button" class="small">Zálohovat teď</button></h2>
       <p id="backup-summary" class="muted"></p>
       <ul id="backup-alerts" class="bk-alerts"></ul>
-      <h3>Plán</h3>
-      <form id="bk-plan" class="bk-plan">
-        <label class="check"><input type="checkbox" id="bk-en"> Zálohovat automaticky</label>
-        <label class="check">v <input id="bk-time" type="time" required></label>
-        <span id="bk-days" class="bk-days"></span>
-        <label class="check">nechat <input id="bk-keep" type="number" min="1" max="365" required> posledních</label>
-        <button type="submit" class="small">Uložit plán</button>
+      <form id="bk-plan" class="bk-form">
+        <h3>Kdy zálohovat</h3>
+        <div class="bk-row">
+          <label class="check"><input type="checkbox" id="bk-en"> Zálohovat automaticky</label>
+          <label class="check">v <input id="bk-time" type="time" required></label>
+          <span id="bk-days" class="bk-days"></span>
+        </div>
+        <h3>Jak dlouho zálohy držet na serveru</h3>
+        <div class="bk-row bk-ret">
+          <label>Posledních <input id="bk-keep" type="number" min="1" max="365" required> <span class="muted">záloh</span></label>
+          <label>+ týdenní <input id="bk-weekly" type="number" min="0" max="104" value="0"> <span class="muted">týdnů zpět</span></label>
+          <label>+ měsíční <input id="bk-monthly" type="number" min="0" max="120" value="0"> <span class="muted">měsíců zpět</span></label>
+        </div>
+        <div class="bk-row bk-presets"><span class="muted">Rychlá volba:</span>
+          <button type="button" class="small secondary" data-ret="14,0,0">14 posledních</button>
+          <button type="button" class="small secondary" data-ret="14,0,12">14 posledních + měsíční rok zpět</button>
+          <button type="button" class="small secondary" data-ret="30,8,24">30 posledních + 8 týdnů + 2 roky</button>
+        </div>
+        <p id="bk-ret-sum" class="muted"></p>
+        <button type="submit" class="small">Uložit plán a retenci</button>
       </form>
       <h3>Kopie mimo server <button id="bt-add" type="button" class="small secondary">+ Přidat cíl</button></h3>
       <p class="muted">Šifrovaná záloha se po vytvoření zkopíruje do všech zapnutých cílů; staré tam controller
@@ -629,6 +637,13 @@
       <table><thead><tr><th>Soubor</th><th>Velikost</th><th>Vytvořeno</th><th></th></tr></thead><tbody id="backup-list"></tbody></table>
       <p class="muted">Zálohy jsou šifrované heslem záloh (zobrazí ho <code>sudo mtc-admin recovery-kit</code>).
         Obsahují databázi, konfiguraci a klíče. Obnova: průvodce nové instalace nebo <code>sudo mtc-admin restore SOUBOR</code>.</p>
+    </div>
+      </div>
+      <div id="view-system" class="view" hidden>
+    <div class="card" id="system-card" hidden>
+      <h2>Systém <button id="system-refresh" type="button" class="small secondary">Obnovit</button></h2>
+      <p id="system-summary"></p>
+      <table><thead><tr><th>Krok workeru</th><th>Trvání</th><th>Výsledek</th></tr></thead><tbody id="system-steps"></tbody></table>
     </div>
     <div class="card" id="ns-card" hidden>
       <h2>Čas a DNS pro řízená zařízení</h2>
@@ -1045,9 +1060,11 @@
       <div class="sd-head"><h3 id="bt-title">Cíl záloh</h3><button id="bt-close" type="button" class="icon-btn" title="Zavřít">×</button></div>
       <div class="sd-grid">
         <label class="pe-field"><span>Typ</span><select id="bt-kind">
-          <option value="nextcloud">Nextcloud</option><option value="gdrive">Google Drive</option><option value="onedrive">OneDrive</option></select></label>
+          <option value="nextcloud">Nextcloud</option><option value="gdrive">Google Drive</option><option value="dropbox">Dropbox</option><option value="onedrive">OneDrive</option></select></label>
         <label class="pe-field"><span>Název</span><input id="bt-name" maxlength="80"></label>
         <label class="pe-field"><span>Nechat posledních</span><input id="bt-keep" type="number" min="1" max="365" value="14"></label>
+        <label class="pe-field"><span>+ týdenní (týdnů zpět)</span><input id="bt-weekly" type="number" min="0" max="104" value="0"></label>
+        <label class="pe-field"><span>+ měsíční (měsíců zpět)</span><input id="bt-monthly" type="number" min="0" max="120" value="0"></label>
         <label class="pe-field bt-nc"><span>Adresa Nextcloudu</span><input id="bt-url" placeholder="https://cloud.firma.cz"></label>
         <label class="pe-field bt-nc"><span>Uživatel</span><input id="bt-user" autocomplete="off"></label>
         <label class="pe-field bt-nc"><span>Heslo aplikace</span><input id="bt-pass" type="password" autocomplete="new-password"></label>
