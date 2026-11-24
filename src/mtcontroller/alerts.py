@@ -123,6 +123,11 @@ def conditions(tx: Tx) -> list[Active]:
                 HAVING sum(h.link_downs) >= {FLAP_LINK_DOWNS}"""):
         out.append(Active(r["tenant_id"], r["device_id"], "port_flapping", r["name"], "warning",
                           f"{_label(r)}: port {r['name']} – {r['downs']} výpadků linky za 2 h"))
+    # bezdrátové spoje: výpadek a zhoršení proti vlastnímu normálu spoje
+    from . import wlink
+
+    for r in wlink.alerts(tx):
+        out.append(Active(r["tenant_id"], r["device_id"], r["kind"], r["subject"], r["severity"], r["message"]))
     # chybovost portů (poměr chyb k rámcům, druh chyby) a pokles optického výkonu SFP
     names = {str(d["id"]): _label(d) for d in devs}
     for r in porthealth.alerts(tx):

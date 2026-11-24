@@ -474,6 +474,8 @@ function alertReactions(a) {
     port_flapping: [__("Port často padá – zkontroluj kabel a protějšek."), []],
     port_errors: [__("Chyby na portu – kabel, konektor nebo duplex."), []],
     port_half_duplex: [__("Port jede v half-duplexu – zkontroluj autonegociaci."), []],
+    link_down: [__("Bezdrátový spoj je dole – zkontroluj napájení a směrování protistrany."), [actBtn(__("Spoje"), () => openSub("devices", "links"), "small")]],
+    link_degraded: [__("Bezdrátový spoj je horší než obvykle – na kartě spoje je vidět, co a kdy se změnilo."), [actBtn(__("Spoje"), () => openSub("devices", "links"), "small")]],
     sfp_power: [__("Optický výkon na SFP klesl proti obvyklému – vyčisti konektory, zkontroluj vlákno a modul."), []],
     cpu_high: [__("Vysoké vytížení CPU."), []], memory_high: [__("Málo volné paměti."), []],
     anomaly: [__("Zařízení se chová jinak než obvykle v tuto hodinu (porovnání s posledními 14 dny) – podívej se na časovou osu, co se změnilo."), []],
@@ -2278,7 +2280,8 @@ function buildNav() {
 const SUBTABS = {
   dash: [["infra", "infra-btn", "infra-wrap", () => loadInfra()], ["topo", "topo-btn", "topo-wrap", () => loadTopology()],
          ["stp", "stp-btn", "stp-wrap", () => loadStp()]],
-  devices: [["list", "devlist-btn", "devlist-wrap", () => loadDevices()], ["sports", "sports-btn", "sports-wrap", () => loadSitePorts()]],
+  devices: [["list", "devlist-btn", "devlist-wrap", () => loadDevices()], ["sports", "sports-btn", "sports-wrap", () => loadSitePorts()],
+            ["links", "links-btn", "links-wrap", () => loadLinks()]],
   clients: [["clients", null, null, () => loadClients()]],
   ports: [["ports", null, null, () => loadPortMap()]],
   settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
@@ -2329,6 +2332,7 @@ const GS_PLACES = [
   [__("Seznam zařízení"), __("Zařízení"), "zarizeni adopce pridat switch ap devices adopt", "devices", "list"],
   [__("Porty všech switchů"), __("Zařízení"), "porty poe vlan ports", "devices", "sports"],
   [__("Porty: schéma, VLAN, provoz"), __("Porty"), "porty port poe vlan rychlost linka schema ports speed stats provoz", "ports", null],
+  [__("Bezdrátové spoje: signál, ztrátovost, anomálie"), __("Zařízení"), "spoje spoj ptp link signal ztratovost odezva ruseni bezdratovy wireless", "devices", "links"],
   [__("Klienti"), __("Klienti"), "klienti wifi mac ip clients history historie", "clients", null],
   [__("Sítě (VLAN, podsítě)"), __("Nastavení"), "site vlan podsit dhcp subnet networks zamer", "settings", "net"],
   [__("Wi-Fi (SSID, hesla, kanály)"), __("Nastavení"), "wifi ssid heslo capsman kanaly channels password", "settings", "wifi"],
@@ -4138,6 +4142,240 @@ function drawMlag() {
   box.appendChild(f);
 }
 
+
+// --- bezdrátové spoje: seznam a karta spoje (provoz, signál, rychlost, ztrátovost, rušení na jedné ose) -------
+const wl = { links: null, sel: null, hours: 24, data: null, traffic: null };
+const wlOpt = () => (prefs.wl = prefs.wl || { marks: true, usual: true });
+const WL_STATE = { ok: __("V pořádku"), degraded: __("Zhoršený"), bad: __("Špatný"), down: __("Výpadek"), unknown: __("Bez měření") };
+const WL_CODE = { down: __("výpadek"), signal: __("propad signálu"), weak: __("slabý signál"), rate: __("pád rychlosti"), loss: __("ztrátovost"),
+  noise: __("šum na kanálu"), reconnect: __("přepojení"), flap: __("časté přepojování"), asym: __("nesouměrný signál") };
+const wlMb = (v) => v == null ? "–" : (v / 1e6 >= 100 ? Math.round(v / 1e6) : (v / 1e6).toFixed(1).replace(".", ",")) + " Mb/s";
+const wlN = (v, unit, d = 0) => v == null ? "–" : Number(v).toFixed(d).replace(".", ",").replace("-", "−") + (unit ? " " + unit : "");
+const wlPair = (a, b, unit) => a == null && b == null ? "–" : `${wlN(a)} / ${wlN(b, unit)}`;
+function wlWhy(w) {
+  const sideName = (x) => wl.data && x.side ? " (" + (x.side === "a" ? wl.data.a.device : wl.data.b.device) + ")" : "";
+  return ({
+    down: () => __("spoj je dole – protistrana není připojená"),
+    signal: () => __`signál ${wlN(w.now, "dBm")}, obvykle ${wlN(w.usual, "dBm")}` + sideName(w),
+    weak: () => __`slabý signál ${wlN(w.now, "dBm")}` + sideName(w),
+    rate: () => __`rychlost spoje ${wlMb(w.now)}, obvykle ${wlMb(w.usual)}`,
+    loss: () => __`ztrátovost ${wlN(w.now, "%", 1)}`,
+    asym: () => __`strany se slyší o ${w.now} dB jinak – zkontroluj nasměrování a výkon`,
+    noise: () => __`šum na kanálu ${wlN(w.now, "dBm")}, obvykle ${wlN(w.usual, "dBm")} – pravděpodobně cizí vysílač`,
+    flap: () => __`${w.now}× přepojení za 24 h`,
+  }[w.code] || (() => w.code))();
+}
+const wlBadge = (st, score) => el("span", (WL_STATE[st] || st) + (score != null && st !== "down" ? ` · ${score}` : ""), "wl-badge s-" + st);
+
+async function loadLinks() {
+  if (!tenantId || !siteId()) return;
+  try { wl.links = (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/links`)).links || []; } catch (e) { return msg(e.message, true); }
+  if (wl.sel && !wl.links.some((l) => l.id === wl.sel)) wl.sel = null;
+  if (wl.sel) return loadLink();
+  renderLinks();
+}
+
+async function loadLink() {
+  const id = wl.sel; if (!id) return renderLinks();
+  let d;
+  try { d = await api("GET", `/tenants/${tenantId}/links/${id}?hours=${wl.hours}`); } catch (e) { wl.sel = null; renderLinks(); return msg(e.message, true); }
+  if (wl.sel !== id) return;
+  wl.data = d; wl.traffic = null;
+  renderLinks();
+  try {
+    const t = await api("GET", `/tenants/${tenantId}/devices/${d.a.device_id}/traffic?hours=${wl.hours}&interface=${encodeURIComponent(d.a.iface)}`);
+    if (wl.sel === id) { wl.traffic = t.points || []; renderLinks(); }
+  } catch (_e) { /* graf provozu je navíc – bez něj karta funguje */ }
+}
+
+function renderLinks() {
+  const side = $("wl-side"), main = $("wl-main"); side.textContent = ""; main.textContent = "";
+  const links = wl.links || [];
+  if (!wl.sel || !wl.data) {
+    side.appendChild(el("p", __("Bezdrátové spoje mezi spravovanými zařízeními. Každých 5 minut se měří signál obou stran, rychlost spoje a pingem přes spoj ztrátovost a odezva."), "muted wl-note"));
+    const bad = links.filter((l) => l.state !== "ok" && l.state !== "unknown").length;
+    for (const [k, v] of [[__("Spojů"), links.length], [__("Mimo normál"), bad]]) { const r = el("div", null, "pm-kv"); r.append(el("span", k), el("span", String(v))); side.appendChild(r); }
+    if (!links.length) { main.appendChild(el("p", __("V této lokalitě zatím žádný bezdrátový spoj mezi spravovanými zařízeními není. Spoj se objeví sám, jakmile jsou obě strany adoptované a vidí se v registraci."), "muted wl-empty")); return; }
+    const t = el("table", null, "wl-t"), th = el("tr");
+    for (const h of [__("Spoj"), __("Stav"), __("Signál"), __("Rychlost spoje"), __("Ztrátovost"), __("Odezva"), __("Přepojení 24 h"), __("Měřeno")]) th.appendChild(el("th", h));
+    const head = el("thead"); head.appendChild(th); t.appendChild(head);
+    const tb = el("tbody");
+    for (const l of links) {
+      const n = l.now || {}, u = l.usual || {}, tr = el("tr", null, "clickable");
+      const nm = el("td"); nm.append(el("strong", l.name), el("small", ` ${l.a.iface} · ${l.b.iface}` + (l.muted ? " · " + __("ztlumený") : ""), "muted"));
+      const st = el("td"); st.appendChild(wlBadge(l.state, l.score));
+      const sg = el("td", wlPair(n.signal_a, n.signal_b, "dBm")); if (u.signal_a != null) sg.appendChild(el("small", " " + __`obvykle ${wlPair(u.signal_a, u.signal_b)}`, "muted"));
+      tr.append(nm, st, sg, el("td", wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba)), el("td", wlN(n.loss, "%", 1), n.loss >= 2 ? "wl-bad" : ""),
+                el("td", wlN(n.rtt_avg, "ms", 1)), el("td", String(l.flaps || 0)), el("td", fmtTime(l.sampled_at), "muted"));
+      tr.title = (l.why || []).map((w) => wlWhy(w)).join("\n");
+      tr.addEventListener("click", () => { wl.sel = l.id; wl.data = null; loadLink(); });
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); main.appendChild(t);
+    return;
+  }
+  const d = wl.data, n = d.now || {}, u = d.usual || {}, o = wlOpt();
+  const back = el("button", "‹ " + __`Všechny spoje (${links.length})`, "ux-link"); back.type = "button";
+  back.addEventListener("click", () => { wl.sel = null; wl.data = null; renderLinks(); });
+  const title = el("div", null, "wl-title"); title.append(el("strong", d.name), wlBadge(d.state, d.score));
+  const ends = el("div", null, "wl-ends");
+  for (const [x, cls, role] of [[d.a, "a", "AP"], [d.b, "b", __("klient")]]) {
+    const b = el("button", null, "wl-end"); b.type = "button";
+    b.append(el("i", "", "wl-dot " + cls), el("strong", x.device), el("small", `${role} · ${x.iface}` + (x.state === "adopted" ? "" : " · offline"), "muted"));
+    b.addEventListener("click", () => openDetail(x.device_id)); ends.appendChild(b);
+  }
+  side.append(back, title, ends);
+  const kv = (k, v, sub, cls) => { const r = el("div", null, "wl-kv"); const val = el("span", v, cls || ""); if (sub) val.appendChild(el("small", sub, "muted")); r.append(el("span", k), val); side.appendChild(r); };
+  const dev = (code) => (d.why || []).some((w) => w.code === code) ? "wl-warn" : "";
+  kv(__("Signál"), wlPair(n.signal_a, n.signal_b, "dBm"), u.signal_a != null ? __`obvykle ${wlPair(u.signal_a, u.signal_b)}` : "", dev("signal") || dev("weak"));
+  if (n.snr_a != null || n.snr_b != null) kv("SNR", wlPair(n.snr_a, n.snr_b, "dB"));
+  kv(__("Rychlost spoje"), wlMb(n.rate_ab) + " / " + wlMb(n.rate_ba), u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "", dev("rate"));
+  kv(__("Ztrátovost"), wlN(n.loss, "%", 1), d.ping_ip ? __`ping 10× na ${d.ping_ip}` : __("bez adresy pro ping"), dev("loss") && "wl-bad");
+  kv(__("Odezva"), wlN(n.rtt_avg, "ms", 1), n.rtt_max != null ? __`nejvíc ${wlN(n.rtt_max, "ms", 1)}` : "");
+  if (n.ccq_a != null || n.ccq_b != null) kv("CCQ", wlPair(n.ccq_a, n.ccq_b, "%"));
+  if (n.noise != null) kv(__("Šum na kanálu"), wlN(n.noise, "dBm"), u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", dev("noise"));
+  kv(__("Přepojení za 24 h"), String(d.flaps || 0), "", dev("flap"));
+  kv(__("Měřeno"), fmtTime(d.sampled_at));
+  if (!u.signal_a && !u.rate_ab) side.appendChild(el("p", __`Obvyklý stav se teprve učí (${u.n || 0} měření, potřeba aspoň 36).`, "muted wl-note"));
+  const sw = (label, key, get, set) => {
+    const l = el("label", null, "ux-switch"), i = el("input"); i.type = "checkbox"; i.checked = get();
+    i.addEventListener("change", () => set(i.checked)); l.append(el("span", label), i, el("i")); side.appendChild(l);
+  };
+  sw(__("Značky anomálií"), "marks", () => !!o.marks, (v) => { o.marks = v; savePrefs(); renderLinks(); });
+  sw(__("Obvyklý stav (čárkovaně)"), "usual", () => !!o.usual, (v) => { o.usual = v; savePrefs(); renderLinks(); });
+  sw(__("Nehlásit upozornění"), "muted", () => !!d.muted, async (v) => {
+    try { wl.data = await api("PUT", `/tenants/${tenantId}/links/${d.id}?hours=${wl.hours}`, { muted: v }); const l = links.find((x) => x.id === d.id); if (l) l.muted = v; } catch (e) { msg(e.message, true); }
+    renderLinks();
+  });
+
+  // hlavní část: období, štítky odchylek, graf, seznam úseků
+  const top = el("div", null, "wl-top"), chips = el("div", null, "wl-chips"), seg = el("div", null, "seg");
+  for (const w of d.why || []) chips.appendChild(el("span", "▲ " + wlWhy(w), "wl-chip " + (w.code === "down" || (w.code === "loss" && w.now >= 10) ? "bad" : "warn")));
+  if (!(d.why || []).length && d.state === "ok") chips.appendChild(el("span", __("Spoj je ve svém normálu."), "muted"));
+  for (const [h, t] of [[1, "1 h"], [24, "24 h"], [168, __("7 dní")], [720, __("30 dní")]]) {
+    const b = el("button", t, wl.hours === h ? "on" : ""); b.type = "button"; b.setAttribute("aria-pressed", String(wl.hours === h));
+    b.addEventListener("click", () => { wl.hours = h; loadLink(); }); seg.appendChild(b);
+  }
+  top.append(chips, seg); main.appendChild(top);
+  const lg = el("div", null, "wl-legend");
+  for (const [cls, t] of [["rx", __("příjem")], ["tx", __("odesílání")], ["a", d.a.device], ["b", d.b.device], ["usual", __("obvyklý stav")], ["loss", __("ztrátovost / šum")], ["rtt", __("odezva")]]) { const x = el("span"); x.append(el("i", "", "wl-l " + cls), document.createTextNode(t)); lg.appendChild(x); }
+  main.appendChild(lg);
+  const box = el("div", null, "wl-chart"); main.appendChild(box);
+  if (!(d.points || []).length) box.appendChild(el("p", __("Za zvolené období není žádné měření."), "muted wl-empty"));
+  else wlChart(box, d, o);
+  const eps = (d.episodes || []).slice().reverse();
+  if (eps.length) {
+    const list = el("div", null, "wl-eps");
+    for (const e of eps.slice(0, 12)) {
+      const r = el("div", null, "wl-ep"), bad = e.codes.includes("down") || (e.worst.loss || 0) >= 10;
+      const mins = Math.round((new Date(e.to) - new Date(e.from)) / 60000) + Math.round(d.bucket / 60);
+      r.append(el("i", "", "wl-dot " + (bad ? "bad" : "warn")), el("span", new Date(e.from).toLocaleString(LOCALE), "muted wl-ep-t"),
+               el("span", e.codes.map((c) => WL_CODE[c] || c).join(", ") + (e.worst.signal != null && e.codes.includes("signal") ? ` (${wlN(e.worst.signal, "dBm")})` : "") + (e.worst.loss ? `, ${__("ztráta až")} ${wlN(e.worst.loss, "%", 1)}` : "")),
+               el("span", mins >= 120 ? __`trvalo ${Math.round(mins / 60)} h` : __`trvalo ${mins} min`, "muted"));
+      list.appendChild(r);
+    }
+    main.appendChild(list);
+  }
+}
+
+// graf spoje: pásy se společnou časovou osou; odchylky podbarvené přes všechny pásy
+function wlChart(box, d, o) {
+  if (typeof document.createElementNS !== "function") return;
+  const pts = d.points, u = d.usual || {}, X0 = 150, X1 = 930, W = 1000;
+  const t1 = Date.now(), t0 = t1 - d.hours * 3600e3, gapMs = d.bucket * 2500;
+  const X = (t) => X0 + (X1 - X0) * Math.min(1, Math.max(0, (new Date(t).getTime() - t0) / (t1 - t0)));
+  const any = (k) => pts.some((p) => p[k] != null);
+  const bands = [];
+  const tr = wl.traffic || [];
+  if (tr.length > 1) bands.push({ title: __("Provoz"), h: 110, now: `↓ ${fmtBps((tr[tr.length - 1] || {}).rx || 0)}  ↑ ${fmtBps((tr[tr.length - 1] || {}).tx || 0)}`,
+    lo: 0, hi: Math.max(1e6, ...tr.map((x) => Math.max(x.rx || 0, x.tx || 0))), fmt: (v) => fmtBps(v),
+    series: [{ pts: tr, k: "rx", cls: "rx", area: true }, { pts: tr, k: "tx", cls: "tx", area: true }] });
+  const sig = pts.flatMap((p) => [p.signal_a, p.signal_b]).filter((v) => v != null);
+  if (sig.length) bands.push({ title: __("Signál"), h: 80, now: wlPair((d.now || {}).signal_a, (d.now || {}).signal_b, "dBm"), sub: u.signal_a != null ? __`obvykle ${wlPair(u.signal_a, u.signal_b)}` : "",
+    lo: Math.min(-80, Math.floor(Math.min(...sig) / 5) * 5 - 5), hi: Math.max(-50, Math.ceil(Math.max(...sig) / 5) * 5 + 5), fmt: (v) => wlN(v, "dBm"),
+    usual: o.usual ? [u.signal_a, u.signal_b] : [], series: [{ pts, k: "signal_a", cls: "a" }, { pts, k: "signal_b", cls: "b" }] });
+  const rates = pts.flatMap((p) => [p.rate_ab, p.rate_ba]).filter((v) => v != null);
+  if (rates.length) bands.push({ title: __("Rychlost spoje"), h: 60, now: wlMb((d.now || {}).rate_ab), sub: u.rate_ab != null ? __`obvykle ${wlMb(u.rate_ab)}` : "",
+    lo: 0, hi: Math.max(...rates) * 1.1, fmt: (v) => wlMb(v), usual: o.usual ? [u.rate_ab] : [], series: [{ pts, k: "rate_ab", cls: "a" }, { pts, k: "rate_ba", cls: "b" }] });
+  if (any("loss") || any("rtt_avg")) {
+    const lmax = Math.max(5, ...pts.map((p) => p.loss || 0)), rmax = Math.max(10, ...pts.map((p) => p.rtt_avg || 0)) * 1.1;
+    bands.push({ title: __("Ztrátovost a odezva"), h: 80, now: `${wlN((d.now || {}).loss, "%", 1)} · ${wlN((d.now || {}).rtt_avg, "ms", 1)}`, lo: 0, hi: lmax,
+      fmt: (v) => `${wlN(v, "%")} · ${wlN(v / lmax * rmax, "ms")}`, series: [{ pts, k: "loss", cls: "loss", area: true }, { pts, k: "rtt_avg", cls: "rtt", lo: 0, hi: rmax }] });
+  }
+  if (any("ccq_a") || any("ccq_b")) bands.push({ title: "CCQ", h: 56, now: wlPair((d.now || {}).ccq_a, (d.now || {}).ccq_b, "%"), lo: 0, hi: 100, fmt: (v) => wlN(v, "%"),
+    series: [{ pts, k: "ccq_a", cls: "a" }, { pts, k: "ccq_b", cls: "b" }] });
+  if (any("noise")) { const ns = pts.map((p) => p.noise).filter((v) => v != null);
+    bands.push({ title: __("Šum na kanálu"), h: 56, now: wlN((d.now || {}).noise, "dBm"), sub: u.noise != null ? __`obvykle ${wlN(u.noise, "dBm")}` : "", lo: Math.min(...ns) - 4, hi: Math.max(...ns) + 4,
+      fmt: (v) => wlN(v, "dBm"), usual: o.usual ? [u.noise] : [], series: [{ pts, k: "noise", cls: "loss" }] }); }
+  let y = 12; for (const b of bands) { b.y = y; y += b.h + 16; }
+  const H = y + 14;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "wl-svg", role: "img", "aria-label": __`Průběh spoje ${d.name}` });
+  if (o.marks) for (const e of d.episodes || []) {
+    const bad = e.codes.includes("down") || (e.worst.loss || 0) >= 10, xa = X(e.from) - 2, xb = X(new Date(e.to).getTime() + d.bucket * 1000) + 2;
+    svg.appendChild(svgEl("rect", { x: xa.toFixed(1), y: 12, width: Math.max(4, xb - xa).toFixed(1), height: H - 38, class: "wl-ep-bg " + (bad ? "bad" : "warn") }));
+    svg.appendChild(svgEl("path", { d: `M${((xa + xb) / 2).toFixed(1)} 11 l-5 -8 h10 z`, class: "wl-ep-mark " + (bad ? "bad" : "warn") }));
+  }
+  for (const b of bands) {
+    svg.appendChild(svgEl("rect", { x: X0, y: b.y, width: X1 - X0, height: b.h, class: "wl-band" }));
+    svg.appendChild(svgEl("text", { x: 0, y: b.y + 13, class: "wl-bt" }, b.title));
+    svg.appendChild(svgEl("text", { x: 0, y: b.y + 30, class: "wl-bn" }, b.now));
+    if (b.sub) svg.appendChild(svgEl("text", { x: 0, y: b.y + 45, class: "wl-bs" }, b.sub));
+    svg.appendChild(svgEl("text", { x: X1 + 6, y: b.y + 9, class: "wl-bs" }, b.fmt(b.hi)));
+    svg.appendChild(svgEl("text", { x: X1 + 6, y: b.y + b.h, class: "wl-bs" }, b.fmt(b.lo)));
+    const Y = (v, lo = b.lo, hi = b.hi) => b.y + b.h - Math.min(1, Math.max(0, (v - lo) / ((hi - lo) || 1))) * b.h;
+    for (const v of b.usual || []) if (v != null) svg.appendChild(svgEl("line", { x1: X0, x2: X1, y1: Y(v).toFixed(1), y2: Y(v).toFixed(1), class: "wl-usual" }));
+    for (const s of b.series) {
+      // souvislé úseky: mezera v měření nebo výpadek čáru přeruší
+      let run = [], last = 0;
+      const flush = () => {
+        if (run.length > 1) {
+          const line = run.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" ");
+          if (s.area) svg.appendChild(svgEl("polygon", { points: `${run[0][0].toFixed(1)},${b.y + b.h} ${line} ${run[run.length - 1][0].toFixed(1)},${b.y + b.h}`, class: "wl-a " + s.cls }));
+          svg.appendChild(svgEl("polyline", { points: line, class: "wl-s " + s.cls }));
+        } else if (run.length === 1) svg.appendChild(svgEl("circle", { cx: run[0][0].toFixed(1), cy: run[0][1].toFixed(1), r: 1.6, class: "wl-p " + s.cls }));
+        run = [];
+      };
+      for (const p of s.pts) {
+        const t = new Date(p.t).getTime(), v = p[s.k];
+        if (t < t0) continue;
+        if (v == null || (last && t - last > gapMs)) flush();
+        if (v != null) { run.push([X(p.t), Y(v, s.lo, s.hi)]); last = t; }
+      }
+      flush();
+    }
+  }
+  const step = d.hours <= 1 ? 600e3 : d.hours <= 24 ? 3 * 3600e3 : d.hours <= 168 ? 86400e3 : 5 * 86400e3;
+  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
+    const dt = new Date(t), lab = d.hours <= 24 ? dt.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" }) : dt.toLocaleDateString(LOCALE, { day: "numeric", month: "numeric" });
+    svg.appendChild(svgEl("text", { x: X(t).toFixed(1), y: H - 4, class: "wl-bs mid" }, lab));
+  }
+  const cur = svgEl("line", { x1: 0, x2: 0, y1: 12, y2: H - 26, class: "wl-cur", visibility: "hidden" }); svg.appendChild(cur);
+  box.appendChild(svg);
+  const tip = el("div", null, "wl-tip"); tip.hidden = true; box.appendChild(tip);
+  svg.addEventListener("mousemove", (ev) => {
+    const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width * W;
+    if (x < X0 || x > X1) { tip.hidden = true; cur.setAttribute("visibility", "hidden"); return; }
+    const t = t0 + (x - X0) / (X1 - X0) * (t1 - t0);
+    let best = null; for (const p of pts) if (!best || Math.abs(new Date(p.t) - t) < Math.abs(new Date(best.t) - t)) best = p;
+    if (!best) return;
+    const bx = X(best.t); cur.setAttribute("x1", bx); cur.setAttribute("x2", bx); cur.setAttribute("visibility", "visible");
+    tip.textContent = "";
+    tip.appendChild(el("strong", new Date(best.t).toLocaleString(LOCALE)));
+    const row = (txt) => tip.appendChild(el("div", txt));
+    if (!best.up) row(__("spoj dole"));
+    else {
+      row(__`signál ${wlPair(best.signal_a, best.signal_b, "dBm")}`); row(__`rychlost ${wlMb(best.rate_ab)} / ${wlMb(best.rate_ba)}`);
+      if (best.loss != null) row(__`ztrátovost ${wlN(best.loss, "%", 1)}, odezva ${wlN(best.rtt_avg, "ms", 1)}`);
+      if (best.noise != null) row(__`šum ${wlN(best.noise, "dBm")}`);
+      if (best.reconnect) row(__("přepojení"));
+    }
+    const devs = (d.episodes || []).find((e) => new Date(e.from) <= new Date(best.t) && new Date(best.t) <= new Date(e.to));
+    if (devs) tip.appendChild(el("div", devs.codes.map((c) => WL_CODE[c] || c).join(", "), "wl-tip-w"));
+    tip.hidden = false;
+    tip.setAttribute("style", `left: ${Math.min(r.width - 250, Math.max(0, (bx / W) * r.width + 12))}px; top: ${Math.max(0, ev.clientY - r.top - 20)}px`);
+  });
+  svg.addEventListener("mouseleave", () => { tip.hidden = true; cur.setAttribute("visibility", "hidden"); });
+}
 
 // --- sekce Porty: schéma portů s připojenými zařízeními, filtry, přehled VLAN a provoz -------------------------
 const pm = { data: null, dev: "", f: {}, sel: null, chartFor: null };

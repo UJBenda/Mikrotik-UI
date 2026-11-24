@@ -812,6 +812,51 @@ async def port_errors(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
+@endpoint(READ)
+async def site_links(request: Request, p: Principal, tid: str) -> Response:
+    """Bezdrátové spoje lokality se stavem teď, normálem a hodnocením."""
+    from .. import wlink
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return {"links": wlink.site_links(tx, sid)}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
+async def link_detail(request: Request, p: Principal, tid: str) -> Response:
+    """Karta spoje: průběh měření, úseky odchylek. PUT {muted} = nehlásit alerty (jen s právem správy)."""
+    from .. import wlink
+
+    st = get_state(request)
+    lid = _uuid(request.path_params["link_id"])
+    hours = _int(request.query_params.get("hours"), 24, 1, 24 * 30)
+    if request.method == "PUT":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        data = await _json(request)
+
+        def w():
+            with tenant_scope(st.db, tid) as tx:
+                return wlink.set_muted(tx, tid, lid, bool(data.get("muted")), p.user_id, client_ip(request))
+
+        if not await run_in_threadpool(w):
+            raise NotFound("spoj neexistuje")
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return wlink.detail(tx, lid, hours)
+
+    out = await run_in_threadpool(q)
+    if out is None:
+        raise NotFound("spoj neexistuje")
+    return json_response(out)
+
+
 # --- lokalita: NTP politika, plány, topologie ------------------------------------------
 
 
@@ -1988,6 +2033,8 @@ def routes() -> list[Route]:
         Route(s + "/clients/timeline", site_clients_timeline, methods=["GET"]),
         Route(s + "/timeline", site_timeline, methods=["GET"]),
         Route(s + "/availability", site_availability, methods=["GET"]),
+        Route(s + "/links", site_links, methods=["GET"]),
+        Route(T + "/links/{link_id}", link_detail, methods=["GET", "PUT"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),

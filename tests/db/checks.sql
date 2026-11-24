@@ -492,6 +492,40 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20e) bezdrátové spoje a jejich měření izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO wlink (tenant_id, site_id, kind, a_device, a_iface, a_mac, b_device, b_iface, b_mac)
+  SELECT d.tenant_id, d.site_id, 'wifi', d.id, 'wifi1', 'AA:AA:AA:00:00:01', d.id, 'wifi2', 'AA:AA:AA:00:00:02'
+  FROM device d WHERE d.serial = 'SER-B1';
+INSERT INTO wlink_sample (tenant_id, link_id, up, signal_a) SELECT tenant_id, id, true, -60 FROM wlink;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM wlink) <> 0 OR (SELECT count(*) FROM wlink_sample) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí spoje tenanta B'; END IF;
+  UPDATE wlink SET muted = true;
+  UPDATE wlink_sample SET signal_a = 0;
+  BEGIN
+    INSERT INTO wlink_sample (tenant_id, link_id, up)
+      SELECT '00000000-0000-0000-0000-0000000000b1', gen_random_uuid(), true;
+    RAISE EXCEPTION 'FAIL: tenant A zapsal měření spoje tenantovi B';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK 20e bezdrátové spoje izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT muted FROM wlink) OR (SELECT signal_a FROM wlink_sample) <> -60 THEN
+    RAISE EXCEPTION 'FAIL: tenant A změnil spoj tenanta B'; END IF;
+  IF (SELECT count(*) FROM pg_class WHERE relname IN ('wlink', 'wlink_sample') AND relrowsecurity AND relforcerowsecurity) <> 2 THEN
+    RAISE EXCEPTION 'FAIL: wlink/wlink_sample bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

@@ -501,6 +501,9 @@ def retention(db: Database, sample_days: int = 14, hourly_days: int = 400, backu
         tx.execute("DELETE FROM interface_sample WHERE at < now() - make_interval(days => %(d)s)", {"d": sample_days})
         tx.execute("DELETE FROM interface_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
         tx.execute("DELETE FROM device_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
+        from . import wlink
+
+        wlink.retention(tx)
         tx.execute("DELETE FROM port_error_hourly WHERE hour < now() - make_interval(days => %(d)s)", {"d": hourly_days})
         tx.execute("DELETE FROM port_event WHERE at < now() - make_interval(days => %(d)s)", {"d": event_days})
         # nejnovější záloha zařízení zůstává vždy

@@ -1377,3 +1377,28 @@ Modul `porthealth.py`, tabulka `port_error_hourly` (migrace 0030, RLS, kontrola 
   Zdraví portu, sloupec Chyby 24 h a detail vybraného portu s průběhem po hodinách
   (`GET …/devices/{id}/port-errors?interface=&hours=`).
 - Prahy jsou odhad, na skutečném zařízení zatím neověřeno (ani to, které čítače REST vrací).
+
+## Bezdrátové spoje (etapa 16, krok 2)
+
+Modul `wlink.py`, tabulky `wlink` a `wlink_sample` (migrace 0031, RLS, kontrola 20e), krok workeru `links`.
+
+- **Co je spoj:** registrace bezdrátového klienta, jehož MAC je bezdrátové rozhraní jiného spravovaného
+  zařízení téže lokality (`find_links`). Strana A = AP/bridge, B = klient. Spoje se hledají z inventur
+  každých 10 minut; zmizelý spoj se nemaže (historie, alert výpadku).
+- **Měření po 5 minutách (`measure`):** čerstvý řádek registrace z obou stran (signál, vyjednaná rychlost,
+  u starého ovladače SNR a CCQ), šum z monitoru rozhraní A (pokud ho ovladač dává) a z A ping 10× po 200 ms
+  na adresu B ve společné síti (`ping_ip`) – ztrátovost a odezva. Nedostupná strana B měření neruší
+  (typicky je za spojem); nedostupná strana A = žádné měření (řeší alert offline).
+- **Normál a hodnocení:** `usual` = medián za 7 dní (aspoň 36 měření). `deviations` hlásí propad signálu
+  ≥ 6 dB, rychlost pod polovinou normálu, ztrátovost ≥ 2 %, růst šumu ≥ 6 dB, rozdíl stran ≥ 10 dB, bez normálu
+  signál ≤ −78 dBm; k tomu ≥ 3 přepojení za 24 h. `score` 0–100 a stav ok / degraded / bad / down. Rozhoduje
+  průměr posledních 3 měření, o výpadku poslední. Váhy a prahy jsou odhad.
+- **Alerty:** `link_down` (kritický) a `link_degraded` (varování, při stavu bad kritický) na zařízení strany A;
+  spoj jde ztlumit (`muted`, audit `wlink.mute`).
+- **API:** `GET …/sites/{id}/links`, `GET|PUT …/links/{id}?hours=` – průběh nejvýš ~290 bodů (delší období se
+  průměruje po úsecích, ztrátovost maximem) a `episodes` = souvislé úseky odchylek.
+- **Rozhraní:** Zařízení → Spoje. Seznam se stavem, karta spoje: pásy Provoz (z `/traffic` rozhraní A), Signál,
+  Rychlost spoje, Ztrátovost a odezva, CCQ, Šum na společné časové ose; úseky odchylek podbarvené přes
+  všechny pásy, čárkovaně normál, najetím hodnoty okamžiku, pod grafem seznam úseků.
+- **Zatím chybí:** ovladač 60 GHz (w60g), vytížení kanálu, otevření karty kliknutím na spoj v mapě, měření
+  propustnosti a sken spektra z karty. Na skutečném zařízení neověřeno.

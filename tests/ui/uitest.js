@@ -217,6 +217,36 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     // lokalita: topologie a klienti
     await byId["topo-btn"].fire("click");
     if (byId["topo-wrap"].hidden || !byId["infra-wrap"].hidden) errors.push("přehled: podzáložka topologie");
+    // bezdrátové spoje: seznam se stavem, karta spoje s pásy grafu, štítky odchylek a seznam úseků
+    await byId["nav-devices"].fire("click");
+    await byId["links-btn"].fire("click");
+    await tlTick();
+    {
+      const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
+      const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      const main = byId["wl-main"], row = find(main, (n) => n.tagName === "TR" && n.className === "clickable");
+      if (byId["links-wrap"].hidden || !row) errors.push("spoje: seznam");
+      else {
+        const txt = row.textContent;
+        if (!txt.includes("spoj-hala ↔ spoj-sklad") || !txt.includes("Zhoršený · 48") || !txt.includes("−71 / −69 dBm") || !txt.includes("4,0 %")) errors.push("spoje: řádek " + txt);
+        if (!row.title.includes("signál −71 dBm, obvykle −58 dBm")) errors.push("spoje: důvody " + row.title);
+        await row.fire("click"); await tlTick(); await tlTick();
+        const side = byId["wl-side"].textContent, m = byId["wl-main"];
+        if (!side.includes("Všechny spoje (1)") || !side.includes("obvykle −58 / −60") || !side.includes("ping 10× na 10.9.0.21") || !side.includes("Nehlásit upozornění")) errors.push("spoje: panel " + side);
+        const chips = all(m, (n) => String(n.className).startsWith("wl-chip "));
+        if (chips.length !== 5 || !chips.some((c) => c.textContent.includes("ztrátovost 4,0 %") && c.className.includes("warn"))) errors.push("spoje: štítky " + chips.map((c) => c.textContent));
+        const svg = find(m, (n) => n.tagName === "SVG");
+        const titles = svg ? all(svg, (n) => n.className === "wl-bt" || (n.attrs && n.attrs.class === "wl-bt")).map((n) => n.textContent) : [];
+        if (!svg || !["Provoz", "Signál", "Rychlost spoje", "Ztrátovost a odezva", "CCQ", "Šum na kanálu"].every((t) => titles.includes(t))) errors.push("spoje: pásy grafu " + titles);
+        if (svg && all(svg, (n) => String(n.attrs && n.attrs.class).startsWith("wl-ep-bg")).length !== 1) errors.push("spoje: podbarvení odchylky");
+        const eps = all(m, (n) => n.className === "wl-ep");
+        if (eps.length !== 1 || !eps[0].textContent.includes("propad signálu, pád rychlosti, ztrátovost") || !eps[0].textContent.includes("trvalo 20 min")) errors.push("spoje: úseky " + eps.map((e) => e.textContent));
+        if (!requests.some((r) => r.includes("/traffic?hours=24&interface=wlan1"))) errors.push("spoje: dotaz na provoz");
+        const back = find(byId["wl-side"], (n) => n.tagName === "BUTTON" && n.textContent.includes("Všechny spoje"));
+        await back.fire("click");
+        if (!find(byId["wl-main"], (n) => n.tagName === "TABLE")) errors.push("spoje: návrat na seznam");
+      }
+    }
     // sekce Porty: schéma, filtry, tabulka s připojeným zařízením/klientem, přehled VLAN
     await byId["nav-ports"].fire("click");
     await tlTick();
