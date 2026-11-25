@@ -1598,3 +1598,41 @@ funguje beze změny): Přehled · Wi-Fi · Sítě · Internet · Profily portů 
 
 Další kroky podle maket 10 a 11 (zatím neuděláno): oznámení po událostech, úpravy firewallu (s plánem a automatickým
 vrácením, generátor je v `fwmatrix.py`), VPN server.
+
+## Směr: bezpečnost a brána (rozhodnutí, zatím neimplementováno)
+
+Projekt zůstává nástrojem pro centrální správu MikroTiků. Bezpečnost řešíme tím, co centrální správa umí nejlépe –
+hlídáním, že jsou zařízení nastavená bezpečně – a ne vlastním IDS/IPS.
+
+Co neděláme a proč:
+
+- **Zrcadlení provozu z MikroTiku do IDS na controlleru.** Kopie provozu nic nezastaví (jen dodatečný blok adresy),
+  celý provoz nejde posílat přes internet a senzor v každé lokalitě je další stroj na údržbu.
+- **Řízení OPNsense z controlleru.** Byl by to druhý ovladač brány (firewall, NAT, VPN, DHCP, převzetí dvakrát).
+  Vrátíme se k tomu, až o to bude zájem.
+
+Lokalita má **typ brány**:
+
+1. **MikroTik** (dosavadní stav) – controller bránu čte a postupně řídí.
+2. **Externí firewall** – před MikroTiky stojí cizí bezpečnostní brána (IPS, HA si řeší sama). Controller ji neřídí.
+   Síť za ní spravuje dál; role `gateway` v lokalitě pak nemusí existovat a části, které s ní počítají (Přehled,
+   Internet, Firewall, měření internetu), to musí unést.
+3. **OPNsense jen pro čtení** – externí firewall, ze kterého přes jeho REST API (klíč + tajemství v `SecretBox`)
+   čteme rozhraní, VLAN, adresy, DHCP a stav linek. Nic na něj nezapisujeme.
+
+Sladění sítí s externí bránou (typ 2 ručně, typ 3 automaticky):
+
+- **Controller → brána:** když v controlleru vznikne nebo se změní síť (VLAN ID, podsíť, DHCP), kterou má obsluhovat
+  brána, ukáže se úkol „nastav na bráně“ s přesnými hodnotami. U OPNsense se úkol sám uzavře, jakmile ji tam
+  controller při čtení najde; rozdíl (jiná podsíť, chybějící VLAN) je upozornění.
+- **Brána → controller:** síť, která na OPNsense je a v controlleru ne, se nabídne k převzetí – po potvrzení se
+  VLAN roznese na MikroTiky stejnou cestou jako síť založená v controlleru.
+
+Bezpečnost na straně MikroTiku (pořadí práce):
+
+1. **Kontrola zabezpečení** – jen čtení z inventury: služby dostupné z WAN, účty a výchozí hesla, verze RouterOS,
+   nešifrované služby, chybějící zálohy; skóre zařízení a lokality s návodem k opravě.
+2. Přehled zastaralých verzí (aktualizace už máme), změny konfigurace provedené mimo controller.
+3. Odesílání událostí a auditu na syslog (SIEM).
+4. Ochrana přímo na bráně MikroTik: seznamy škodlivých adres a zemí jako address-listy, filtrování DNS, NetFlow
+   pro přehled provozu. Sahá na bránu → jen s testovacím zařízením.
