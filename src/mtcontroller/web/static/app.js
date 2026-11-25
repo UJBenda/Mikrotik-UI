@@ -2389,7 +2389,8 @@ const SUBTABS = {
   links: [["links", null, null, () => loadLinks()]],
   clients: [["clients", null, null, () => loadClients()]],
   ports: [["ports", null, null, () => loadPortMap()]],
-  settings: [["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
+  settings: [["ov", "setov-btn", "setov-wrap", () => loadSetOverview()], ["inet", "inet-btn", "inet-wrap", () => loadSetInternet()],
+             ["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["devbk", "devbk-btn", "devbk-wrap", () => loadDevBackups()],
              ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
@@ -2619,12 +2620,113 @@ if (typeof window !== "undefined" && window.addEventListener) {
   window.addEventListener("resize", () => { clearTimeout(dashResize); dashResize = setTimeout(() => { if (dash.data && prefs.view === "dash") dashChart(dash.data); }, 150); });
 }
 
+// --- Nastavení: levé menu, Přehled nastavení a Internet (maketa 9 a 10) ------------------------------------
+const SET_ICON = {
+  "setov-btn": "M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8zM8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z",
+  "wifi-btn": NAV_ICON.links, "net-btn": "M6 2h4v3H6zM8 5v3M3 13v-3h10v3M8 8v2", "prof-btn": NAV_ICON.ports,
+  "inet-btn": "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12",
+  "devbk-btn": NAV_ICON.backups, "sys-btn": NAV_ICON.system,
+};
+for (const [id, d] of Object.entries(SET_ICON)) {
+  const b = $(id), label = b.textContent, NS = "http://www.w3.org/2000/svg";
+  if (typeof document.createElementNS !== "function") continue;
+  const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", "0 0 16 16"); svg.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(NS, "path"); p.setAttribute("d", d); svg.appendChild(p);
+  b.textContent = ""; b.append(svg, document.createTextNode(label));
+}
+NAV_ICON.globe = SET_ICON["inet-btn"]; NAV_ICON.net = SET_ICON["net-btn"];
+const setov = { wifi: null, nets: null, dash: null };
+async function setovFetch() {
+  const base = `/tenants/${tenantId}/sites/${siteId()}`, get = (u) => api("GET", base + u).catch(() => null);
+  [setov.wifi, setov.nets, setov.dash] = await Promise.all([get("/wifi"), get("/networks"), get("/dash?hours=24")]);
+}
+function setBlock(box, title, icon, cols, rows, links, empty) {
+  const s = el("section", null, "so-block"), h = el("div", null, "so-h");
+  h.append(navIcon(icon), el("b", title)); s.appendChild(h);
+  if (!rows.length) s.appendChild(el("p", empty, "muted"));
+  else {
+    const t = el("table", null, "so-t"), tr = el("tr");
+    for (const c of cols) tr.appendChild(el("th", c));
+    const th = el("thead"); th.appendChild(tr); t.appendChild(th);
+    const tb = el("tbody");
+    for (const r of rows) { const x = el("tr"); for (const c of r) { const td = el("td"); if (c && typeof c === "object") td.appendChild(c); else td.textContent = c == null || c === "" ? "–" : String(c); x.appendChild(td); } tb.appendChild(x); }
+    t.appendChild(tb); s.appendChild(t);
+  }
+  const l = el("div", null, "so-links");
+  for (const [label, fn] of links) { const b = el("button", label, "ux-link"); b.type = "button"; b.addEventListener("click", fn); l.appendChild(b); }
+  s.appendChild(l); box.appendChild(s);
+}
+const soName = (ok, text) => { const s = el("span"); s.append(el("i", "", "dz-dot " + (ok ? "ok" : "bad")), document.createTextNode(" " + text)); return s; };
+const soBand = (f) => (!f ? null : f < 3000 ? "2,4 GHz" : f < 5925 ? "5 GHz" : "6 GHz");
+// řádky linek k internetu z Přehledu lokality (brána, výchozí routy) – dostupnost a odezvu známe jen pro aktivní linku
+function soWanRows(d, full) {
+  const g = d && d.gateway; if (!g) return [];
+  const pr = d.probe || { targets: [] }, rtt = pr.targets.filter((t) => t.loss < 100 && t.rtt_avg != null).map((t) => t.rtt_avg);
+  return g.wans.map((w) => {
+    const row = [soName(w.active, w.interface + (w.comment ? " · " + w.comment : "")), w.address || "–"];
+    if (full) row.push(w.gateway || "–");
+    row.push(w.active ? __("aktivní") : __("záloha / neaktivní"),
+      w.active && pr.availability != null ? pr.availability.toLocaleString(LOCALE, { maximumFractionDigits: 2 }) + " %" : "–",
+      w.active && rtt.length ? wlN(Math.min(...rtt), "ms", 0) : "–");
+    if (full) row.push(fmtBytes(w.month_bytes));
+    return row;
+  });
+}
+async function loadSetOverview() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId();
+  await setovFetch();
+  if (site !== siteId()) return;
+  const box = $("setov-body"); box.textContent = "";
+  // Wi-Fi: sítě (SSID) poskládané z rádií v režimu AP
+  const by = new Map();
+  for (const r of ((setov.wifi || {}).radios || [])) {
+    if (!r.ssid || r.disabled || (r.mode && !String(r.mode).startsWith("ap"))) continue;
+    const x = by.get(r.ssid) || { aps: new Set(), bands: new Set(), clients: 0 };
+    x.aps.add(r.device_id); const b = soBand(r.freq_now || Number(r.frequency)); if (b) x.bands.add(b); x.clients += r.clients || 0;
+    by.set(r.ssid, x);
+  }
+  setBlock(box, "Wi-Fi", "links", [__("Název"), __("Vysílají AP"), __("Pásmo"), __("Klienti")],
+    [...by.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([ssid, x]) => [soName(true, ssid), String(x.aps.size), [...x.bands].sort().join(" · ") || "–", String(x.clients)]),
+    [[__("Spravovat"), () => openSub("settings", "wifi")]], __("V lokalitě zatím žádné AP nevysílá."));
+  const nets = ((setov.nets || {}).networks || []);
+  setBlock(box, __("Sítě"), "net", [__("Název"), "VLAN", __("Brána"), __("Podsíť"), "DHCP", __("Přiděleno"), __("Volných")],
+    nets.map((n) => { const dh = n.dhcp || {}; return [soName(true, n.comment || n.name), n.vlan_id, n.router, n.subnet,
+      dh.mode === "server" ? __("Server") : dh.mode === "relay" ? __("Relay") : "–", dh.mode === "server" && dh.size != null ? `${dh.used} / ${dh.size}` : "–", n.available]; }),
+    [[__("Spravovat"), () => openSub("settings", "net")]], __("Na zařízeních lokality není žádná síť s adresou."));
+  setBlock(box, "Internet", "globe", [__("Linka"), __("Adresa"), __("Stav"), __("Dostupnost 24 h"), __("Odezva")], soWanRows(setov.dash, false),
+    [[__("Podrobnosti"), () => openSub("settings", "inet")]], __("Bez spravované brány (zařízení s rolí Brána) linky k internetu neznáme."));
+}
+async function loadSetInternet() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId();
+  await setovFetch();
+  let ports = null;
+  const g = setov.dash && setov.dash.gateway;
+  if (g) try { ports = (await api("GET", `/tenants/${tenantId}/sites/${site}/ports`)).devices.find((d) => d.device_id === g.id) || null; } catch (_e) { /* bez portů */ }
+  if (site !== siteId()) return;
+  const box = $("inet-body"); box.textContent = "";
+  setBlock(box, __("Linky k internetu"), "globe", [__("Linka"), __("Adresa"), __("Brána poskytovatele"), __("Stav"), __("Dostupnost 24 h"), __("Odezva"), __("Data za měsíc")], soWanRows(setov.dash, true),
+    [[__("Graf provozu a odezvy"), () => showView("dash", true)]], __("Bez spravované brány (zařízení s rolí Brána) linky k internetu neznáme."));
+  if (!g) return;
+  const wan = new Set(g.wans.map((w) => w.interface));
+  const rows = ((ports && ports.ports) || []).map((p) => {
+    const who = p.peer ? `${p.peer.device || "?"}${p.peer.port ? " · " + p.peer.port : ""}` : (p.clients && p.clients.length ? (p.clients.length === 1 ? (p.clients[0].hostname || p.clients[0].mac) : __`${p.clients.length} klientů`) : p.neighbor || "–");
+    return [soName(!!p.running, p.port + (p.comment ? " · " + p.comment : "")), wan.has(p.port) ? __("Internet (WAN)") : __("Vnitřní síť"), p.running ? (PM_SPEED[pmSpeed(p)] || p.rate || __("linka")) : "–", who];
+  });
+  setBlock(box, __`Porty brány ${g.name}`, "ports", [__("Port"), __("Použití"), __("Rychlost"), __("Připojeno")], rows,
+    [[__("Otevřít v Portech"), () => { pm.dev = g.id; openSub("ports", "ports"); }]], __("Porty brány zatím nejsou v inventuře."));
+  box.appendChild(el("p", __("Zatím jen přehled. Přiřazení portů, přepínání na záložní linku podle odezvy a měření rychlosti se odsud nastavovat nedá – brána se řídí tím, co má v konfiguraci."), "muted wl-note"));
+}
+
 // --- rychlé hledání v záhlaví (Ctrl+K): kde co je + zařízení ----------------------------------------------
 // [popisek, kde to je, klíčová slova, pohled, podzáložka]
 const GS_PLACES = [
   [__("Mapa lokality"), __("Mapa"), "mapa infrastruktura wan map overview", "map", "infra"],
   [__("Topologie"), __("Mapa"), "topologie strom spoje topology links", "map", "topo"],
   ["STP", __("Mapa"), "stp rstp root smycka loop", "map", "stp"],
+  [__("Přehled nastavení: Wi-Fi, sítě a internet na jedné stránce"), __("Nastavení"), "nastaveni prehled wifi site dhcp internet settings overview", "settings", "ov"],
+  [__("Internet: linky, dostupnost, porty brány"), __("Nastavení"), "internet wan linka zaloha poskytovatel isp brana porty", "settings", "inet"],
   [__("Přehled: internet, odezva, nejvytíženější AP a klienti"), __("Přehled"), "prehled internet wan odezva ztratovost dostupnost linka dashboard", "dash", null],
   [__("Seznam zařízení"), __("Zařízení"), "zarizeni adopce pridat switch ap devices adopt", "devices", "list"],
   [__("Porty všech switchů"), __("Zařízení"), "porty poe vlan ports", "devices", "sports"],

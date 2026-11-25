@@ -1552,3 +1552,18 @@ dostupnost = podíl takových měření. Lokalita bez spravované brány se nem�
 - Porty: přepínač Časová osa ukáže vedle schématu události vybraného zařízení (`…/timeline?cats=alert,port,change
   &device=`), klik na událost portu ho vybere ve schématu. Nad schématem jsou upozornění na porty s chybami a na
   porty, za kterými je spravované zařízení offline.
+
+### Nastavení lokality: levé menu, Přehled nastavení a Internet
+
+Nastavení má místo záložek levé menu (`#set-tabs.set-menu`, tlačítka si nechávají id `…-btn`, takže `SUBTABS.settings`
+funguje beze změny): Přehled · Wi-Fi · Sítě · Internet · Profily portů · Systém (Zálohy zařízení, Systém a nasazení).
+
+- **Přehled nastavení** (`loadSetOverview`) skládá bloky ze stávajících API: Wi-Fi z `…/wifi` (SSID z rádií v režimu
+  AP, počet AP, pásma, klienti), Sítě z `…/networks` (VLAN, podsíť, DHCP server / relay, přidělené a volné adresy),
+  Internet z `…/dash` (linky brány, dostupnost a odezva aktivní linky).
+- **Internet** (`loadSetInternet`): tabulka linek včetně brány poskytovatele a dat za měsíc a porty brány s tím, co je
+  WAN a co vnitřní síť (z `…/ports`). Je to jen přehled – přiřazení portů, přepínání linek podle odezvy a měření
+  rychlosti controller nenastavuje.
+
+Další kroky podle maket 10 a 11 (zatím neuděláno): oznámení po událostech, firewall podle zón (nejdřív čtení pravidel
+z brány, úpravy až s plánem a automatickým vrácením), VPN server.

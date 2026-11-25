@@ -449,7 +449,17 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["stp-wrap"].hidden) errors.push("přehled: podzáložka STP");
     // sítě a DHCP snooping
     await byId["nav-settings"].fire("click");
-    await byId["net-btn"].fire("click");
+    await byId["setov-btn"].fire("click"); await tlTick(); await tlTick();
+    {
+      // nastavení: levé menu, Přehled s bloky Wi-Fi, Sítě a Internet; Internet má linky a porty brány
+      const ov = byId["setov-body"].textContent;
+      if (byId["setov-wrap"].hidden || byId["setov-btn"].className !== "active" || byId["setov-body"].children.length !== 3) errors.push("nastavení: přehled " + byId["setov-body"].children.length);
+      if (!ov.includes("Firma") || !ov.includes("1 / 100") || !ov.includes("192.168.10.0/24") || !ov.includes("ether1 · O2") || !ov.includes("99,65 %")) errors.push("nastavení: obsah přehledu " + ov.slice(0, 300));
+      await byId["inet-btn"].fire("click"); await tlTick(); await tlTick(); await tlTick();
+      const it = byId["inet-body"].textContent;
+      if (byId["inet-wrap"].hidden || !byId["setov-wrap"].hidden || !it.includes("193.165.120.1") || !it.includes("118.0 GB") || !it.includes("záloha / neaktivní") || !it.includes("Porty brány gw-hala")) errors.push("nastavení: internet " + it.slice(0, 300));
+    }
+    await byId["net-btn"].fire("click"); await tlTick(); await tlTick();
     if (byId["net-wrap"].hidden || byId["net-rows"].children.length !== 3) errors.push("sítě: tabulka");
     if (!byId["net-rows"].textContent.includes("Relay → 192.168.30.10") || !byId["net-rows"].textContent.includes("1 / 100"))
       errors.push("sítě: DHCP sloupce " + byId["net-rows"].textContent.slice(0, 200));

@@ -315,17 +315,23 @@
       </div>
 
       <div id="view-settings" class="view" hidden>
-        <div class="card">
-          <div class="site-head">
-            <h2>Nastavení lokality</h2>
-            <div id="set-tabs" class="seg">
-              <button id="net-btn" type="button">Sítě</button>
-              <button id="wifi-btn" type="button">Wi-Fi</button>
-              <button id="prof-btn" type="button">Profily portů</button>
-              <button id="devbk-btn" type="button">Zálohy zařízení</button>
-              <button id="sys-btn" type="button">Systém a nasazení</button>
-            </div>
-          </div>
+        <div class="card set">
+          <nav id="set-tabs" class="set-menu" aria-label="Nastavení lokality">
+            <h2 class="sr-only">Nastavení lokality</h2>
+            <button id="setov-btn" type="button">Přehled</button>
+            <hr>
+            <button id="wifi-btn" type="button">Wi-Fi</button>
+            <button id="net-btn" type="button">Sítě</button>
+            <button id="inet-btn" type="button">Internet</button>
+            <button id="prof-btn" type="button">Profily portů</button>
+            <hr>
+            <div class="set-h">Systém</div>
+            <button id="devbk-btn" type="button">Zálohy zařízení</button>
+            <button id="sys-btn" type="button">Systém a nasazení</button>
+          </nav>
+          <div class="set-body">
+      <div id="setov-wrap" class="pane" hidden><div id="setov-body" class="so-body"></div></div>
+      <div id="inet-wrap" class="pane" hidden><div id="inet-body" class="so-body"></div></div>
       <div id="net-wrap" class="pane">
         <details id="intent-card" class="fold intent" open>
           <summary>Sítě lokality (VLAN) <span id="intent-state" class="muted"></span></summary>
@@ -587,6 +593,7 @@
         <tbody id="fpw-rows"></tbody></table>
       </details>
       </div>
+          </div>
         </div>
       </div>
 

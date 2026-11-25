@@ -1098,18 +1098,6 @@ a:hover { text-decoration: underline; }
 .gs-list li.muted { cursor: default; background: none; }
 @media (max-width: 760px) { .gs { order: 9; flex-basis: 100%; } .gs-list { width: 100%; } }
 
-/* nastavení lokality: sekce vlevo pod sebou (jako Settings v UniFi), obsah vpravo */
-@media (min-width: 1000px) {
-  #view-settings > .card { display: grid; grid-template-columns: 208px minmax(0, 1fr); column-gap: 24px; align-items: start; }
-  #view-settings > .card > .site-head { grid-column: 1; grid-row: 1 / span 40; flex-direction: column; align-items: stretch;
-    justify-content: flex-start; gap: 12px; margin: 0; position: sticky; top: 12px; }
-  #view-settings > .card > .site-head h2 { font-size: 15px; }
-  #view-settings > .card > :not(.site-head) { grid-column: 2; }
-  #view-settings > .card > .pane { border-top: 0; margin-top: 0; padding-top: 0; }
-  #view-settings #set-tabs { display: flex; flex-direction: column; border: 0; border-radius: 0; background: none; gap: 2px; overflow: visible; }
-  #view-settings #set-tabs button { text-align: left; padding: 8px 10px; border: 0; border-radius: 7px; font-size: 14px; }
-}
-
 /* detail zařízení: záložka Řízení */
 #dp-manage > h3:first-child { margin-top: 2px; }
 #dp-manage #d-edit { margin-bottom: 14px; }
@@ -1722,3 +1710,27 @@ button.dz-bar, .dz-watch { cursor: pointer; } button.dz-bar:hover .dz-name, .dz-
 .pm-chip { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: #fff4dc; color: #8a5a00; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
 .pm-chip.bad { background: #fde8e8; color: var(--bad); } .pm-chip:hover { filter: brightness(.96); }
 @media (max-width: 900px) { .pm-tl { display: none; } .pm-content { padding-left: 12px; } }
+
+/* nastavení lokality: levé menu místo záložek, přehled po blocích (makety 9 a 10) */
+.card.set { display: grid; grid-template-columns: 216px minmax(0, 1fr); padding: 0; min-height: calc(100vh - 45px); align-items: start; }
+.set-menu { display: flex; flex-direction: column; gap: 1px; padding: 10px; position: sticky; top: 49px; align-self: stretch; border-right: 1px solid var(--line); }
+.set-menu button { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; white-space: nowrap; }
+.set-menu button:hover { background: var(--hover); }
+.set-menu button.active { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.set-menu button svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+.set-menu button.active svg { color: var(--accent); }
+.set-menu hr { width: 100%; margin: 6px 0; border: 0; border-top: 1px solid var(--line); }
+.set-h { padding: 2px 10px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.set-body { min-width: 0; padding: 12px 16px 20px; } .set-body > .pane { border-top: 0; margin-top: 0; padding-top: 0; }
+.so-body { display: flex; flex-direction: column; gap: 10px; max-width: 1180px; }
+.so-block { border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px 10px; }
+.so-h { display: flex; align-items: center; gap: 8px; height: 30px; font-size: 13px; }
+.so-h svg { width: 16px; height: 16px; fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.so-t { width: 100%; border-collapse: collapse; } .so-t th { text-align: left; height: 30px; padding: 0 10px; font-size: 12.5px; font-weight: 700; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.so-t td { height: 32px; padding: 0 10px; border-bottom: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
+.so-links { display: flex; gap: 18px; padding: 8px 10px 0; } .so-links .ux-link { width: auto; padding: 0; }
+.so-block p { margin: 4px 10px; font-size: 13px; }
+@media (max-width: 900px) {
+  .card.set { grid-template-columns: 1fr; } .set-menu { position: static; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .set-menu hr, .set-h { display: none; } .so-t { display: block; overflow-x: auto; }
+}
