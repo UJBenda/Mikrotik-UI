@@ -227,6 +227,39 @@ class NotifyTarget(BaseModel):
         return self.secret_file.read_text().strip()
 
 
+class FlowConfig(BaseModel):
+    """Příjem NetFlow v9 / IPFIX z bran (UDP přes tunel; běží ve službě mtc-syslog)."""
+    port: int = 2055
+    # adresa, na které služba poslouchá; prázdné = tunnel.controller_ip
+    listen: str = ""
+    retention_days: int = 30
+    # pojistka proti zahlcení: víc datagramů za minutu od jednoho zařízení se zahodí
+    max_packets_per_minute: int = 6000
+    # kolik různých řádků (klient × protistrana × služba) si nechat na bránu a hodinu; zbytek jde do „ostatní“
+    max_rows_per_hour: int = 500
+
+    @field_validator("port")
+    @classmethod
+    def _port(cls, v: int) -> int:
+        if not 1024 <= v <= 65535:
+            raise ValueError("flow.port: 1024–65535 (služba neběží jako root)")
+        return v
+
+    @field_validator("retention_days")
+    @classmethod
+    def _ret(cls, v: int) -> int:
+        if not 1 <= v <= 365:
+            raise ValueError("flow.retention_days: 1–365")
+        return v
+
+    @field_validator("max_rows_per_hour")
+    @classmethod
+    def _rows(cls, v: int) -> int:
+        if not 20 <= v <= 20000:
+            raise ValueError("flow.max_rows_per_hour: 20–20000")
+        return v
+
+
 class SyslogConfig(BaseModel):
     """Příjem logů ze zařízení (UDP syslog přes tunel; služba mtc-syslog)."""
     port: int = 5514
@@ -308,6 +341,7 @@ class Settings(BaseModel):
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     notify: list[NotifyTarget] = Field(default_factory=list)
     syslog: SyslogConfig = Field(default_factory=SyslogConfig)
+    flow: FlowConfig = Field(default_factory=FlowConfig)
     site_defaults: SiteDefaults = Field(default_factory=SiteDefaults)
     backup: BackupConfig = Field(default_factory=BackupConfig)
 

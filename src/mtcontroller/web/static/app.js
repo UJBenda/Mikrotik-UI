@@ -2396,7 +2396,7 @@ const SUBTABS = {
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["devbk", "devbk-btn", "devbk-wrap", () => loadDevBackups()],
              ["sys", "sys-btn", "sys-wrap", () => { $("token-site").value = siteId(); loadNtpPolicy(); loadUpgrade(); loadDeploy(); }]],
-  activity: [["tl", "tl-btn", "tl-wrap", () => loadTimeline()], ["avail", "avail-btn", "avail-wrap", () => loadAvail()], ["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
+  activity: [["tl", "tl-btn", "tl-wrap", () => loadTimeline()], ["avail", "avail-btn", "avail-wrap", () => loadAvail()], ["flow", "flow-btn", "flow-wrap", () => loadFlow()], ["alerts", "alerts-btn", "alerts-wrap", () => loadAlerts()], ["plans", "plans-btn", "plans-wrap", () => loadPlans()],
              ["audit", "audit-btn", "audit-wrap", () => loadAudit()]],
 };
 function subOf(view) {
@@ -2735,6 +2735,92 @@ function fwRow(r, cols) {
   if (r.disabled) { row.cls = "fw-off"; const s = el("span"); s.append(document.createTextNode(String(r.index) + " "), el("i", __("vypnuté"), "fw-offtag")); row[0] = s; }
   return row;
 }
+// --- Aktivita → Provoz: kdo s kým a kolik (NetFlow z brány, flow.py) -----------------------------------
+const flowv = { data: null, hours: 24, client: null };
+const FLOW_RANGES = [[24, __("24 hodin")], [168, __("7 dní")], [720, __("30 dní")]];
+async function loadFlow() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId(), box = $("flow-body");
+  if (!flowv.data) { box.textContent = ""; box.appendChild(el("p", __("Načítám provoz…"), "muted wl-note")); }
+  let d = null, err = null;
+  try { d = await api("GET", `/tenants/${tenantId}/sites/${site}/traffic?hours=${flowv.hours}` + (flowv.client ? `&client=${encodeURIComponent(flowv.client)}` : "")); } catch (e) { err = e.message; }
+  if (site !== siteId()) return;
+  flowv.data = d;
+  if (!d) { box.textContent = ""; box.appendChild(el("p", err || __("Provoz se nepodařilo načíst."), "muted wl-note")); return; }
+  renderFlow();
+}
+async function flowToggle(g, on) {
+  const text = on
+    ? __`Zapnout sběr provozu na bráně ${g.name}?\n\nBrána začne posílat přehled spojení (NetFlow) tunelem na controller. Uvidíš, který klient kolik přenesl, kam a jakou službou – ne obsah. Na bráně se zapne traffic-flow a přidá cíl; nic jiného se nemění.`
+    : __`Vypnout sběr provozu na bráně ${g.name}?\n\nNasbíraná data zůstanou do konce doby uchování.`;
+  if (!(await ask(text, on ? __("Zapnout") : __("Vypnout")))) return;
+  try {
+    await api("POST", `/tenants/${tenantId}/devices/${g.id}/flow`, { enabled: on });
+    msg(on ? __`${g.name}: sběr provozu se zapíná, první data do několika minut` : __`${g.name}: sběr provozu se vypíná`);
+    loadFlow();
+  } catch (e) { msg(e.message, true); }
+}
+function flowCols(series) {
+  const w = el("div", null, "fl-cols"), max = Math.max(1, ...series.map((r) => r.up + r.down));
+  for (const r of series) {
+    const c = el("div", null, "fl-col"), dn = el("i", "", "dn"), up = el("i", "", "up");
+    dn.style.height = Math.round(r.down / max * 100) + "%"; up.style.height = Math.round(r.up / max * 100) + "%";
+    c.title = `${new Date(r.hour).toLocaleString(LOCALE, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })} · ↓ ${fmtBytes(r.down)} · ↑ ${fmtBytes(r.up)}`;
+    c.append(up, dn); w.appendChild(c);
+  }
+  return w;
+}
+function renderFlow() {
+  const box = $("flow-body"), d = flowv.data; box.textContent = "";
+  if (!d) return;
+  const on = d.gateways.filter((g) => g.enabled), off = d.gateways.filter((g) => !g.enabled);
+  if (!d.gateways.length) { box.appendChild(el("p", __("Provoz podle klientů se sbírá z brány lokality. Tahle lokalita nemá spravované zařízení s rolí Brána."), "muted wl-note")); return; }
+  const head = el("div", null, "fl-head"), seg = el("div", null, "seg");
+  for (const [h, lab] of FLOW_RANGES) { const b = el("button", lab, h === flowv.hours ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { flowv.hours = h; loadFlow(); }); seg.appendChild(b); }
+  head.appendChild(seg);
+  for (const g of d.gateways) {
+    const s = el("span", null, "fl-gw");
+    s.append(el("i", "", "dz-dot " + (g.enabled ? (g.last_hour ? "ok" : "warn") : "")), document.createTextNode(" " + g.name + " · " + (g.enabled ? (g.last_hour ? __("sbírá") : __("zapnuto, čeká na data")) : __("sběr vypnutý"))));
+    if (canManage()) s.appendChild(actBtn(g.enabled ? __("Vypnout") : __("Zapnout sběr"), () => flowToggle(g, !g.enabled), g.enabled ? "small secondary" : "small"));
+    head.appendChild(s);
+  }
+  box.appendChild(head);
+  if (!on.length && !d.total.flows) {
+    box.appendChild(el("p", __("Sběr provozu je vypnutý. Po zapnutí brána posílá přehled spojení (NetFlow) tunelem na controller a tady uvidíš, který klient kolik přenesl, kam a jakou službou. Obsah provozu se nesleduje."), "muted wl-note"));
+    box.appendChild(el("p", __("Brána vidí jen provoz, který přes ni prochází – provoz mezi zařízeními ve stejné síti ne."), "muted wl-note"));
+    return;
+  }
+  if (on.some((g) => !g.last_hour)) box.appendChild(el("div", "▲ " + __("Brána má sběr zapnutý, ale data zatím nepřišla. První součty se zapisují po 5 minutách. Když nepřijdou ani potom, koncentrátor nejspíš toky nepropouští – nahraj na něj znovu skript koncentrátoru z této verze."), "dz-banner"));
+  if (flowv.client) {
+    const c = el("div", null, "fl-filter"), x = el("button", "× " + __("zrušit filtr"), "ux-link"); x.type = "button";
+    x.addEventListener("click", () => { flowv.client = null; loadFlow(); });
+    c.append(el("b", __`Klient ${flowv.client}`), x); box.appendChild(c);
+  }
+  const t = d.total, sum = el("section", null, "so-block fl-sum");
+  const kpi = el("div", null, "fl-kpi");
+  for (const [lab, val] of [[__("Staženo"), fmtBytes(t.down)], [__("Odesláno"), fmtBytes(t.up)], [__("Klientů"), String(t.clients)], [__("Spojení"), t.flows.toLocaleString(LOCALE)]]) {
+    const k = el("div"); k.append(el("span", lab, "muted"), el("b", val)); kpi.appendChild(k);
+  }
+  sum.appendChild(kpi);
+  if (d.series.length > 1) { sum.appendChild(flowCols(d.series)); const lg = el("div", null, "fl-legend muted"); lg.append(el("i", "", "dn"), document.createTextNode(__("staženo") + "  "), el("i", "", "up"), document.createTextNode(__("odesláno") + " · " + __("po hodinách"))); sum.appendChild(lg); }
+  box.appendChild(sum);
+  const tot = (r) => r.up + r.down, maxOf = (rows) => Math.max(1, ...rows.map(tot));
+  const bar = (r, max) => { const b = el("span", null, "dz-track fl-track"), f = el("i", "", "rx"); f.style.width = Math.max(2, Math.round(tot(r) / max * 100)) + "%"; b.appendChild(f); return b; };
+  if (!flowv.client) {
+    const mc = maxOf(d.clients);
+    setBlock(box, __("Nejaktivnější klienti"), "clients", [__("Klient"), "IP", "", __("Staženo"), __("Odesláno"), __("Spojení")],
+      d.clients.map((c) => { const b = el("button", c.hostname || c.mac || c.ip, "ux-link"); b.type = "button"; b.addEventListener("click", () => { flowv.client = c.ip; loadFlow(); }); return [b, c.ip, bar(c, mc), fmtBytes(c.down), fmtBytes(c.up), c.flows.toLocaleString(LOCALE)]; }),
+      [], __("Za zvolené období žádný provoz."));
+  }
+  const ms = maxOf(d.services);
+  setBlock(box, __("Služby"), "rules", [__("Služba"), "", __("Staženo"), __("Odesláno"), __("Klientů")],
+    d.services.map((s2) => [s2.name === "ostatní" ? __("ostatní") : s2.name, bar(s2, ms), fmtBytes(s2.down), fmtBytes(s2.up), String(s2.clients)]), [], __("Za zvolené období žádný provoz."));
+  const mp = maxOf(d.peers);
+  setBlock(box, __("Kam provoz směřuje"), "globe", [__("Adresa"), __("Služba"), "", __("Staženo"), __("Odesláno"), __("Klientů")],
+    d.peers.map((p) => [p.ip, p.service, bar(p, mp), fmtBytes(p.down), fmtBytes(p.up), String(p.clients)]), [], __("Za zvolené období žádný provoz."));
+  box.appendChild(el("p", __`Součty po hodinách, uchovávají se ${d.retention_days} dní. Adresy protistran se nepřekládají na jména; služba se odhaduje z portu.`, "muted small wl-note"));
+}
+
 // --- Nastavení → Zabezpečení: skóre a nálezy lokality (seccheck.py) ------------------------------------
 const setsec = { data: null, sev: "all" };
 const SEC_CATS = { exposure: __("Vystavení do internetu"), access: __("Přístup ke správě"), updates: __("Aktualizace"),

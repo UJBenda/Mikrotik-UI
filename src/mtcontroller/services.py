@@ -644,7 +644,7 @@ def _identity_done(tx: Tx, tenant_id: Any, device_id: Any, command_id: int) -> N
 # --- příkazy -----------------------------------------------------------------------
 
 COMMAND_KINDS = {"provision", "switch_concentrator", "reboot", "deprovision", "apply_plan", "upgrade", "firmware",
-                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog", "port_bounce",
+                 "confirm_plan", "poe_cycle", "wifi_package", "set_identity", "cap_names", "syslog", "flow", "port_bounce",
                  "checkin_update"}
 USER_COMMANDS = {"reboot", "deprovision", "provision", "upgrade", "firmware", "poe_cycle", "wifi_package", "port_bounce"}
 
@@ -842,6 +842,10 @@ def render_command(tx: Tx, settings: Settings, box: SecretBox, cmd: dict, dev: d
         from . import devlog
 
         return routeros.wrap_command(ack_url, key, devlog.render(settings, cmd, dev), opts)
+    if kind == "flow":
+        from . import flow
+
+        return routeros.wrap_command(ack_url, key, flow.render(settings, cmd, dev), opts)
     if kind == "set_identity":
         return routeros.wrap_command(ack_url, key, identity_body(cmd["params"].get("name")), opts)
     if kind == "cap_names":

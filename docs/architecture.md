@@ -1656,3 +1656,27 @@ skóre nemá a do průměru se nepočítá. Čísla jsou orientační, ne norma.
 
 Oprava jedním klikem zůstává jen u nálezů z `hardening.FIXES` (plán s automatickým návratem); ostatní mají příkaz
 ke zkopírování.
+
+## Provoz podle klientů – NetFlow z brány (`flow.py`)
+
+Aktivita → Provoz (`loadFlow`, `GET …/sites/{id}/traffic?hours=&client=`). Brána lokality posílá NetFlow v9 tunelem,
+controller z toků skládá hodinové součty. Obsah provozu se nevidí – jen kdo s kým, protokol, port a objem.
+
+- **Cesta dat** je stejná jako u logů: brána posílá na tunelovou adresu koncentrátoru, ten toky přeloží (dst-nat)
+  na controller a zdroj zůstane tunelová IP brány; podle ní se tok přiřadí zařízení. Pravidla koncentrátoru
+  (`mtc: netflow ze zarizeni`, `mtc: netflow na controller`) jsou ve skriptu z `concentrator.py` – **na už běžící
+  koncentrátor je potřeba skript nahrát znovu** a na controlleru povolit UDP `flow.port` (2055) od koncentrátoru.
+- **Příjem** běží ve službě `mtc-syslog` (druhý UDP port vedle syslogu; když ho nejde otevřít, logy běží dál).
+  `flow.Parser` čte NetFlow v5, v9 a IPFIX podle šablon (šablony po zdroji a source id), neznámá pole přeskočí.
+- **Zapnutí** po bráně (`device.flow_enabled`, `POST …/devices/{id}/flow`, příkaz `flow` přes check-in, audit
+  `device.flow`): na bráně jen cíl v `/ip traffic-flow target` (pozná se podle adresy a portu) a `enabled=yes
+  active-flow-timeout=1m`. Cizí cíle zůstávají; při vypnutí se traffic-flow vypne, jen když jiný cíl není.
+- **Klient a směr** (`classify`): klient = strana s neveřejnou adresou. U příchozího toku je cílem veřejná adresa
+  brány a klient se bere z adresy po překladu (pole 226). IPv6 klienti mají veřejné adresy – tam je klientem zdroj.
+- **Uložení** `flow_hourly` (migrace 0038): brána × hodina × klient × protistrana × protokol × port služby →
+  bajty ven / dovnitř, pakety, toky. Zápis po 5 minutách; na bránu a hodinu nejvýš `flow.max_rows_per_hour` (500)
+  řádků, zbytek se sečte po klientech do řádku „ostatní“ (peer 0.0.0.0, proto 0, port 0); uzavřené hodiny se
+  jednou za hodinu doúklízí (`compact`). Retence `flow.retention_days` (30). Pojistka `flow.max_packets_per_minute`.
+- **Omezení:** brána vidí jen provoz přes své CPU (ne provoz přepínaný čipem uvnitř VLAN). Jména protistran se
+  nepřekládají, služba je odhad z portu. Na skutečném RouterOS zatím neověřeno – hlavně jaká pole šablona nese
+  (adresa po NATu) a zda FastTrack toky nezkresluje.

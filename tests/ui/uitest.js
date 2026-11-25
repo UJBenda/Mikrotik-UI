@@ -492,6 +492,23 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       }
     }
     {
+      // aktivita → provoz: součty, klienti, služby, protistrany; klik na klienta filtruje; vypnutí sběru se ptá
+      const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      ctx.openSub("activity", "flow"); await tlTick(); await tlTick();
+      const txt = () => byId["flow-body"].textContent;
+      if (byId["flow-wrap"].hidden || !txt().includes("Nejaktivnější klienti") || !txt().includes("pc-martina") || !txt().includes("QUIC") || !txt().includes("gw-hala · sbírá")) errors.push("provoz: přehled " + txt().slice(0, 200));
+      if (all(byId["flow-body"], (n) => n.className === "fl-col").length !== 24 || !txt().includes("Kam provoz směřuje") || !txt().includes("uchovávají se 30 dní")) errors.push("provoz: graf / protistrany");
+      await all(byId["flow-body"], (n) => n.tagName === "BUTTON" && n.textContent === "pc-martina")[0].fire("click"); await tlTick(); await tlTick();
+      if (!txt().includes("Klient 192.168.10.21") || txt().includes("Nejaktivnější klienti") || txt().includes("SSH")) errors.push("provoz: filtr klienta " + txt().slice(0, 200));
+      await all(byId["flow-body"], (n) => n.tagName === "BUTTON" && n.textContent.startsWith("×"))[0].fire("click"); await tlTick(); await tlTick();
+      if (!txt().includes("Nejaktivnější klienti")) errors.push("provoz: zrušení filtru");
+      const n0 = requests.length;
+      const pf = all(byId["flow-body"], (n) => n.tagName === "BUTTON" && n.textContent === "Vypnout")[0].fire("click"); await tlTick();
+      if (byId["ask"].hidden) errors.push("provoz: dialog vypnutí"); else { byId["ask-ok"].onclick(); await pf; await tlTick(); }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/devices/gw/flow"))) errors.push("provoz: vypnutí sběru " + requests.slice(n0).join(" "));
+      ctx.showView("settings"); await tlTick();
+    }
+    {
       // nastavení → zabezpečení: skóre lokality, oblasti, nálezy zařízení, filtr závažnosti a oprava jedním klikem
       await byId["setsec-btn"].fire("click"); await tlTick(); await tlTick();
       const sb = byId["setsec-body"], all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };

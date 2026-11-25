@@ -252,6 +252,14 @@ class _Proto(asyncio.DatagramProtocol):
         self.col.receive(data, addr[0])
 
 
+class _FlowProto(asyncio.DatagramProtocol):
+    def __init__(self, col) -> None:
+        self.col = col
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        self.col.receive(data, addr[0])
+
+
 async def serve(db: Database, settings: Settings) -> None:
     col = Collector(db, settings)
     col.refresh(force=True)
@@ -259,6 +267,18 @@ async def serve(db: Database, settings: Settings) -> None:
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(lambda: _Proto(col), local_addr=(host, settings.syslog.port))
     log.info("syslog poslouchá na %s:%d", host, settings.syslog.port)
+    # toky z bran (NetFlow v9 / IPFIX) přijímá stejná služba; když port nejde otevřít, logy běží dál
+    from . import flow
+
+    fcol = flow.Collector(db, settings)
+    ftransport = None
+    try:
+        fcol.refresh(force=True)
+        fhost = settings.flow.listen or settings.tunnel.controller_ip
+        ftransport, _ = await loop.create_datagram_endpoint(lambda: _FlowProto(fcol), local_addr=(fhost, settings.flow.port))
+        log.info("netflow poslouchá na %s:%d", fhost, settings.flow.port)
+    except Exception:
+        log.exception("příjem netflow se nepodařilo spustit")
     last_ret = 0.0
     try:
         while True:
@@ -271,10 +291,22 @@ async def serve(db: Database, settings: Settings) -> None:
                     last_ret = time.monotonic()
                     if n:
                         log.info("smazáno %d starých logů", n)
+                    if ftransport:
+                        flow.compact(db, settings.flow.max_rows_per_hour)
+                        flow.retention(db, settings.flow.retention_days)
             except Exception:
                 log.exception("zápis logů selhal")
+            if ftransport:
+                try:
+                    fcol.refresh()
+                    if fcol.due():
+                        fcol.flush()
+                except Exception:
+                    log.exception("zápis toků selhal")
     finally:
         transport.close()
+        if ftransport:
+            ftransport.close()
 
 
 def main() -> None:

@@ -1787,3 +1787,17 @@ span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center;
 .sec-badge.critical { background: var(--bad-weak); color: var(--bad); }
 .sec-dev .dr-line:first-of-type { border-top: 0; }
 @media (max-width: 640px) { .sec-head { align-items: flex-start; } .sec-dev .dr-line { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Aktivita → Provoz (NetFlow) */
+.fl-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.fl-gw { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; } .fl-gw button { margin-left: 4px; }
+.fl-filter { display: flex; gap: 12px; align-items: baseline; font-size: 13px; } .fl-filter .ux-link { width: auto; padding: 0; }
+.fl-kpi { display: flex; gap: 28px; flex-wrap: wrap; padding: 6px 10px; } .fl-kpi div { display: flex; flex-direction: column; }
+.fl-kpi span { font-size: 12px; } .fl-kpi b { font-size: 18px; }
+.fl-cols { display: flex; align-items: flex-end; gap: 2px; height: 90px; padding: 6px 10px 0; }
+.fl-col { flex: 1; min-width: 2px; max-width: 26px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.fl-col i { display: block; min-height: 1px; } .fl-col .dn, .fl-legend .dn { background: var(--accent); }
+.fl-col .up, .fl-legend .up { background: var(--ok); }
+.fl-legend { padding: 4px 10px 0; font-size: 12px; } .fl-legend i { display: inline-block; width: 9px; height: 9px; margin: 0 4px 0 0; border-radius: 2px; }
+.fl-track { display: inline-block; width: 120px; vertical-align: middle; }
+#flow-body .so-t .ux-link { width: auto; padding: 0; }

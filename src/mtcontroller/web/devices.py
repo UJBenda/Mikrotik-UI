@@ -1248,6 +1248,43 @@ async def site_timeline(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_traffic(request: Request, p: Principal, tid: str) -> Response:
+    """Provoz podle klientů (NetFlow z brány): součty, řada po hodinách, klienti, protistrany, služby."""
+    from .. import flow
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    hours = _int(request.query_params.get("hours"), 24, 1, 24 * 30)
+    client = request.query_params.get("client") or None
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            out = flow.site_traffic(tx, sid, hours, client)
+        out["retention_days"] = st.settings.flow.retention_days
+        return out
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def device_flow(request: Request, p: Principal, tid: str) -> Response:
+    """Zapnout / vypnout posílání toků (NetFlow) z brány na controller."""
+    from .. import flow
+    from ..services import kick
+
+    st = get_state(request)
+    did = _uuid(request.path_params["device_id"])
+    data = await _json(request)
+    if not isinstance(data.get("enabled"), bool):
+        raise ServiceError("enabled: true | false")
+    out = await run_in_threadpool(flow.set_enabled, st.db, tid, did, data["enabled"], p.user_id, client_ip(request))
+    kick(st.db, st.settings, st.box, tid, did)
+    return json_response(out)
+
+
+@endpoint(READ)
 async def site_security(request: Request, p: Principal, tid: str) -> Response:
     """Kontrola zabezpečení lokality: nálezy a skóre zařízení, účty bez dvoufázového ověření."""
     from .. import seccheck
@@ -2132,6 +2169,7 @@ def routes() -> list[Route]:
         Route(d + "/activity", device_activity, methods=["GET"]),
         Route(d + "/logs", device_logs, methods=["GET"]),
         Route(d + "/syslog", device_syslog, methods=["POST"]),
+        Route(d + "/flow", device_flow, methods=["POST"]),
         Route(s + "/syslog", site_syslog, methods=["POST"]),
         Route(s + "/wifi/journey", site_wifi_journey, methods=["GET"]),
         Route(s + "/wifi/roaming", site_wifi_roaming, methods=["GET"]),
@@ -2189,6 +2227,7 @@ def routes() -> list[Route]:
         Route(s + "/infra-at", site_infra_at, methods=["GET"]),
         Route(s + "/dash", site_dash, methods=["GET"]),
         Route(s + "/security", site_security, methods=["GET"]),
+        Route(s + "/traffic", site_traffic, methods=["GET"]),
         Route(s + "/availability", site_availability, methods=["GET"]),
         Route(s + "/links", site_links, methods=["GET", "POST"]),
         Route(s + "/unmanaged", site_unmanaged, methods=["GET"]),

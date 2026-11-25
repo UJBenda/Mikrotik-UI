@@ -625,6 +625,29 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20j) provoz podle klientů (NetFlow) izolovaný mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO flow_hourly (tenant_id, site_id, device_id, hour, client, peer, proto, port, bytes_up)
+SELECT d.tenant_id, d.site_id, d.id, date_trunc('hour', now()), '192.168.88.10', '1.1.1.1', 6, 443, 1000 FROM device d
+WHERE d.tenant_id = '00000000-0000-0000-0000-0000000000b1' AND d.site_id IS NOT NULL LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM flow_hourly) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí provoz klientů tenanta B'; END IF;
+  RAISE NOTICE 'OK 20j provoz podle klientů izolovaný';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM pg_class WHERE relname = 'flow_hourly' AND relrowsecurity AND relforcerowsecurity) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: flow_hourly bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

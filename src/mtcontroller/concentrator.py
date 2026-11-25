@@ -84,6 +84,7 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 /ip firewall filter add chain=forward src-address-list="mtc-controller" out-interface-list="TUNNELS" protocol=tcp dst-port=443 action=accept comment="mtc: controller REST do tunelu"
 /ip firewall filter add chain=forward src-address-list="mtc-controller" out-interface-list="TUNNELS" protocol=icmp action=accept comment="mtc: controller ping do tunelu"
 /ip firewall filter add chain=forward in-interface-list="TUNNELS" dst-address-list="mtc-controller" protocol=udp dst-port={settings.syslog.port} action=accept comment="mtc: syslog ze zarizeni"
+/ip firewall filter add chain=forward in-interface-list="TUNNELS" dst-address-list="mtc-controller" protocol=udp dst-port={settings.flow.port} action=accept comment="mtc: netflow ze zarizeni"
 /ip firewall filter add chain=forward in-interface-list="TUNNELS" action=drop comment="mtc: drop z tunelu"
 /ip firewall filter add chain=forward out-interface-list="TUNNELS" action=drop comment="mtc: drop do tunelu"
 # sprava z controlleru do tunelu se preklada na tunelovou adresu koncentratoru:
@@ -92,14 +93,16 @@ def concentrator_script(settings: Settings, c: ConcentratorConfig, api_password:
 /ip firewall nat add chain=srcnat src-address-list="mtc-controller" out-interface-list="TUNNELS" action=src-nat to-addresses={q(local)} comment="mtc: controller do tunelu"
 # logy ze zarizeni (syslog na tunelovou adresu koncentratoru) jdou na controller se zdrojem zarizeni
 /ip firewall nat add chain=dstnat in-interface-list="TUNNELS" dst-address={q(local)} protocol=udp dst-port={settings.syslog.port} action=dst-nat to-addresses=$ctrl to-ports={settings.syslog.port} comment="mtc: syslog na controller"
+# toky z bran (NetFlow na tunelovou adresu koncentratoru) stejnou cestou jako logy
+/ip firewall nat add chain=dstnat in-interface-list="TUNNELS" dst-address={q(local)} protocol=udp dst-port={settings.flow.port} action=dst-nat to-addresses=$ctrl to-ports={settings.flow.port} comment="mtc: netflow na controller"
 # pravidla mtc na zacatek (dynamicka pravidla preskocit - pred ne nejde presouvat); presun jen kdyz
 # pravidlo uz neni prvni ("can not move object before itself")
-:foreach c in={{"mtc: syslog na controller";"mtc: controller do tunelu"}} do={{
+:foreach c in={{"mtc: netflow na controller";"mtc: syslog na controller";"mtc: controller do tunelu"}} do={{
   :local me [/ip firewall nat find comment=$c]
   :local first ([/ip firewall nat find dynamic=no]->0)
   :if ([:len $me] > 0 && ($me->0) != $first) do={{ /ip firewall nat move ($me->0) destination=$first }}
 }}
-:foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: syslog ze zarizeni";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
+:foreach c in={{"mtc: drop do tunelu";"mtc: drop z tunelu";"mtc: controller ping do tunelu";"mtc: controller REST do tunelu";"mtc: netflow ze zarizeni";"mtc: syslog ze zarizeni";"mtc: odpovedi z tunelu";"mtc: drop input z tunelu";"mtc: controller API";"mtc: SSTP"}} do={{
   :local me [/ip firewall filter find comment=$c]
   :local first ([/ip firewall filter find dynamic=no]->0)
   :if ([:len $me] > 0 && ($me->0) != $first) do={{ /ip firewall filter move ($me->0) destination=$first }}

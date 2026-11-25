@@ -161,6 +161,8 @@ def test_concentrator_script_is_ascii_and_balanced(tmp_path):
     assert 'action=src-nat to-addresses="10.200.0.1"' in s
     # syslog ze zařízení na controller; přesun jen pravidla, které ještě není první (RouterOS jinak skončí chybou)
     assert 'action=dst-nat to-addresses=$ctrl to-ports=5514' in s and 'dst-port=5514 action=accept comment="mtc: syslog' in s
+    # toky z bran (NetFlow) stejnou cestou jako logy
+    assert 'action=dst-nat to-addresses=$ctrl to-ports=2055' in s and 'dst-port=2055 action=accept comment="mtc: netflow' in s
     assert s.count("($me->0) != $first") == 2 and " move [find comment" not in s
 
 
