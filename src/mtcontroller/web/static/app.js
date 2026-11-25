@@ -4398,7 +4398,17 @@ async function loadLink() {
   renderLinks();
   try {
     const t = await api("GET", `/tenants/${tenantId}/devices/${d.a.device_id}/traffic?hours=${wl.hours}&interface=${encodeURIComponent(d.a.iface)}`);
-    if (wl.sel === id) { wl.traffic = t.points || []; renderLinks(); }
+    let pts = t.points || [];
+    const busy = (x) => x.some((q) => (q.rx || 0) > 0 || (q.tx || 0) > 0);
+    if (!busy(pts) && d.b.iface && d.b.iface !== "?") {
+      // strana A provoz nepočítá (60GHz AP ho vede přes podřízená rozhraní stanic, hlavní rádio ukazuje nulu):
+      // vezme se počítadlo protistrany, směry prohozené, aby graf zůstal z pohledu strany A
+      try {
+        const o = (await api("GET", `/tenants/${tenantId}/devices/${d.b.device_id}/traffic?hours=${wl.hours}&interface=${encodeURIComponent(d.b.iface)}`)).points || [];
+        if (busy(o)) pts = o.map((q) => ({ ...q, rx: q.tx, tx: q.rx }));
+      } catch (_e) { /* zůstane strana A */ }
+    }
+    if (wl.sel === id) { wl.traffic = pts; renderLinks(); }
   } catch (_e) { /* graf provozu je navíc – bez něj karta funguje */ }
 }
 
