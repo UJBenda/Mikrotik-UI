@@ -118,6 +118,18 @@ def audit(inv: dict) -> list[dict]:
     for key, label in (("socks", "SOCKS proxy"), ("proxy", "HTTP proxy")):
         if _true(_obj(inv, key).get("enabled")):
             add("warning", f"{key}_enabled", f"{label} je zapnutá – častý znak kompromitace", f"/ip {key} set enabled=no")
+    if _true(_obj(inv, "upnp").get("enabled")):
+        add("warning", "upnp_enabled", "UPnP je zapnuté – zařízení v síti si sama otevírají porty z internetu",
+            "/ip upnp set enabled=no")
+    if str(_obj(inv, "smb").get("enabled")).lower() in ("true", "yes"):
+        add("warning", "smb_enabled", "sdílení souborů (SMB) běží přímo na routeru", "/ip smb set enabled=no")
+    ssh_on = any(str(s.get("name")) == "ssh" and not _true(s.get("disabled")) for s in _rows(inv, "ip_services"))
+    ssh = _obj(inv, "ssh")
+    if ssh_on and ssh and "strong-crypto" in ssh and not _true(ssh.get("strong-crypto")):
+        add("info", "ssh_weak_crypto", "SSH povoluje i slabé šifry (strong-crypto=no)", "/ip ssh set strong-crypto=yes")
+    if ssh_on and str(ssh.get("forwarding-enabled") or "no").lower() not in ("no", "false"):
+        add("info", "ssh_forwarding", "SSH dovoluje přesměrování portů – router jde použít jako tunel do sítě",
+            "/ip ssh set forwarding-enabled=no")
     if _true(_obj(inv, "bw_server").get("enabled")):
         add("info", "bw_server", "bandwidth-test server je zapnutý", "/tool bandwidth-server set enabled=no")
     if _true(_obj(inv, "romon").get("enabled")):

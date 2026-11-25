@@ -1764,3 +1764,26 @@ button.dz-bar, .dz-watch { cursor: pointer; } button.dz-bar:hover .dz-name, .dz-
 .pm-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .pm-ico.off { background: #fde8e8; color: var(--bad); }
 span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center; }
+
+/* Nastavení → Zabezpečení */
+.sec-head { display: flex; align-items: center; gap: 18px; padding: 14px 16px; }
+.sec-score { flex: none; width: 76px; height: 76px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 26px; font-weight: 700; border: 5px solid var(--line); color: var(--muted); }
+.sec-score.ok { border-color: var(--ok); color: var(--ok); } .sec-score.warning { border-color: var(--warn); color: var(--warn); }
+.sec-score.critical { border-color: var(--bad); color: var(--bad); }
+.sec-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; } .sec-info b { font-size: 16px; }
+.sec-info .dz-banner { align-self: flex-start; margin-top: 3px; }
+.sec-cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.sec-cat { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line);
+  border-radius: 8px; border-left-width: 4px; font-size: 13px; }
+.sec-cat.ok { border-left-color: var(--ok); } .sec-cat.ok b { color: var(--ok); }
+.sec-cat.info { border-left-color: var(--accent); } .sec-cat.warning { border-left-color: var(--warn); } .sec-cat.warning b { color: var(--warn); }
+.sec-cat.critical { border-left-color: var(--bad); } .sec-cat.critical b { color: var(--bad); }
+.sec-seg { align-self: flex-start; }
+.sec-dev .so-h .ux-link { width: auto; padding: 0; font-weight: 700; font-size: 13px; }
+.sec-badge { flex: none; min-width: 30px; padding: 0 6px; line-height: 20px; border-radius: 10px; text-align: center; font-style: normal;
+  font-size: 12px; font-weight: 700; background: #e3e6eb; color: #5c6370; }
+.sec-badge.ok { background: var(--ok-weak); color: var(--ok); } .sec-badge.warning { background: var(--warn-weak); color: var(--warn); }
+.sec-badge.critical { background: var(--bad-weak); color: var(--bad); }
+.sec-dev .dr-line:first-of-type { border-top: 0; }
+@media (max-width: 640px) { .sec-head { align-items: flex-start; } .sec-dev .dr-line { grid-template-columns: 1fr; gap: 2px; } }

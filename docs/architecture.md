@@ -1636,3 +1636,23 @@ Bezpečnost na straně MikroTiku (pořadí práce):
 3. Odesílání událostí a auditu na syslog (SIEM).
 4. Ochrana přímo na bráně MikroTik: seznamy škodlivých adres a zemí jako address-listy, filtrování DNS, NetFlow
    pro přehled provozu. Sahá na bránu → jen s testovacím zařízením.
+
+## Kontrola zabezpečení lokality (`seccheck.py`)
+
+Nastavení → Zabezpečení (`loadSetSecurity`, `GET …/sites/{id}/security`). Jen čtení – nic nového se ze zařízení
+neměří, skládají se nálezy z toho, co controller už má:
+
+- audit nastavení zařízení (`hardening.py`, sekce inventury `hardening`) – nově i UPnP, SMB a nastavení SSH
+  (sekce `upnp`, `smb`, `ssh`; zařízení bez těchto menu sekci prostě nemá),
+- verze RouterOS (`ros_versions.py`: nepodporovaná, známá chyba; sekce `update`: zastaralá proti kanálu –
+  o 4 a víc vedlejších verzí je varování, jinak informace),
+- zálohy zařízení (vypnuté, selhaly, žádná, starší než 8 dní), synchronizace času,
+- účty zákazníka bez dvoufázového ověření (nález lokality, oblast `controller`).
+
+Každý nález má oblast (`exposure`, `access`, `updates`, `backup`, `time`, `controller`). Skóre zařízení = 100 −
+srážky (kritický 30, varování 10, informace 2), s kritickým nálezem nejvýš 40. Skóre lokality = průměr zařízení −
+srážky za nálezy lokality, s kritickým nálezem nejvýš 49. Zařízení bez inventury nastavení (nespravované přes API)
+skóre nemá a do průměru se nepočítá. Čísla jsou orientační, ne norma.
+
+Oprava jedním klikem zůstává jen u nálezů z `hardening.FIXES` (plán s automatickým návratem); ostatní mají příkaz
+ke zkopírování.

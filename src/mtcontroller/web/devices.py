@@ -1248,6 +1248,23 @@ async def site_timeline(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_security(request: Request, p: Principal, tid: str) -> Response:
+    """Kontrola zabezpečení lokality: nálezy a skóre zařízení, účty bez dvoufázového ověření."""
+    from .. import seccheck
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            return seccheck.site_check(tx, tid, sid)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
 async def site_dash(request: Request, p: Principal, tid: str) -> Response:
     """Přehled lokality: brána a linka, odezva internetu, nejvytíženější AP a klienti, co je pod dohledem."""
     from .. import dash
@@ -2171,6 +2188,7 @@ def routes() -> list[Route]:
         Route(s + "/timeline", site_timeline, methods=["GET"]),
         Route(s + "/infra-at", site_infra_at, methods=["GET"]),
         Route(s + "/dash", site_dash, methods=["GET"]),
+        Route(s + "/security", site_security, methods=["GET"]),
         Route(s + "/availability", site_availability, methods=["GET"]),
         Route(s + "/links", site_links, methods=["GET", "POST"]),
         Route(s + "/unmanaged", site_unmanaged, methods=["GET"]),

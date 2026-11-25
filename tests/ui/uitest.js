@@ -491,6 +491,25 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         if (!byId["setfw-body"].textContent.includes("Zobrazit všechna pravidla") || byId["setfw-body"].textContent.includes("Všechna pravidla (")) errors.push("nastavení: firewall – pravidla buňky");
       }
     }
+    {
+      // nastavení → zabezpečení: skóre lokality, oblasti, nálezy zařízení, filtr závažnosti a oprava jedním klikem
+      await byId["setsec-btn"].fire("click"); await tlTick(); await tlTick();
+      const sb = byId["setsec-body"], all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      const txt = () => byId["setsec-body"].textContent;
+      const score = all(sb, (n) => (n.className || "").startsWith("sec-score"))[0];
+      if (byId["setsec-wrap"].hidden || !score || score.textContent !== "49" || score.className !== "sec-score critical") errors.push("zabezpečení: skóre " + txt().slice(0, 200));
+      if (!txt().includes("Vážné nedostatky") || !txt().includes("1 kritických · 5 varování · 3 informací") || !txt().includes("1 zařízení bez inventury")) errors.push("zabezpečení: souhrn");
+      if (all(sb, (n) => (n.className || "").startsWith("sec-cat ")).length !== 6 || !txt().includes("Vystavení do internetu")) errors.push("zabezpečení: oblasti");
+      if (!txt().includes("jana@example.cz") || !txt().includes("Router je otevřený z internetu".slice(0, 0) + "input chain nic nezahazuje") || !txt().includes("1 zařízení bez nálezů")) errors.push("zabezpečení: nálezy");
+      if (!txt().includes("Opravit vše automaticky (2)") || !txt().includes("není spravované přes API")) errors.push("zabezpečení: oprava / nezkontrolované");
+      await all(byId["setsec-body"], (n) => n.tagName === "BUTTON" && n.textContent === "Kritické")[0].fire("click");
+      if (txt().includes("UPnP") || !txt().includes("input chain") || txt().includes("jana@example.cz")) errors.push("zabezpečení: filtr kritických");
+      await all(byId["setsec-body"], (n) => n.tagName === "BUTTON" && n.textContent === "Vše")[0].fire("click");
+      const n0 = requests.length;
+      const pf = all(byId["setsec-body"], (n) => n.tagName === "BUTTON" && n.textContent === "vypnout Telnet")[0].fire("click"); await tlTick();
+      if (byId["ask"].hidden) errors.push("zabezpečení: dialog opravy"); else { byId["ask-ok"].onclick(); await pf; await tlTick(); }
+      if (!requests.slice(n0).some((r) => r.startsWith("POST") && r.endsWith("/devices/gw/hardening-fix"))) errors.push("zabezpečení: oprava nálezu " + requests.slice(n0).join(" "));
+    }
     await byId["net-btn"].fire("click"); await tlTick(); await tlTick();
     if (byId["net-wrap"].hidden || byId["net-rows"].children.length !== 3) errors.push("sítě: tabulka");
     if (!byId["net-rows"].textContent.includes("Relay → 192.168.30.10") || !byId["net-rows"].textContent.includes("1 / 100"))

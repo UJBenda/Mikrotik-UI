@@ -577,7 +577,7 @@ async function hardeningFix(d, codes) {
       await api("POST", `/tenants/${tenantId}/plans/${r.plan_id}/approve`);
       msg(__`${devName(d)}: ${r.labels.join(", ")} – posílám na zařízení`); watchDevice(d.id, devName(d));
     } catch (e) { msg(__`Plán #${r.plan_id} vytvořen, čeká na schválení: ${e.message}`); }
-    loadPlans(); renderDrill();
+    loadPlans(); renderDrill(); if (prefs.view === "settings" && !$("setsec-wrap").hidden) loadSetSecurity();
   } catch (e) { msg(e.message, true); }
 }
 
@@ -2391,7 +2391,7 @@ const SUBTABS = {
   links: [["links", null, null, () => loadLinks()]],
   clients: [["clients", null, null, () => loadClients()]],
   ports: [["ports", null, null, () => loadPortMap()]],
-  settings: [["ov", "setov-btn", "setov-wrap", () => loadSetOverview()], ["inet", "inet-btn", "inet-wrap", () => loadSetInternet()], ["fw", "setfw-btn", "setfw-wrap", () => loadSetFirewall()],
+  settings: [["ov", "setov-btn", "setov-wrap", () => loadSetOverview()], ["inet", "inet-btn", "inet-wrap", () => loadSetInternet()], ["fw", "setfw-btn", "setfw-wrap", () => loadSetFirewall()], ["sec", "setsec-btn", "setsec-wrap", () => loadSetSecurity()],
              ["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["devbk", "devbk-btn", "devbk-wrap", () => loadDevBackups()],
@@ -2629,6 +2629,7 @@ const SET_ICON = {
   "inet-btn": "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12",
   "devbk-btn": NAV_ICON.backups, "sys-btn": NAV_ICON.system,
   "setfw-btn": "M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v4.5H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z",
+  "setsec-btn": "M8 1.8 13 3.6v4c0 3-2.1 5.3-5 6.6-2.9-1.3-5-3.6-5-6.6v-4zM5.8 8l1.6 1.6 2.9-3.2",
 };
 for (const [id, d] of Object.entries(SET_ICON)) {
   const b = $(id), label = b.textContent, NS = "http://www.w3.org/2000/svg";
@@ -2734,6 +2735,92 @@ function fwRow(r, cols) {
   if (r.disabled) { row.cls = "fw-off"; const s = el("span"); s.append(document.createTextNode(String(r.index) + " "), el("i", __("vypnuté"), "fw-offtag")); row[0] = s; }
   return row;
 }
+// --- Nastavení → Zabezpečení: skóre a nálezy lokality (seccheck.py) ------------------------------------
+const setsec = { data: null, sev: "all" };
+const SEC_CATS = { exposure: __("Vystavení do internetu"), access: __("Přístup ke správě"), updates: __("Aktualizace"),
+  backup: __("Zálohy"), time: __("Čas a logy"), controller: __("Účty controlleru") };
+const SEC_LEVEL = { ok: __("V pořádku"), warning: __("Chce pozornost"), critical: __("Vážné nedostatky"), none: __("Zatím nezkontrolováno") };
+const SEC_SEVS = [["all", __("Vše")], ["critical", __("Kritické")], ["warning", __("Varování")], ["info", __("Informace")]];
+async function loadSetSecurity() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId(), box = $("setsec-body");
+  if (!setsec.data) { box.textContent = ""; box.appendChild(el("p", __("Kontroluji…"), "muted wl-note")); }
+  let d = null, err = null;
+  try { d = await api("GET", `/tenants/${tenantId}/sites/${site}/security`); } catch (e) { err = e.message; }
+  if (site !== siteId()) return;
+  setsec.data = d;
+  if (!d) { box.textContent = ""; box.appendChild(el("p", err || __("Kontrolu se nepodařilo načíst."), "muted wl-note")); return; }
+  renderSetSecurity();
+}
+function secLine(f, d) {
+  const acts = [];
+  if (d && f.fixable) acts.push(actBtn(f.fix_label, () => hardeningFix(d, [f.code]), "small"));
+  else if (f.fix) acts.push(actBtn(__("Kopírovat příkaz"), () => copyText(f.fix, __("Příkaz")), "small secondary"));
+  if (f.code === "mfa_missing") acts.push(actBtn(__("Uživatelé"), () => showView("users"), "small secondary"));
+  if (d && f.category === "backup") acts.push(actBtn(__("Zálohy zařízení"), () => openSub("settings", "devbk"), "small secondary"));
+  const hint = f.users ? f.users.join(", ") : f.fix ? __("Oprava: ") + f.fix : "";
+  return drillLine(f.severity, f.text.charAt(0).toUpperCase() + f.text.slice(1), hint, acts);
+}
+function renderSetSecurity() {
+  const box = $("setsec-body"), d = setsec.data; box.textContent = "";
+  if (!d) return;
+  const head = el("section", null, "so-block sec-head");
+  const sc = el("div", d.score == null ? "–" : String(d.score), "sec-score " + d.level);
+  const info = el("div", null, "sec-info");
+  info.appendChild(el("b", SEC_LEVEL[d.level] || ""));
+  const c = d.counts;
+  info.appendChild(el("div", c.critical + c.warning + c.info
+    ? __`${c.critical} kritických · ${c.warning} varování · ${c.info} informací`
+    : __("Bez nálezů ✓"), "muted"));
+  info.appendChild(el("div", __("Skóre 0–100 z nálezů na zařízeních. Kontroluje se nastavení, které controller čte z inventury – provoz v síti nesleduje."), "muted small"));
+  if (d.unchecked) info.appendChild(el("div", "▲ " + __`${d.unchecked} zařízení bez inventury nastavení – do skóre se nepočítají.`, "dz-banner"));
+  head.append(sc, info); box.appendChild(head);
+  const cats = el("div", null, "sec-cats");
+  for (const [key, label] of Object.entries(SEC_CATS)) {
+    const k = d.categories[key] || {}, n = (k.critical || 0) + (k.warning || 0) + (k.info || 0);
+    const t = el("div", null, "sec-cat " + (k.critical ? "critical" : k.warning ? "warning" : n ? "info" : "ok"));
+    t.append(el("span", label), el("b", n ? String(n) : "✓"));
+    cats.appendChild(t);
+  }
+  box.appendChild(cats);
+  const seg = el("div", null, "seg sec-seg");
+  for (const [key, label] of SEC_SEVS) {
+    const b = el("button", label, setsec.sev === key ? "active" : ""); b.type = "button";
+    b.addEventListener("click", () => { setsec.sev = key; renderSetSecurity(); });
+    seg.appendChild(b);
+  }
+  box.appendChild(seg);
+  const show = (f) => setsec.sev === "all" || f.severity === setsec.sev;
+  const site = d.site.filter(show);
+  if (site.length) {
+    const s = el("section", null, "so-block sec-dev"), h = el("div", null, "so-h");
+    h.append(navIcon("users"), el("b", __("Controller"))); s.appendChild(h);
+    for (const f of site) s.appendChild(secLine(f, null));
+    box.appendChild(s);
+  }
+  let shown = 0;
+  for (const x of d.devices) {
+    const dev = { ...x, identity: x.name }, fs = dev.findings.filter(show);
+    if (!fs.length && (setsec.sev !== "all" || dev.checked)) continue;
+    shown++;
+    const s = el("section", null, "so-block sec-dev"), h = el("div", null, "so-h");
+    const name = el("button", dev.name, "ux-link"); name.type = "button"; name.addEventListener("click", () => openDetail(dev.id));
+    h.append(el("i", dev.score == null ? "?" : String(dev.score), "sec-badge " + dev.level), name,
+      el("span", [dev.model, dev.ros_version ? "RouterOS " + dev.ros_version : null].filter(Boolean).join(" · "), "muted"));
+    s.appendChild(h);
+    if (!dev.checked) s.appendChild(el("p", __("Controller ze zařízení nečte nastavení (není spravované přes API) – zkontrolovat jde jen verze a zálohy."), "muted"));
+    if (dev.plan_open) s.appendChild(drillLine("info", __("Oprava už čeká ve Změnách"), "", [actBtn(__("Změny"), () => openSub("activity", "plans"), "small")]));
+    for (const f of fs) s.appendChild(secLine(f, dev));
+    const fix = fs.filter((f) => f.fixable).map((f) => f.code);
+    if (fix.length > 1 && !dev.plan_open) s.appendChild(drillLine(null, __`Opravit vše automaticky (${fix.length})`, __("Jeden plán s automatickým návratem, když se zařízení neozve."),
+      [actBtn(__("Opravit vše"), () => hardeningFix(dev, fix), "small")]));
+    box.appendChild(s);
+  }
+  const clean = d.devices.filter((x) => x.checked && !x.findings.length).length;
+  if (clean && setsec.sev === "all") box.appendChild(el("p", __`${clean} zařízení bez nálezů ✓`, "muted wl-note"));
+  if (!shown && !site.length && setsec.sev !== "all") box.appendChild(el("p", __("Žádné nálezy této závažnosti."), "muted wl-note"));
+}
+
 async function loadSetFirewall() {
   if (!tenantId || !siteId()) return;
   const site = siteId();

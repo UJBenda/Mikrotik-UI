@@ -112,6 +112,9 @@ SECTIONS: list[Section] = [
     Section("proxy", "/ip/proxy", "enabled"),
     Section("bw_server", "/tool/bandwidth-server", "enabled,authenticate"),
     Section("romon", "/tool/romon", "enabled"),
+    Section("upnp", "/ip/upnp", "enabled"),
+    Section("smb", "/ip/smb", "enabled"),
+    Section("ssh", "/ip/ssh", "strong-crypto,forwarding-enabled"),
     Section("fw_filter", "/ip/firewall/filter",
             "chain,action,disabled,dynamic,in-interface,in-interface-list,out-interface,out-interface-list,"
             "src-address,src-address-list,dst-address,dst-address-list,connection-state,connection-nat-state,"
