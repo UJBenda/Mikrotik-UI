@@ -1565,5 +1565,9 @@ funguje beze změny): Přehled · Wi-Fi · Sítě · Internet · Profily portů 
   WAN a co vnitřní síť (z `…/ports`). Je to jen přehled – přiřazení portů, přepínání linek podle odezvy a měření
   rychlosti controller nenastavuje.
 
-Další kroky podle maket 10 a 11 (zatím neuděláno): oznámení po událostech, firewall podle zón (nejdřív čtení pravidel
-z brány, úpravy až s plánem a automatickým vrácením), VPN server.
+- **Firewall** (`loadSetFirewall`): zóny (seznamy rozhraní), matice zón a pravidla brány lokality z `firewall.analyze`
+  (stejná data jako záložka Firewall v detailu zařízení, bere se `…/devices/{brána}`). Klik na buňku ukáže výjimky
+  a rozhodující pravidlo dvojice zón, u pravidel je počet zásahů (packets). Jen čtení.
+
+Další kroky podle maket 10 a 11 (zatím neuděláno): oznámení po událostech, úpravy firewallu (s plánem a automatickým
+vrácením, generátor je v `fwmatrix.py`), VPN server.

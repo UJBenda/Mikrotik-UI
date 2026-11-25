@@ -2389,7 +2389,7 @@ const SUBTABS = {
   links: [["links", null, null, () => loadLinks()]],
   clients: [["clients", null, null, () => loadClients()]],
   ports: [["ports", null, null, () => loadPortMap()]],
-  settings: [["ov", "setov-btn", "setov-wrap", () => loadSetOverview()], ["inet", "inet-btn", "inet-wrap", () => loadSetInternet()],
+  settings: [["ov", "setov-btn", "setov-wrap", () => loadSetOverview()], ["inet", "inet-btn", "inet-wrap", () => loadSetInternet()], ["fw", "setfw-btn", "setfw-wrap", () => loadSetFirewall()],
              ["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
              ["prof", "prof-btn", "prof-wrap", () => loadProfiles()],
              ["devbk", "devbk-btn", "devbk-wrap", () => loadDevBackups()],
@@ -2626,6 +2626,7 @@ const SET_ICON = {
   "wifi-btn": NAV_ICON.links, "net-btn": "M6 2h4v3H6zM8 5v3M3 13v-3h10v3M8 8v2", "prof-btn": NAV_ICON.ports,
   "inet-btn": "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12",
   "devbk-btn": NAV_ICON.backups, "sys-btn": NAV_ICON.system,
+  "setfw-btn": "M2.5 2.5h4.5v4.5H2.5zM9 2.5h4.5v4.5H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z",
 };
 for (const [id, d] of Object.entries(SET_ICON)) {
   const b = $(id), label = b.textContent, NS = "http://www.w3.org/2000/svg";
@@ -2634,7 +2635,8 @@ for (const [id, d] of Object.entries(SET_ICON)) {
   const p = document.createElementNS(NS, "path"); p.setAttribute("d", d); svg.appendChild(p);
   b.textContent = ""; b.append(svg, document.createTextNode(label));
 }
-NAV_ICON.globe = SET_ICON["inet-btn"]; NAV_ICON.net = SET_ICON["net-btn"];
+NAV_ICON.globe = SET_ICON["inet-btn"]; NAV_ICON.net = SET_ICON["net-btn"]; NAV_ICON.zone = SET_ICON["setfw-btn"];
+NAV_ICON.rules = "M3 4h10M3 8h10M3 12h6"; NAV_ICON.route = "M4 13V7a3 3 0 0 1 3-3h6M10.5 1.5 13 4l-2.5 2.5";
 const setov = { wifi: null, nets: null, dash: null };
 async function setovFetch() {
   const base = `/tenants/${tenantId}/sites/${siteId()}`, get = (u) => api("GET", base + u).catch(() => null);
@@ -2719,6 +2721,73 @@ async function loadSetInternet() {
   box.appendChild(el("p", __("Zatím jen přehled. Přiřazení portů, přepínání na záložní linku podle odezvy a měření rychlosti se odsud nastavovat nedá – brána se řídí tím, co má v konfiguraci."), "muted wl-note"));
 }
 
+// Nastavení → Firewall: zóny, matice a pravidla brány lokality (maketa 11). Jen čtení – úpravy zatím nejsou.
+const setfw = { fw: null, gw: null, sel: null };
+async function loadSetFirewall() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId();
+  await setovFetch();
+  const g = setov.dash && setov.dash.gateway;
+  let fw = null;
+  if (g) try { fw = (await api("GET", `/tenants/${tenantId}/devices/${g.id}`)).firewall || null; } catch (_e) { /* bez firewallu */ }
+  if (site !== siteId()) return;
+  setfw.gw = g || null; setfw.fw = fw; setfw.sel = null;
+  renderSetFirewall();
+}
+const FW_HITS = (n) => (n == null ? "–" : n.toLocaleString(LOCALE));
+function renderSetFirewall() {
+  const box = $("setfw-body"), fw = setfw.fw, g = setfw.gw; box.textContent = "";
+  if (!g) { box.appendChild(el("p", __("Bez spravované brány (zařízení s rolí Brána) není odkud firewall načíst."), "muted wl-note")); return; }
+  if (!fw) { box.appendChild(el("p", __`Brána ${g.name} zatím nemá firewall v inventuře – zkus to za pár minut.`, "muted wl-note")); return; }
+  const intro = el("p", null, "muted wl-note");
+  const dev = el("button", g.name, "ux-link"); dev.type = "button"; dev.addEventListener("click", () => openDetail(g.id));
+  intro.append(document.createTextNode(__("Firewall brány") + " "), dev, document.createTextNode(" · " + __`${fw.rules.length} pravidel, ${fw.zones.length} zón. Zóna = seznam rozhraní na bráně. Zatím jen čtení – úpravy pravidel odsud zatím nejdou.`));
+  box.appendChild(intro);
+  for (const n of fw.notes || []) box.appendChild(el("div", "▲ " + n, "dz-banner"));
+  setBlock(box, __("Zóny"), "zone", [__("Zóna"), __("Rozhraní")], fw.zones.map((z) => [z, (fw.members[z] || []).join(", ") || __("bez členů")]), [],
+    __("Brána nemá žádné seznamy rozhraní – matici nejde sestavit, pravidla jsou níže."));
+  if (fw.zones.length) {
+    const s = el("section", null, "so-block"), h = el("div", null, "so-h");
+    h.append(navIcon("zone"), el("b", __("Matice zón")), el("span", __("řádek = odkud, sloupec = kam · klik na buňku ukáže její pravidla"), "muted"));
+    s.appendChild(h);
+    const t = el("table", null, "fwz"), hr = el("tr"); hr.appendChild(el("th", ""));
+    for (const z of [...fw.zones, __("Brána")]) hr.appendChild(el("th", z));
+    const th = el("thead"); th.appendChild(hr); t.appendChild(th);
+    const tb = el("tbody");
+    for (const src of fw.zones) {
+      const tr = el("tr"); tr.appendChild(el("th", src));
+      for (const dst of [...fw.zones, null]) {
+        const c = dst ? fw.matrix[src][dst] : fw.router[src], key = src + "|" + (dst || "");
+        const b = el("button", null, "fwz-c fwz-" + c.decision + (setfw.sel === key ? " sel" : "")); b.type = "button";
+        b.append(document.createTextNode(c.decision === "allow" ? __("Povolit") : __("Blokovat")));
+        if (c.exceptions.length) b.appendChild(el("b", ` (${c.exceptions.length})`));
+        b.title = c.note || "";
+        b.addEventListener("click", () => { setfw.sel = setfw.sel === key ? null : key; renderSetFirewall(); });
+        const td = el("td"); td.appendChild(b); tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); s.appendChild(t);
+    const rt = fw.return_traffic || {};
+    s.appendChild(el("p", __`Odpovědi na navázaná spojení: ${rt.forward ? __("povolené") : __("pravidlo chybí")}. Neplatné pakety: ${fw.drop_invalid && fw.drop_invalid.forward ? __("zahazují se") : __("nezahazují se")}.`, "muted"));
+    box.appendChild(s);
+  }
+  // pravidla: vybraná buňka = její výjimky a rozhodující pravidlo, jinak všechna
+  let list = fw.rules, title = __`Všechna pravidla (${fw.rules.length})`;
+  if (setfw.sel && fw.zones.length) {
+    const [src, dst] = setfw.sel.split("|"), c = dst ? fw.matrix[src][dst] : fw.router[src];
+    const idx = new Set([...c.exceptions, ...(c.rule != null ? [c.rule] : [])]);
+    list = fw.rules.filter((r) => idx.has(r.index));
+    title = `${src} → ${dst || __("Brána")}: ` + (c.decision === "allow" ? __("povoleno") : __("blokováno")) + (c.note ? ` (${c.note})` : "");
+  }
+  const act = (r) => el("span", r.action, ["accept", "fasttrack-connection"].includes(r.action) ? "dz-ok-t" : ["drop", "reject", "tarpit"].includes(r.action) ? "dz-bad-t" : "");
+  setBlock(box, title, "rules", ["#", __("Řetězec"), __("Akce"), __("Podmínky"), __("Komentář"), __("Zásahů")],
+    list.map((r) => [r.index, r.chain, act(r), r.summary + (r.disabled ? " · " + __("vypnuté") : ""), r.comment || "–", FW_HITS(r.packets)]),
+    setfw.sel ? [[__("Zobrazit všechna pravidla"), () => { setfw.sel = null; renderSetFirewall(); }]] : [], __("Pro tuhle dvojici zón není žádné pravidlo – platí výchozí povolení."));
+  if (fw.nat && fw.nat.length) setBlock(box, __`Překlad adres (NAT, ${fw.nat.length})`, "route", ["#", __("Řetězec"), __("Akce"), __("Podmínky"), __("Komentář"), __("Zásahů")],
+    fw.nat.map((r) => [r.index, r.chain, r.action, r.summary, r.comment || "–", FW_HITS(r.packets)]), [], "");
+}
+
 // --- rychlé hledání v záhlaví (Ctrl+K): kde co je + zařízení ----------------------------------------------
 // [popisek, kde to je, klíčová slova, pohled, podzáložka]
 const GS_PLACES = [
@@ -2726,6 +2795,7 @@ const GS_PLACES = [
   [__("Topologie"), __("Mapa"), "topologie strom spoje topology links", "map", "topo"],
   ["STP", __("Mapa"), "stp rstp root smycka loop", "map", "stp"],
   [__("Přehled nastavení: Wi-Fi, sítě a internet na jedné stránce"), __("Nastavení"), "nastaveni prehled wifi site dhcp internet settings overview", "settings", "ov"],
+  [__("Firewall: zóny, matice a pravidla brány"), __("Nastavení"), "firewall zony matice pravidla nat filter zone policy", "settings", "fw"],
   [__("Internet: linky, dostupnost, porty brány"), __("Nastavení"), "internet wan linka zaloha poskytovatel isp brana porty", "settings", "inet"],
   [__("Přehled: internet, odezva, nejvytíženější AP a klienti"), __("Přehled"), "prehled internet wan odezva ztratovost dostupnost linka dashboard", "dash", null],
   [__("Seznam zařízení"), __("Zařízení"), "zarizeni adopce pridat switch ap devices adopt", "devices", "list"],

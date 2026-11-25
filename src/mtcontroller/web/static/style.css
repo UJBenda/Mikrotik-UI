@@ -1734,3 +1734,15 @@ button.dz-bar, .dz-watch { cursor: pointer; } button.dz-bar:hover .dz-name, .dz-
   .card.set { grid-template-columns: 1fr; } .set-menu { position: static; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
   .set-menu hr, .set-h { display: none; } .so-t { display: block; overflow-x: auto; }
 }
+
+/* nastavení → firewall: matice zón (maketa 11) */
+.so-h .muted { font-size: 12px; font-weight: 400; }
+.fwz { border-collapse: separate; border-spacing: 2px; width: 100%; table-layout: fixed; }
+.fwz th { height: 26px; padding: 0 8px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fwz tbody th { text-align: right; width: 110px; } .fwz thead th:first-child { width: 110px; } .fwz td { padding: 0; }
+.fwz-c { display: block; width: 100%; height: 26px; padding: 0 4px; border: 1px solid #b9e3c4; border-radius: 3px; background: #e6f6ea; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.fwz-c.fwz-block { border-color: #f3b9b9; background: #fde4e4; } .fwz-c b { color: var(--accent); font-weight: 600; }
+.fwz-c.sel { border: 2px solid var(--accent); } .fwz-c:hover { filter: brightness(.97); }
+.dz-ok-t { color: var(--ok); } .dz-bad-t { color: var(--bad); }
+#setfw-body .so-t td { white-space: normal; } #setfw-body .dz-banner { font-weight: 500; }
+#setfw-body > p .ux-link { display: inline; width: auto; padding: 0; } .so-links:empty { display: none; }

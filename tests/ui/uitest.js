@@ -459,6 +459,17 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const it = byId["inet-body"].textContent;
       if (byId["inet-wrap"].hidden || !byId["setov-wrap"].hidden || !it.includes("193.165.120.1") || !it.includes("118.0 GB") || !it.includes("záloha / neaktivní") || !it.includes("Porty brány gw-hala")) errors.push("nastavení: internet " + it.slice(0, 300));
     }
+    {
+      // nastavení → firewall: zóny, matice a pravidla brány; klik na buňku vyfiltruje pravidla
+      await byId["setfw-btn"].fire("click"); await tlTick(); await tlTick(); await tlTick();
+      const fb = byId["setfw-body"], all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      const cells = all(fb, (n) => n.tagName === "BUTTON" && n.className.startsWith("fwz-c"));
+      if (byId["setfw-wrap"].hidden || !fb.textContent.includes("Matice zón") || !fb.textContent.includes("Všechna pravidla (") || cells.length < 4) errors.push("nastavení: firewall " + cells.length + " " + fb.textContent.slice(0, 200));
+      else {
+        await cells[1].fire("click");
+        if (!byId["setfw-body"].textContent.includes("Zobrazit všechna pravidla") || byId["setfw-body"].textContent.includes("Všechna pravidla (")) errors.push("nastavení: firewall – pravidla buňky");
+      }
+    }
     await byId["net-btn"].fire("click"); await tlTick(); await tlTick();
     if (byId["net-wrap"].hidden || byId["net-rows"].children.length !== 3) errors.push("sítě: tabulka");
     if (!byId["net-rows"].textContent.includes("Relay → 192.168.30.10") || !byId["net-rows"].textContent.includes("1 / 100"))
