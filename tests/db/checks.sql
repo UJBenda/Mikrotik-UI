@@ -577,6 +577,28 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20h) měření internetu izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO wan_probe (tenant_id, site_id, device_id, target, loss, rtt_avg)
+SELECT d.tenant_id, d.site_id, d.id, '1.1.1.1', 0, 5 FROM device d
+WHERE d.tenant_id = '00000000-0000-0000-0000-0000000000b1' AND d.site_id IS NOT NULL LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM wan_probe) <> 0 THEN RAISE EXCEPTION 'FAIL: tenant A vidí měření internetu tenanta B'; END IF;
+  RAISE NOTICE 'OK 20h měření internetu izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname = 'wan_probe') THEN
+    RAISE EXCEPTION 'FAIL: wan_probe bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

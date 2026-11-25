@@ -2320,15 +2320,15 @@ function savePrefs() { try { localStorage.setItem("mtc-view", JSON.stringify(pre
 
 // lokalita: pět sekcí jako v UniFi; dole celý tenant (lokality, uživatelé, systém)
 // [klíč, popisek v ikonové liště, celý název (tooltip)]
-const VIEWS = [["dash", __("Přehled"), __("Přehled a topologie")], ["devices", __("Zařízení")], ["ports", __("Porty")], ["links", __("Spoje"), __("Bezdrátové spoje")], ["clients", __("Klienti")],
+const VIEWS = [["dash", __("Přehled"), __("Přehled lokality")], ["map", __("Mapa"), __("Mapa lokality")], ["devices", __("Zařízení")], ["ports", __("Porty")], ["links", __("Spoje"), __("Bezdrátové spoje")], ["clients", __("Klienti")],
   ["settings", __("Nastavení"), __("Nastavení lokality")], ["activity", __("Aktivita"), __("Aktivita a audit")],
   ["tenant", __("Lokality"), __("Všechny lokality")], ["users", __("Uživatelé")], ["backups", __("Zálohy")], ["system", __("Systém")]];
-const SITE_VIEWS = ["dash", "devices", "ports", "links", "clients", "settings", "activity"];
+const SITE_VIEWS = ["dash", "map", "devices", "ports", "links", "clients", "settings", "activity"];
 const navBadges = {};
 
 // ikony navigace (16 px, obrys)
 const NAV_ICON = {
-  dash: "M2 9l6-6 6 6M4 8v5h8V8", devices: "M2 4h12v5H2zM2 11h12M5 6.5h.01M8 6.5h.01", clients: "M3 3h10v7H3zM1.5 13h13",
+  dash: "M2 9l6-6 6 6M4 8v5h8V8", map: "M8 2.2a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2zM3.3 10.6a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2zM12.7 10.6a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2zM8 5.4v2.8M8 8.2 3.9 10.8M8 8.2l4.1 2.6", devices: "M2 4h12v5H2zM2 11h12M5 6.5h.01M8 6.5h.01", clients: "M3 3h10v7H3zM1.5 13h13",
   ports: "M2 4h12v8H2zM5 7v3M8 7v3M11 7v3",
   links: "M1.8 6.6a9 9 0 0 1 12.4 0M4.2 9.1a5.6 5.6 0 0 1 7.6 0M6.5 11.5a2.3 2.3 0 0 1 3 0M8 13.6h.01",
   settings: "M3 4h10M3 8h10M3 12h10M6 2.5v3M10 6.5v3M5 10.5v3", activity: "M1.5 8h3l2-5 3 10 2-5h3",
@@ -2381,8 +2381,9 @@ $("hdr-bell").addEventListener("click", () => openSub("activity", alertsOpen[0] 
 
 // podzáložky sekcí: [klíč, tlačítko, panel, loader]; loadery jsou definované níž (vyhodnotí se při volání)
 const SUBTABS = {
-  dash: [["infra", "infra-btn", "infra-wrap", () => loadInfra()], ["topo", "topo-btn", "topo-wrap", () => loadTopology()],
-         ["stp", "stp-btn", "stp-wrap", () => loadStp()]],
+  dash: [["dash", null, null, () => loadDash()]],
+  map: [["infra", "infra-btn", "infra-wrap", () => loadInfra()], ["topo", "topo-btn", "topo-wrap", () => loadTopology()],
+        ["stp", "stp-btn", "stp-wrap", () => loadStp()]],
   devices: [["list", "devlist-btn", "devlist-wrap", () => loadDevices()], ["sports", "sports-btn", "sports-wrap", () => loadSitePorts()],
             ["unm", "unm-btn", "unm-wrap", () => loadUnm()]],
   links: [["links", null, null, () => loadLinks()]],
@@ -2429,12 +2430,202 @@ function showView(key, load) {
   if (key === "backups" && load) loadBackups();
 }
 
+// --- Přehled lokality: souhrn brány a linky, provoz s odezvou a ztrátovostí, nej AP a klienti, co je pod dohledem ---
+const dash = { hours: 24, data: null, traffic: null, wan: null, layers: { traffic: true, rtt: true, loss: true } };
+const DASH_RANGES = [[1, __("1 h")], [24, __("24 h")], [168, __("7 dní")], [720, __("30 dní")]];
+async function loadDash() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId();
+  let d;
+  try { d = await api("GET", `/tenants/${tenantId}/sites/${site}/dash?hours=${dash.hours}`); } catch (e) { return msg(e.message, true); }
+  if (site !== siteId()) return;
+  dash.data = d; dash.traffic = null;
+  const g = d.gateway, w = g && (g.wans.find((x) => x.interface === dash.wan) || g.wans.find((x) => x.active) || g.wans[0]);
+  dash.wan = w ? w.interface : null;
+  renderDash();
+  if (!w) return;
+  try {
+    const t = await api("GET", `/tenants/${tenantId}/devices/${g.id}/traffic?hours=${dash.hours}&interface=${encodeURIComponent(w.interface)}`);
+    if (dash.data === d) { dash.traffic = t.points || []; renderDash(); }
+  } catch (_e) { /* graf zůstane bez provozu */ }
+}
+const DASH_ROLE_ICON = { gateway: "devices", switch: "ports", ap: "links", clients: "clients" };
+function dashSide(d) {
+  const side = $("dash-side"); side.textContent = "";
+  const g = d.gateway, c = d.counts || {};
+  const kv = (k, v, cls, sub) => { const r = el("div", null, "pm-kv dz-kv"); const val = el("span", v, cls || ""); if (sub) val.appendChild(el("small", sub, "muted")); r.append(el("span", k), val); side.appendChild(r); return val; };
+  if (!g) {
+    side.appendChild(el("p", __("V lokalitě není spravovaná brána (zařízení s rolí Brána). Souhrn linky, provoz internetu a měření odezvy proto nejsou k dispozici."), "muted wl-note"));
+  } else {
+    const down = g.wans.filter((w) => !w.active);
+    if (g.state === "offline") side.appendChild(el("div", "▲ " + __("Brána je offline"), "dz-banner bad"));
+    else if (g.wans.length > 1 && down.length) side.appendChild(el("div", "▲ " + __`Linka ${down[0].interface} není aktivní`, "dz-banner"));
+    const head = el("div", null, "dz-gw"), nm = el("button", g.name, "ux-link"); nm.type = "button";
+    nm.addEventListener("click", () => openDetail(g.id));
+    head.append(nm, el("span", g.model || "", "muted"));
+    side.appendChild(head);
+  }
+  const cnt = el("div", null, "dz-counts");
+  for (const [key, n, title] of [["gateway", c.gateway, __("brány")], ["switch", c.switch, __("switche")], ["ap", c.ap, "AP"], ["links", c.links, __("bezdrátové spoje")], ["clients", c.clients, __("klienti online")]]) {
+    if (!n && key !== "clients") continue;
+    const s = el("span", null, "dz-cnt"); s.title = title; s.append(navIcon(DASH_ROLE_ICON[key] || key), el("b", String(n || 0))); cnt.appendChild(s);
+  }
+  side.appendChild(cnt);
+  if (g) {
+    kv(__("IP brány"), g.ip || "–");
+    kv(__("Běží"), g.uptime || "–");
+    kv("RouterOS", (g.version || "–").split(" ")[0]);
+    if (c.offline) kv(__("Zařízení offline"), String(c.offline), "dz-bad");
+    if (g.wans.length > 1) {
+      const seg = el("div", null, "seg dz-wans");
+      for (const w of g.wans) {
+        const b = el("button", null, w.interface === dash.wan ? "active" : ""); b.type = "button";
+        b.append(el("span", "", "dz-dot " + (w.active ? "ok" : "bad")), document.createTextNode(w.interface));
+        b.addEventListener("click", () => { dash.wan = w.interface; loadDash(); });
+        seg.appendChild(b);
+      }
+      side.appendChild(seg);
+    }
+    const w = g.wans.find((x) => x.interface === dash.wan);
+    if (w) {
+      kv(__("Linka"), w.interface + (w.comment ? " · " + w.comment : ""));
+      kv(__("Adresa"), w.address || "–");
+      kv(__("Brána poskytovatele"), w.gateway || "–");
+      if (d.probe.availability != null) kv(__`Dostupnost ${dashRangeLabel()}`, d.probe.availability.toLocaleString(LOCALE, { maximumFractionDigits: 2 }) + " %", d.probe.availability < 99 ? "dz-warn" : "dz-ok");
+      kv(__("Data za měsíc"), fmtBytes(w.month_bytes));
+      const last = (dash.traffic || []).slice(-1)[0];
+      if (last) { const r = kv(__("Provoz teď"), ""); r.append(el("span", "↓ " + fmtBps(last.rx), "dz-rx"), document.createTextNode(" "), el("span", "↑ " + fmtBps(last.tx), "dz-tx")); }
+    } else side.appendChild(el("p", __("Brána nemá v inventuře výchozí routu – linku k internetu se nepodařilo určit."), "muted wl-note"));
+    if (d.probe.targets.length) {
+      const row = el("div", null, "dz-targets");
+      for (const t of d.probe.targets) { const s = el("span", null, t.loss >= 100 ? "bad" : ""); s.append(el("small", t.target, "muted"), el("b", t.loss >= 100 ? __("neodpovídá") : wlN(t.rtt_avg, "ms", 0))); row.appendChild(s); }
+      side.appendChild(row);
+    } else side.appendChild(el("p", __("Odezva internetu se začne měřit do 5 minut (brána pinguje 1.1.1.1 a 8.8.8.8)."), "muted wl-note"));
+  }
+  const th = el("div", null, "dz-todo-h"), all = el("button", __("Vše"), "ux-link"); all.type = "button";
+  all.addEventListener("click", () => openSub("activity", "alerts"));
+  th.append(el("b", __`K řešení (${d.todo_total})`), all);
+  side.appendChild(th);
+  if (!d.todo.length) side.appendChild(el("p", __("Žádné otevřené upozornění."), "muted"));
+  for (const t of d.todo) {
+    const b = el("button", null, "dz-todo"); b.type = "button";
+    const txt = el("span"); txt.append(el("span", `${t.device}: ${t.message}`), el("small", fmtTime(t.opened_at), "muted"));
+    b.append(el("i", "", "dz-dot " + (t.severity === "critical" ? "bad" : "warn")), txt);
+    b.addEventListener("click", () => openDetail(t.device_id));
+    side.appendChild(b);
+  }
+}
+const dashRangeLabel = () => (DASH_RANGES.find(([h]) => h === dash.hours) || [0, ""])[1];
+// graf: provoz linky (Mb/s vpravo), odezva (ms vlevo), ztrátovost (sloupce, 100 % = celá výška), dole pruh dostupnosti
+function dashChart(d) {
+  const box = $("dash-chart"); box.textContent = "";
+  const W = Math.max(520, Math.floor(box.clientWidth || 900)), H = 300, L = 40, R = 56, T = 14, B = 34;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "dz-svg", role: "img", "aria-label": __("Provoz, odezva a ztrátovost internetu") });
+  const t1 = Date.now(), t0 = t1 - dash.hours * 3600e3, X = (t) => L + (W - L - R) * Math.max(0, Math.min(1, (t - t0) / (t1 - t0)));
+  const tr = (dash.traffic || []).map((p) => ({ t: new Date(p.t).getTime(), rx: p.rx || 0, tx: p.tx || 0 }));
+  const pr = (d.probe.points || []).map((p) => ({ t: new Date(p.at).getTime(), loss: p.loss, rtt: p.rtt }));
+  const nice = (v, steps) => steps.find((s) => s >= v) || steps[steps.length - 1];
+  const maxBps = nice(Math.max(1e5, ...tr.map((p) => Math.max(p.rx, p.tx))), [1e5, 2e5, 5e5, 1e6, 2e6, 5e6, 1e7, 2e7, 5e7, 1e8, 2e8, 5e8, 1e9, 2.5e9, 1e10]);
+  const maxMs = nice(Math.max(20, ...pr.map((p) => p.rtt || 0)), [10, 20, 40, 80, 160, 320, 640, 2000]);
+  const Y = (v, max) => T + (H - T - B) * (1 - Math.max(0, Math.min(1, v / max)));
+  for (let k = 0; k <= 4; k++) {
+    const y = T + (H - T - B) * k / 4;
+    svg.appendChild(svgEl("line", { x1: L, y1: y, x2: W - R, y2: y, class: k === 4 ? "ax" : "grid" }));
+    if (dash.layers.rtt && pr.length) svg.appendChild(svgEl("text", { x: L - 6, y: y + 4, class: "lab end" }, String(Math.round(maxMs * (4 - k) / 4))));
+    if (dash.layers.traffic) svg.appendChild(svgEl("text", { x: W - R + 6, y: y + 4, class: "lab" }, k === 4 ? "0" : fmtBps(maxBps * (4 - k) / 4).replace("b/s", "b")));
+  }
+  if (dash.layers.rtt && pr.length) svg.appendChild(svgEl("text", { x: L - 6, y: 9, class: "lab end" }, "ms"));
+  const path = (pts, f, max) => pts.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)} ${Y(f(p), max).toFixed(1)}`).join("");
+  if (dash.layers.loss) for (const p of pr) if (p.loss > 0) {
+    const h = (H - T - B) * Math.min(100, p.loss) / 100;
+    svg.appendChild(svgEl("rect", { x: X(p.t) - 1.5, y: H - B - h, width: 3, height: h, class: "loss" }));
+  }
+  if (dash.layers.traffic && tr.length > 1) {
+    svg.appendChild(svgEl("path", { d: path(tr, (p) => p.rx, maxBps) + `L${X(tr[tr.length - 1].t).toFixed(1)} ${H - B}L${X(tr[0].t).toFixed(1)} ${H - B}Z`, class: "rx-fill" }));
+    svg.appendChild(svgEl("path", { d: path(tr, (p) => p.rx, maxBps), class: "rx" }));
+    svg.appendChild(svgEl("path", { d: path(tr, (p) => p.tx, maxBps), class: "tx" }));
+  }
+  if (dash.layers.rtt && pr.length > 1) svg.appendChild(svgEl("path", { d: path(pr.filter((p) => p.rtt != null), (p) => p.rtt, maxMs), class: "rtt" }));
+  const n = dash.hours <= 1 ? 4 : 6;
+  for (let k = 0; k <= n; k++) {
+    const t = t0 + (t1 - t0) * k / n;
+    const lab = k === n ? __("teď") : new Date(t).toLocaleString(LOCALE, dash.hours > 48 ? { day: "numeric", month: "numeric" } : { hour: "2-digit", minute: "2-digit" });
+    svg.appendChild(svgEl("text", { x: X(t), y: H - B + 15, class: "lab " + (k === n ? "end" : k ? "mid" : "") }, lab));
+  }
+  if (pr.length) {
+    svg.appendChild(svgEl("rect", { x: X(pr[0].t), y: H - 7, width: Math.max(1, W - R - X(pr[0].t)), height: 4, rx: 2, class: "avail" }));
+    const bw = Math.max(3, (W - L - R) * (dash.hours <= 48 ? 300e3 : 3600e3) / (t1 - t0));
+    for (const p of pr) if (p.loss >= 100) svg.appendChild(svgEl("rect", { x: X(p.t) - bw / 2, y: H - 7, width: bw, height: 4, class: "avail-down" }));
+  }
+  if (!tr.length && !pr.length) svg.appendChild(svgEl("text", { x: W / 2, y: H / 2, class: "lab mid" }, d.gateway ? __("Zatím žádná data – první body přijdou do několika minut.") : __("Bez spravované brány není co kreslit.")));
+  box.appendChild(svg);
+}
+function dashBars(box, rows, cls) {
+  box.textContent = "";
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  for (const r of rows) {
+    const line = el(r.act ? "button" : "div", null, "dz-bar"); if (r.act) { line.type = "button"; line.addEventListener("click", r.act); }
+    const bar = el("span", null, "dz-track"), fill = el("i", "", cls || ""); fill.style.width = Math.max(2, Math.round(r.value / max * 100)) + "%"; bar.appendChild(fill);
+    const nm = el("span", r.name, "dz-name"); if (r.title) nm.title = r.title;
+    line.append(nm, bar, el("span", r.text, "dz-val muted"));
+    box.appendChild(line);
+  }
+}
+function renderDash() {
+  const d = dash.data; if (!d) return;
+  dashSide(d);
+  const rg = $("dash-range"); rg.textContent = "";
+  for (const [h, lab] of DASH_RANGES) { const b = el("button", lab, h === dash.hours ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { dash.hours = h; loadDash(); }); rg.appendChild(b); }
+  const ly = $("dash-layers"); ly.textContent = "";
+  for (const [k, lab, cls] of [["traffic", __("Provoz"), "rx"], ["rtt", __("Odezva"), "rtt"], ["loss", __("Ztrátovost"), "loss"]]) {
+    const l = el("label", null, "dz-check"), i = el("input"); i.type = "checkbox"; i.checked = dash.layers[k];
+    i.addEventListener("change", () => { dash.layers[k] = i.checked; dashChart(dash.data); });
+    l.append(i, el("i", "", "dz-key " + cls), el("span", lab)); ly.appendChild(l);
+  }
+  $("dash-chart-t").textContent = d.gateway && dash.wan ? __`Internet · ${d.gateway.name} ${dash.wan}` : __("Internet");
+  dashChart(d);
+  const empty = (box, t) => { box.textContent = ""; box.appendChild(el("p", t, "muted")); };
+  if (d.top_aps.length) dashBars($("dash-aps"), d.top_aps.map((a) => ({ name: a.name, value: a.bytes, text: `${fmtBytes(a.bytes)} · ${a.clients}`, title: __`${a.clients} klientů teď`, act: () => openDetail(a.device_id) })));
+  else empty($("dash-aps"), __("Žádné AP s provozem."));
+  if (d.top_clients.length) dashBars($("dash-clients"), d.top_clients.map((c) => ({ name: c.name, value: c.bytes, text: fmtBytes(c.bytes), title: `${c.device} · ${c.port}` })), "tx");
+  else empty($("dash-clients"), __("Zatím nic – počítají se drátoví klienti, kteří jsou na portu sami."));
+  const w = $("dash-watch"); w.textContent = "";
+  const row = (cls, name, val, act) => { const b = el("button", null, "dz-watch"); b.type = "button"; b.append(el("i", "", "dz-dot " + cls), el("span", name, "dz-name"), el("span", val, "muted")); b.addEventListener("click", act); w.appendChild(b); };
+  for (const p of d.ports) row(p.level === "crit" ? "bad" : "warn", `${p.device} · ${p.port}`, __`${p.errors_24h} chyb / 24 h`, () => openSub("ports", "ports"));
+  for (const l of d.links) row(l.state === "ok" ? "ok" : l.state === "unknown" ? "" : l.state === "degraded" ? "warn" : "bad", l.name + (wlForeign(l) ? " · " + __("hlídaný úsek") : ""), l.score != null ? `${l.score} / 100` : (WL_STATE[l.state] || [l.state])[0], () => openLink(l.id));
+  if (!d.ports.length && !d.links.length) w.appendChild(el("p", __("Žádný bezdrátový spoj ani port s chybami."), "muted"));
+  const au = $("dash-auth"), a = d.wifi_auth, tot = a.ok + a.fail; au.textContent = "";
+  if (!tot) au.appendChild(el("p", __("Žádné záznamy o připojování – zapni u AP sběr Wi-Fi událostí (syslog)."), "muted"));
+  else {
+    const pct = Math.round(a.ok / tot * 100), bar = el("div", null, "dz-auth"), ok = el("i", `${pct} %`, pct < 90 ? "warn" : "ok"); ok.style.width = Math.max(12, pct) + "%";
+    bar.appendChild(ok); au.append(bar, el("p", __`${a.ok} připojení, ${a.fail} neúspěšných ověření hesla`, "muted"));
+  }
+  const sg = $("dash-signal"); sg.textContent = "";
+  if (!d.signal.length) sg.appendChild(el("p", __("Teď není připojený žádný Wi-Fi klient."), "muted"));
+  else {
+    const sc = el("div", null, "dz-scale");
+    for (const s of d.signal) {
+      const m = el("button", null, "dz-mark " + (s.signal < -75 ? "bad" : s.signal < -67 ? "warn" : "ok")); m.type = "button";
+      m.style.left = Math.max(0, Math.min(100, (s.signal + 90) / 60 * 100)) + "%"; m.title = __`${s.name}: průměr ${s.signal} dBm, ${s.clients} klientů`;
+      m.appendChild(el("span", s.name)); m.addEventListener("click", () => openDetail(s.device_id));
+      sc.appendChild(m);
+    }
+    const ax = el("div", null, "dz-scale-ax"); for (const v of [-90, -80, -70, -60, -50, -40, -30]) ax.appendChild(el("span", String(v).replace("-", "−")));
+    sg.append(sc, ax);
+  }
+}
+if (typeof window !== "undefined" && window.addEventListener) {
+  let dashResize = null;
+  window.addEventListener("resize", () => { clearTimeout(dashResize); dashResize = setTimeout(() => { if (dash.data && prefs.view === "dash") dashChart(dash.data); }, 150); });
+}
+
 // --- rychlé hledání v záhlaví (Ctrl+K): kde co je + zařízení ----------------------------------------------
 // [popisek, kde to je, klíčová slova, pohled, podzáložka]
 const GS_PLACES = [
-  [__("Mapa lokality"), __("Přehled"), "mapa infrastruktura wan map overview", "dash", "infra"],
-  [__("Topologie"), __("Přehled"), "topologie strom spoje topology links", "dash", "topo"],
-  ["STP", __("Přehled"), "stp rstp root smycka loop", "dash", "stp"],
+  [__("Mapa lokality"), __("Mapa"), "mapa infrastruktura wan map overview", "map", "infra"],
+  [__("Topologie"), __("Mapa"), "topologie strom spoje topology links", "map", "topo"],
+  ["STP", __("Mapa"), "stp rstp root smycka loop", "map", "stp"],
+  [__("Přehled: internet, odezva, nejvytíženější AP a klienti"), __("Přehled"), "prehled internet wan odezva ztratovost dostupnost linka dashboard", "dash", null],
   [__("Seznam zařízení"), __("Zařízení"), "zarizeni adopce pridat switch ap devices adopt", "devices", "list"],
   [__("Porty všech switchů"), __("Zařízení"), "porty poe vlan ports", "devices", "sports"],
   [__("Porty: schéma, VLAN, provoz"), __("Porty"), "porty port poe vlan rychlost linka schema ports speed stats provoz", "ports", null],
@@ -4523,7 +4714,7 @@ async function wlWatch(aDevice, aIface, bDevice) {
   catch (e) { return msg(e.message, true); }
   msg(__("Úsek se hlídá – první měření přijde do 5 minut."));
   if (!$("unm-wrap").hidden) renderUnm();
-  loadWlMap().then(() => { if (infraData && prefs.view === "dash") renderInfra(); });
+  loadWlMap().then(() => { if (infraData && prefs.view === "map") renderInfra(); });
 }
 // nabídka „komu přes tenhle port pingat“: zařízení lokality kromě toho, kterému port patří
 function wlWatchMenu(ev, aDevice, aIface, only) {

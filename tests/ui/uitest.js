@@ -141,9 +141,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (/setAttribute\(\s*["']style["']/.test(src) || /[{,]\s*style:\s*[`"']/.test(src) || /style\s*=\s*["'`][^"'`]*:/.test(src.replace(/\.style\.[a-zA-Z]+ = /g, ""))) errors.push("app.js nastavuje atribut style – v produkci ho zablokuje CSP");
       if (/\sstyle="/.test(require("fs").readFileSync(process.argv[3], "utf8"))) errors.push("index.html obsahuje atribut style – zablokuje ho CSP");
     }
-    // levá navigace: 7 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
+    // levá navigace: 8 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
     const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");
-    if (navBtns.length !== 7 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    if (navBtns.length !== 8 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled lokality" || navBtns[1].textContent !== "Mapa") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
     // správa zákazníka je v nabídce v záhlaví (lokality, uživatelé, systém), zvonek nese počet k řešení, uživatel má vlastní nabídku
     {
       const items = byId["tmenu-list"].children.filter((b) => b.tagName === "BUTTON");
@@ -199,6 +199,20 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       byId["tl-q"].value = "ether2"; await byId["tl-q"].fire("input");
       if (byId["tl-list"].children.filter((x) => x.className.startsWith("tl-row")).length !== 3) errors.push("časová osa: hledání");
       byId["tl-q"].value = ""; await byId["tl-q"].fire("input");
+    }
+    // Přehled: souhrn brány a linky, graf internetu, nej AP a klienti, co je pod dohledem
+    {
+      await byId["nav-dash"].fire("click"); await tlTick(); await tlTick(); await tlTick();
+      const side = byId["dash-side"].textContent;
+      if (!side.includes("gw-hala") || !side.includes("193.165.120.202") || !side.includes("99,65 %") || !side.includes("118.0 GB") || !side.includes("neodpovídá") || !side.includes("K řešení (3)") || !side.includes("ap-hala: zařízení se neozývá")) errors.push("přehled: panel " + side.slice(250));
+      if (!side.includes("Linka lte1 není aktivní") || !side.includes("↓ 5.2 Mb/s")) errors.push("přehled: linka a provoz " + side.slice(0, 200));
+      const svg = byId["dash-chart"].children[0];
+      if (!svg || !svg.children.some((x) => x.attrs.class === "rx") || !svg.children.some((x) => x.attrs.class === "avail-down")) errors.push("přehled: graf");
+      if (!byId["dash-aps"].textContent.includes("ap-kancelar") || !byId["dash-clients"].textContent.includes("pc-martina") || !byId["dash-watch"].textContent.includes("sw-hala · ether4")) errors.push("přehled: karty");
+      if (!byId["dash-auth"].textContent.includes("97 %") || byId["dash-signal"].children.length !== 2) errors.push("přehled: Wi-Fi");
+      if (byId["dash-range"].children.length !== 4 || byId["dash-layers"].children.length !== 3) errors.push("přehled: ovládání grafu");
+      await byId["nav-map"].fire("click"); await tlTick();
+      if (byId["view-map"].hidden || !byId["view-dash"].hidden) errors.push("navigace: mapa je samostatná sekce");
     }
     // časová osa vedle mapy: značky událostí (shluknuté), souhrn
     {

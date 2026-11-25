@@ -1521,3 +1521,23 @@ Osu vedle mapy jde chytit kdekoli a táhnout (nebo točit kolečkem): modrá č�
 spojů z nejbližšího vzorku `wlink_sample` (do 20 minut zpět). `itlApply` to promítne do dat mapy (stav uzlů, barvy
 spojů), nad plátnem je pruh „Stav k …“ s návratem na teď. Topologii, klienty ani vytížení v čase neukládáme –
 přehrává se jen stav nad dnešní mapou. Dosah je rozsah osy (6 h / 24 h / 7 dní).
+
+## Přehled lokality a měření internetu
+
+Levý pruh má **Přehled** a **Mapu** zvlášť (Mapa = dřívější blok Infrastruktura se záložkami Mapa / Topologie / STP).
+
+Přehled (`dash.site_dash`, `GET …/sites/{id}/dash?hours=`) jen čte, co sbírají jiné moduly:
+
+- vlevo souhrn brány (zařízení s rolí `gateway`): počty zařízení, adresa, doba běhu, verze, linky k internetu
+  z `infra._wans` (výchozí routy / DHCP klient), data za měsíc z `interface_hourly`, otevřené alerty lokality;
+- graf: provoz WAN rozhraní (stávající `…/devices/{id}/traffic`), odezva a ztrátovost z `wan_probe`, dole pruh
+  dostupnosti;
+- nejvytíženější AP = součet bezdrátových rozhraní zařízení v `interface_hourly`; nejvytíženější klienti = porty,
+  na kterých je drátový klient sám (provoz portu = provoz klienta; u Wi-Fi klientů historii provozu nemáme);
+- pod dohledem: bezdrátové spoje a hlídané úseky (`wlink`) a porty s chybami (`porthealth.site_health`);
+- Wi-Fi: úspěšnost ověření z `wifi_event` (connected vs. auth_fail) a průměrný signál klientů podle AP.
+
+`wanprobe.py` (tabulka `wan_probe`, migrace 0036, krok workeru `wanprobe`): brána lokality každých 5 minut pingne
+1.1.1.1 a 8.8.8.8 (5 paketů přes REST `/ping`). Internet se bere jako dostupný, když odpoví aspoň jeden cíl;
+dostupnost = podíl takových měření. Lokalita bez spravované brány se neměří. Retence 30 dní. Rychlost linky
+(speed test), toky a aplikace (NetFlow) zatím nejsou.

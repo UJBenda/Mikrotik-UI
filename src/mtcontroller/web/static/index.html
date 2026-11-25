@@ -77,11 +77,35 @@
               <button id="ob-add" type="button" class="small primary">+ Přidat zařízení</button></li>
           </ol>
         </div>
-        <div id="overview" class="overview"></div>
-        <div id="ov-drill" class="card ov-drill" hidden></div>
+        <div class="card ux dash" id="dash-ux">
+          <h2 class="sr-only">Přehled lokality</h2>
+          <div id="dash-wrap" class="pane">
+            <div class="ux-side dz-side" id="dash-side"></div>
+            <div class="ux-main dz-main">
+              <div id="overview" class="overview"></div>
+              <div id="ov-drill" class="card ov-drill" hidden></div>
+              <section class="dz-card">
+                <div class="dz-head"><b id="dash-chart-t">Internet</b><span id="dash-layers" class="dz-layers"></span><div id="dash-range" class="seg"></div></div>
+                <div id="dash-chart" class="dz-chart"></div>
+              </section>
+              <div class="dz-row">
+                <section class="dz-card"><h3>Nejvytíženější AP</h3><div id="dash-aps"></div></section>
+                <section class="dz-card"><h3>Nejvytíženější klienti</h3><div id="dash-clients"></div></section>
+                <section class="dz-card"><h3>Spoje a porty pod dohledem</h3><div id="dash-watch"></div></section>
+              </div>
+              <div class="dz-row">
+                <section class="dz-card"><h3>Připojení k Wi-Fi <small class="muted">úspěšnost ověření</small></h3><div id="dash-auth"></div></section>
+                <section class="dz-card"><h3>Signál klientů podle AP <small class="muted">průměr v dBm</small></h3><div id="dash-signal"></div></section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="view-map" class="view" hidden>
         <div class="card">
           <div class="site-head">
-            <h2>Infrastruktura</h2>
+            <h2>Mapa lokality</h2>
             <div id="dash-tabs" class="seg">
               <button id="infra-btn" type="button">Mapa</button>
               <button id="topo-btn" type="button">Topologie</button>
