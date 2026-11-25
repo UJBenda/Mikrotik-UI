@@ -2591,7 +2591,7 @@ function renderDash() {
   else empty($("dash-clients"), __("Zatím nic – počítají se drátoví klienti, kteří jsou na portu sami."));
   const w = $("dash-watch"); w.textContent = "";
   const row = (cls, name, val, act) => { const b = el("button", null, "dz-watch"); b.type = "button"; b.append(el("i", "", "dz-dot " + cls), el("span", name, "dz-name"), el("span", val, "muted")); b.addEventListener("click", act); w.appendChild(b); };
-  for (const p of d.ports) row(p.level === "crit" ? "bad" : "warn", `${p.device} · ${p.port}`, __`${p.errors_24h} chyb / 24 h`, () => openSub("ports", "ports"));
+  for (const p of d.ports) row(p.level === "critical" ? "bad" : "warn", `${p.device} · ${p.port}`, __`${p.errors_24h} chyb / 24 h`, () => openSub("ports", "ports"));
   for (const l of d.links) row(l.state === "ok" ? "ok" : l.state === "unknown" ? "" : l.state === "degraded" ? "warn" : "bad", l.name + (wlForeign(l) ? " · " + __("hlídaný úsek") : ""), l.score != null ? `${l.score} / 100` : (WL_STATE[l.state] || [l.state])[0], () => openLink(l.id));
   if (!d.ports.length && !d.links.length) w.appendChild(el("p", __("Žádný bezdrátový spoj ani port s chybami."), "muted"));
   const au = $("dash-auth"), a = d.wifi_auth, tot = a.ok + a.fail; au.textContent = "";
@@ -4959,8 +4959,8 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 }
 
 // --- sekce Porty: schéma portů s připojenými zařízeními, filtry, přehled VLAN a provoz -------------------------
-const pm = { data: null, dev: "", f: {}, sel: null, chartFor: null };
-const pmOpt = () => (prefs.pm = prefs.pm || { diagram: true, conn: true, vlan: false, stats: false });
+const pm = { data: null, dev: "", f: {}, sel: null, chartFor: null, tl: null, tlFor: null, tlHours: 24 };
+const pmOpt = () => { prefs.pm = prefs.pm || { diagram: true, conn: true, vlan: false, stats: false }; if (prefs.pm.tl === undefined) prefs.pm.tl = true; return prefs.pm; };
 function pmSpeed(p) {
   if (p.disabled) return "off";
   if (!p.running) return "down";
@@ -5019,6 +5019,71 @@ async function loadPortMap() {
   renderPortMap();
 }
 
+// upozornění nad schématem: porty s chybami a porty, za kterými je spravované zařízení offline
+function pmBanners() {
+  const box = $("pm-banners"); box.textContent = "";
+  const off = new Set(devicesCache.filter((d) => d.state === "offline").map((d) => d.id));
+  const rows = [];
+  for (const { d, p } of pmItems()) {
+    const h = pmHealth(p);
+    if (h.level === "critical" || (h.level === "warning" && h.errors_24h)) rows.push([h.level === "critical" ? "bad" : "warn", d, p, __`${p.port}: ${h.errors_24h || 0} chyb za 24 h` + (h.top ? ` (${String(h.top).toUpperCase()})` : "")]);
+    if (p.peer && p.peer.device_id && off.has(p.peer.device_id)) rows.push(["bad", d, p, __`${p.port}: ${p.peer.device || p.peer.name || "?"} je offline`]);
+  }
+  for (const [cls, d, p, text] of rows.slice(0, 4)) {
+    const b = el("button", "▲ " + (pm.dev ? "" : d.device + " · ") + text, "pm-chip " + cls); b.type = "button";
+    b.addEventListener("click", () => { pm.sel = pmKey(d, p); renderPortMap(); });
+    box.appendChild(b);
+  }
+  if (rows.length > 4) box.appendChild(el("span", __`a dalších ${rows.length - 4}`, "muted"));
+}
+// časová osa vedle portů: události vybraného zařízení (porty, alerty, změny), shluknuté jako u mapy
+const PM_TL_H = 620;
+function pmTimeline(o) {
+  const box = $("pm-tl"), on = !!(o.tl && pm.dev);
+  box.hidden = !on;
+  if (!on) return;
+  const key = pm.dev + "|" + pm.tlHours;
+  if (pm.tlFor !== key) {
+    pm.tlFor = key; pm.tl = null;
+    api("GET", `/tenants/${tenantId}/sites/${siteId()}/timeline?hours=${pm.tlHours}&cats=alert,port,change&device=${pm.dev}`)
+      .then((d) => { if (pm.tlFor === key) { pm.tl = d; pmTimeline(pmOpt()); } }).catch(() => { /* osa zůstane prázdná */ });
+  }
+  segmented($("pm-tl-range"), [[6, __("6 h")], [24, __("24 h")], [168, __("7 d")]], pm.tlHours, (h) => { pm.tlHours = h; pmTimeline(pmOpt()); });
+  const ax = $("pm-tl-axis"); while (ax.children.length > 2) ax.removeChild(ax.children[ax.children.length - 1]);
+  ax.style.height = PM_TL_H + "px"; $("pm-tl-pop").hidden = true;
+  const d = pm.tl; $("pm-tl-sum").textContent = d ? __`${d.events.length} událostí` : "";
+  if (!d) return;
+  const t1 = new Date(d.until).getTime(), span = t1 - new Date(d.since).getTime();
+  const y = (t) => Math.round((t1 - t) / span * (PM_TL_H - 30)) + 24;
+  for (let i = 1; i <= 8; i++) {
+    const t = t1 - span * i / 8, lab = el("div", null, "itl-tick"); lab.style.top = y(t) + "px";
+    lab.textContent = new Date(t).toLocaleString(LOCALE, pm.tlHours > 24 ? { weekday: "short", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
+    ax.appendChild(lab);
+  }
+  const groups = new Map(), rank = { critical: 3, warning: 2, ok: 1, info: 0 };
+  for (const e of d.events) { const k = Math.round(y(new Date(e.at).getTime()) / 14); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+  const hm = (e) => new Date(e.at).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+  for (const [k, evs] of groups) {
+    const sev = evs.reduce((a, e) => (rank[e.sev] > rank[a] ? e.sev : a), "info");
+    const b = el("button", evs.length > 1 ? String(evs.length) : "", "itl-ev tl-s-" + sev); b.type = "button";
+    b.style.top = (k * 14 - 9) + "px"; b.title = evs.slice(0, 6).map((e) => `${hm(e)} ${tlText(e)}`).join("\n"); b.setAttribute("aria-label", b.title);
+    b.addEventListener("click", () => {
+      const pop = $("pm-tl-pop"); pop.textContent = ""; pop.hidden = false; pop.style.top = Math.min(PM_TL_H - 120, k * 14 + 60) + "px";
+      for (const e of evs.slice(0, 8)) { const row = el("div", null, "itl-row tl-s-" + e.sev); row.append(el("time", hm(e)), el("span", tlText(e))); pop.appendChild(row); }
+      if (evs.length > 8) pop.appendChild(el("div", __`a dalších ${evs.length - 8}`, "muted"));
+      const port = (evs.find((e) => e.port) || {}).port;                 // událost portu ho rovnou vybere ve schématu
+      if (port) { pm.sel = pm.dev + "|" + port; renderPortMapKeepPop(); }
+    });
+    ax.appendChild(b);
+  }
+}
+// překreslí porty, ale nechá otevřený výpis událostí z osy
+function renderPortMapKeepPop() {
+  const pop = $("pm-tl-pop"), keep = [...pop.children], top = pop.style.top;
+  renderPortMap();
+  pop.textContent = ""; for (const c of keep) pop.appendChild(c); pop.hidden = false; pop.style.top = top;
+}
+
 function pmItems() {
   const out = [];
   for (const d of (pm.data && pm.data.devices) || []) if (!pm.dev || d.device_id === pm.dev) for (const p of d.ports) out.push({ d, p });
@@ -5051,7 +5116,9 @@ function renderPortMap() {
   const all = el("option", __("Všechny porty")); all.value = ""; sel.appendChild(all);
   for (const d of data.devices) if (d.ports.length) { const op = el("option", d.device + (d.online ? "" : __(" (offline)"))); op.value = d.device_id; sel.appendChild(op); }
   sel.value = pm.dev;
-  for (const k of ["diagram", "conn", "vlan", "stats"]) $("pm-o-" + k).checked = !!o[k];
+  for (const k of ["tl", "diagram", "conn", "vlan", "stats"]) $("pm-o-" + k).checked = !!o[k];
+  pmTimeline(o);
+  pmBanners();
   const cur = data.devices.find((d) => d.device_id === pm.dev);
   const info = $("pm-info"); info.textContent = "";
   if (cur) {
@@ -5245,7 +5312,7 @@ async function pmStats(cur) {
 }
 
 $("pm-dev").addEventListener("change", () => { pm.dev = $("pm-dev").value; pm.sel = null; pm.chartFor = null; renderPortMap(); });
-for (const k of ["diagram", "conn", "vlan", "stats"]) $("pm-o-" + k).addEventListener("change", () => { pmOpt()[k] = $("pm-o-" + k).checked; savePrefs(); pm.chartFor = null; renderPortMap(); });
+for (const k of ["tl", "diagram", "conn", "vlan", "stats"]) $("pm-o-" + k).addEventListener("change", () => { pmOpt()[k] = $("pm-o-" + k).checked; savePrefs(); pm.chartFor = null; renderPortMap(); });
 $("pm-clear").addEventListener("click", () => { pm.f = {}; pm.sel = null; renderPortMap(); });
 
 // --- skrývací levý panel filtrů (rozvržení .ux): úchyt na hraně panelu, volba se pamatuje pro každou sekci ----
@@ -5540,6 +5607,61 @@ $("infra-clients").addEventListener("change", () => {
 try { $("infra-clients").checked = localStorage.getItem("mtc.infraClients") === "1"; } catch (_e) { /* jen pohodlí */ }
 const INFRA_CLIENTS_MAX = 10;  // na zařízení; zbytek jako „+N dalších“
 
+// Mapa má dva pohledy na stejný strom: Infrastruktura (jen zařízení, vlevo karty s porty) a Topologie
+// (i s klienty, vlevo filtry). Filtry klientů: typ zaškrtnutý = zobrazený; u sítí a Wi-Fi nic zaškrtnuto = vše.
+const mapf = { mode: "infra", wired: true, wifi: true, vlans: new Set(), ssids: new Set(), states: new Set(), labels: { port: true, signal: true } };
+try { if (localStorage.getItem("mtc.mapMode") === "topo") mapf.mode = "topo"; } catch (_e) { /* jen pohodlí */ }
+const mapTopo = () => mapf.mode === "topo";
+const mapClientsOn = () => mapTopo() || $("infra-clients").checked;
+const mapVlan = (c) => (c.vlan ? String(c.vlan) : "");
+function mapClientOk(c) {
+  if (!mapTopo()) return true;
+  if (c.ssid ? !mapf.wifi : !mapf.wired) return false;
+  if (mapf.vlans.size && !mapf.vlans.has(mapVlan(c))) return false;
+  if (mapf.ssids.size && !(c.ssid && mapf.ssids.has(c.ssid))) return false;
+  return true;
+}
+const mapDevDim = (n) => mapTopo() && mapf.states.size === 1 && !mapf.states.has(n.state === "offline" ? "offline" : "online");
+function mapSetMode(mode) {
+  mapf.mode = mode;
+  try { localStorage.setItem("mtc.mapMode", mode); } catch (_e) { /* jen pohodlí */ }
+  if (infraData) renderInfra(); else renderMapSide();
+}
+function renderMapSide() {
+  segmented($("map-mode"), [["topo", __("Topologie")], ["infra", __("Infrastruktura")]], mapf.mode, mapSetMode);
+  $("map-mode").className = "seg map-mode";
+  const topo = mapTopo(), box = $("map-filters");
+  $("infra-clients-row").hidden = topo; $("infra-list").hidden = topo; box.hidden = !topo;
+  box.textContent = "";
+  if (!topo || !infraData) return;
+  const devs = infraData.nodes.filter((n) => n.kind !== "hub"), cls = infraData.nodes.flatMap((n) => n.clients || []);
+  const count = (arr, f) => { const m = new Map(); for (const x of arr) { const k = f(x); if (k != null) m.set(k, (m.get(k) || 0) + 1); } return [...m.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true })); };
+  const group = (title, rows) => {
+    if (!rows.length) return;
+    const f = el("div", null, "facet"); f.appendChild(el("div", title, "facet-h"));
+    for (const [label, n, on, toggle] of rows) {
+      const l = el("label", null, "facet-row"), i = el("input"); i.type = "checkbox"; i.checked = on;
+      i.addEventListener("change", () => { toggle(i.checked); renderInfra(); });
+      l.append(i, el("span", n == null ? label : `${label} (${n})`)); f.appendChild(l);
+    }
+    box.appendChild(f);
+  };
+  const setOf = (set, k) => (on) => { if (on) set.add(k); else set.delete(k); };
+  group(__("Stav zařízení"), [[__("Online"), devs.filter((n) => n.state !== "offline").length, mapf.states.has("online"), setOf(mapf.states, "online")],
+                               [__("Offline"), devs.filter((n) => n.state === "offline").length, mapf.states.has("offline"), setOf(mapf.states, "offline")]]);
+  group(__("Klienti"), [[__("Drátoví"), cls.filter((c) => !c.ssid).length, mapf.wired, (on) => { mapf.wired = on; }],
+                         ["Wi-Fi", cls.filter((c) => c.ssid).length, mapf.wifi, (on) => { mapf.wifi = on; }]]);
+  group(__("Sítě (VLAN)"), count(cls, mapVlan).map(([v, n]) => [v ? `VLAN ${v}` : __("bez VLAN"), n, mapf.vlans.has(v), setOf(mapf.vlans, v)]));
+  group(__("Wi-Fi sítě"), count(cls, (c) => c.ssid || null).map(([v, n]) => [v, n, mapf.ssids.has(v), setOf(mapf.ssids, v)]));
+  group(__("Popisky"), [[__("Port u klienta"), null, mapf.labels.port, (on) => { mapf.labels.port = on; }],
+                         [__("Signál a síť u Wi-Fi klientů"), null, mapf.labels.signal, (on) => { mapf.labels.signal = on; }]]);
+  if (mapf.vlans.size || mapf.ssids.size || mapf.states.size || !mapf.wired || !mapf.wifi) {
+    const clr = el("button", __("Zrušit filtry"), "ux-link"); clr.type = "button";
+    clr.addEventListener("click", () => { mapf.vlans.clear(); mapf.ssids.clear(); mapf.states.clear(); mapf.wired = mapf.wifi = true; renderInfra(); });
+    box.appendChild(clr);
+  }
+}
+
 function miniPorts(ports) {
   const strip = el("div", null, "strip");
   const rows = ports.length > 8 ? 2 : 1;
@@ -5620,13 +5742,15 @@ function drawInfra() {
                             level: byId[e.parent].level + 1, parent: e.parent });
     });
   }
-  if ($("infra-clients").checked) {
+  renderMapSide();
+  if (mapClientsOn()) {
     // klienti jako listy pod svým zařízením (port / SSID na spoji), nejvýš INFRA_CLIENTS_MAX na zařízení
+    const cap = mapTopo() ? INFRA_CLIENTS_MAX * 3 : INFRA_CLIENTS_MAX;
     for (const n of d.nodes) {
-      const cl = n.clients || [];
-      cl.slice(0, INFRA_CLIENTS_MAX).forEach((c, k) => kids[n.id].push({ id: `cl-${n.id}-${k}`, client: c, parent_port: c.port,
+      const cl = (n.clients || []).filter(mapClientOk);
+      cl.slice(0, cap).forEach((c, k) => kids[n.id].push({ id: `cl-${n.id}-${k}`, client: c, parent_port: c.port,
         level: n.level + 1, parent: n.id }));
-      if (cl.length > INFRA_CLIENTS_MAX) kids[n.id].push({ id: `clm-${n.id}`, more: cl.length - INFRA_CLIENTS_MAX, dev: n,
+      if (cl.length > cap) kids[n.id].push({ id: `clm-${n.id}`, more: cl.length - cap, dev: n,
         level: n.level + 1, parent: n.id });
     }
   }
@@ -5706,7 +5830,7 @@ function drawInfra() {
         nodes.appendChild(svgEl("text", { x: (bx + cx(c)) / 2, y: (by + 14 + y(c) - 40) / 2 + 4, class: "wl-mark s-" + wlk.state }, mark));
       }
       const fromHub = n.kind === "hub";
-      if (!c.more && !fromHub) nodes.appendChild(badge(bx, by, (wlk && !wlForeign(wlk)) || (c.client && c.client.ssid) ? "≋" : num(c.parent_port), "down"));
+      if (!c.more && !fromHub && !(c.client && mapTopo() && !mapf.labels.port)) nodes.appendChild(badge(bx, by, (wlk && !wlForeign(wlk)) || (c.client && c.client.ssid) ? "≋" : num(c.parent_port), "down"));
       if (!leaf(c) && c.kind !== "hub") nodes.appendChild(badge(cx(c), y(c) - 26, wlk && !wlForeign(wlk) ? "≋" : c.uplink_port ? num(c.uplink_port) : "?", "up"));
     });
     if (n.client) {
@@ -5724,7 +5848,9 @@ function drawInfra() {
           c.icon && CLIENT_ICONS[c.icon] ? CLIENT_ICONS[c.icon] : vendorInitials(c.vendor)));
       }
       pill.appendChild(svgEl("text", { x: x - EW / 2 + 44, y: top + 20, class: "t1 l" }, shortName(clientName(c), 14)));
-      pill.appendChild(svgEl("text", { x: x - EW / 2 + 44, y: top + 36, class: "t2 l mono" }, c.mac));
+      const sig = mapTopo() && mapf.labels.signal && c.ssid ? parseInt(c.signal, 10) : NaN;
+      if (Number.isNaN(sig)) pill.appendChild(svgEl("text", { x: x - EW / 2 + 44, y: top + 36, class: "t2 l mono" }, c.mac));
+      else pill.appendChild(svgEl("text", { x: x - EW / 2 + 44, y: top + 36, class: "t2 l sig-" + (sig < -75 ? "bad" : sig < -67 ? "warn" : "ok") }, shortName(`${sig} dBm · ${c.ssid}`, 20)));
       pill.addEventListener("click", () => openClient(c));
       nodes.appendChild(pill);
       continue;
@@ -5764,7 +5890,7 @@ function drawInfra() {
       nodes.appendChild(hub);
       continue;
     }
-    const card = g("node" + (n.state === "offline" ? " offline" : ""));
+    const card = g("node" + (n.state === "offline" ? " offline" : "") + (mapDevDim(n) ? " dim" : ""));
     if (n.id) card.setAttribute("data-dev", n.id);
     card.appendChild(svgEl("title", {}, [n.label, n.model, n.version, n.stp_root ? __`STP root, priorita ${n.stp_priority ?? "?"}` : "",
                                          n.poe_w ? `PoE ${n.poe_w} W` : ""].filter(Boolean).join("\n")));

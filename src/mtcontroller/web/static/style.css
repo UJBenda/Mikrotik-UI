@@ -1702,3 +1702,23 @@ button.dz-bar, .dz-watch { cursor: pointer; } button.dz-bar:hover .dz-name, .dz-
 .dz-scale-ax { display: flex; justify-content: space-between; padding: 0 4px; font-size: 10px; color: var(--muted); }
 @media (max-width: 900px) { .dash .dz-main { padding-left: 0; } }
 .dz-todo-h .ux-link { margin-left: auto; width: auto; }
+
+/* mapa: přepínač Topologie / Infrastruktura a filtry klientů (maketa 7) */
+.map-mode { display: flex; margin-bottom: 6px; } .map-mode button { flex: 1; white-space: nowrap; }
+.map-filters { display: flex; flex-direction: column; gap: 2px; }
+.map-filters .facet { padding: 6px 0 4px; border-top: 1px solid var(--line); }
+.map-filters .facet-h { font-size: 12px; font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--text); height: 24px; display: flex; align-items: center; margin: 0; }
+.map-filters .facet-row { display: flex; align-items: center; gap: 8px; min-height: 26px; font-size: 13px; cursor: pointer; }
+.map-filters .facet-row input { margin: 0; }
+#infra-svg .node.dim { opacity: .35; }
+#infra-svg .t2.sig-ok { fill: var(--ok); } #infra-svg .t2.sig-warn { fill: var(--warn); } #infra-svg .t2.sig-bad { fill: var(--bad); }
+
+/* porty: časová osa vedle schématu a upozornění nad ním (maketa 8) */
+.ux .ux-main.pm-cols { display: flex; align-items: flex-start; gap: 0; padding-left: 0; }
+.pm-content { flex: 1; min-width: 0; padding-left: 12px; overflow-x: auto; }
+.pm-tl { flex: none; width: 150px; align-self: stretch; border: 0; border-right: 1px solid var(--line); border-radius: 0; min-height: calc(100vh - 60px); position: relative; }
+.pm-tl[hidden] { display: none; } .pm-tl .itl-now { position: absolute; cursor: default; } .pm-tl-axis { cursor: default; }
+.pm-banners { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 0 2px; } .pm-banners:empty { display: none; }
+.pm-chip { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: #fff4dc; color: #8a5a00; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.pm-chip.bad { background: #fde8e8; color: var(--bad); } .pm-chip:hover { filter: brightness(.96); }
+@media (max-width: 900px) { .pm-tl { display: none; } .pm-content { padding-left: 12px; } }

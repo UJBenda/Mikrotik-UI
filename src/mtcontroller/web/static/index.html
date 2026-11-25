@@ -108,16 +108,18 @@
             <h2>Mapa lokality</h2>
             <div id="dash-tabs" class="seg">
               <button id="infra-btn" type="button">Mapa</button>
-              <button id="topo-btn" type="button">Topologie</button>
+              <button id="topo-btn" type="button">Linky</button>
               <button id="stp-btn" type="button">STP</button>
             </div>
           </div>
       <div id="infra-wrap" class="pane" hidden>
         <div class="infra">
           <div id="infra-side" class="infra-side">
+            <div id="map-mode" class="seg map-mode"></div>
             <label class="ux-switch"><span>Časová osa</span><input type="checkbox" id="infra-tl-on" checked><i></i></label>
-            <label class="ux-switch"><span>Klienti v mapě</span><input type="checkbox" id="infra-clients"><i></i></label>
+            <label class="ux-switch" id="infra-clients-row"><span>Klienti v mapě</span><input type="checkbox" id="infra-clients"><i></i></label>
             <label class="ux-switch" title="Nespravovaní sousedé z LLDP/MNDP"><span>Další zařízení</span><input type="checkbox" id="infra-ext"><i></i></label>
+            <div id="map-filters" class="map-filters" hidden></div>
             <div id="infra-list" class="infra-list"></div>
             <div class="infra-links"><button id="infra-fit" type="button" class="ux-link">Vejít do okna</button></div>
           </div>
@@ -240,6 +242,7 @@
           <div id="pm-wrap" class="pane">
             <div class="ux-side">
               <div id="pm-info" class="pm-info"></div>
+              <label class="ux-switch"><span>Časová osa</span><input type="checkbox" id="pm-o-tl"><i aria-hidden="true"></i></label>
               <label class="ux-switch"><span>Schéma portů</span><input type="checkbox" id="pm-o-diagram"><i aria-hidden="true"></i></label>
               <label class="ux-switch"><span>Připojená zařízení</span><input type="checkbox" id="pm-o-conn"><i aria-hidden="true"></i></label>
               <label class="ux-switch"><span>VLAN</span><input type="checkbox" id="pm-o-vlan"><i aria-hidden="true"></i></label>
@@ -247,7 +250,14 @@
               <div id="pm-facets" class="dev-facets" aria-label="Filtry portů"></div>
               <div class="ux-links"><button id="pm-clear" type="button" class="ux-link">Zrušit filtry</button></div>
             </div>
-            <div class="ux-main">
+            <div class="ux-main pm-cols">
+              <div id="pm-tl" class="infra-tl pm-tl" hidden aria-label="Časová osa událostí na portech">
+                <div class="itl-head"><span id="pm-tl-sum" class="muted"></span><div id="pm-tl-range" class="seg"></div></div>
+                <div id="pm-tl-axis" class="itl-axis pm-tl-axis"><div class="itl-bar"></div><div class="itl-now">TEĎ</div></div>
+                <div id="pm-tl-pop" class="itl-pop" hidden></div>
+              </div>
+              <div class="pm-content">
+              <div id="pm-banners" class="pm-banners"></div>
               <div id="pm-diagram" class="pm-diagram"></div>
               <div id="pm-legend" class="pm-legend"></div>
               <div id="pm-port" class="pm-port" hidden></div>
@@ -256,6 +266,7 @@
               <table class="pm-t" id="pm-table"><thead><tr><th>Port</th><th>Zařízení</th><th>Název</th><th>STP</th><th>Připojeno</th><th>PoE</th><th>Rychlost</th><th>Chyby 24 h</th>
                 <th>MAC</th><th>IP adresa</th><th>Profil</th><th>Nativní VLAN</th><th>Tagované</th></tr></thead><tbody id="pm-body"></tbody></table>
               <div id="pm-count" class="ux-count muted"></div>
+              </div>
             </div>
           </div>
         </div>

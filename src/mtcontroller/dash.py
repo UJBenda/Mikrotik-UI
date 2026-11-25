@@ -76,10 +76,10 @@ def site_dash(tx: Tx, site_id: Any, hours: int = 24) -> dict:
              for ln in wlink.site_links(tx, site_id)]
     ports = [{"device_id": did, "device": names.get(did, "?"), "port": port, "level": h["level"], "why": h["why"],
               "top": h["top"], "errors_24h": h["errors_24h"]}
-             for (did, port), h in porthealth.site_health(tx, site_id).items() if h["level"] in ("warn", "crit")]
+             for (did, port), h in porthealth.site_health(tx, site_id).items() if h["level"] in ("warning", "critical")]
     order = {"down": 0, "bad": 1, "degraded": 2, "unknown": 3, "ok": 4}
     links.sort(key=lambda x: (order.get(x["state"], 3), x["name"]))
-    ports.sort(key=lambda x: (x["level"] != "crit", x["device"], x["port"]))
+    ports.sort(key=lambda x: (x["level"] != "critical", x["device"], x["port"]))
 
     wf = tx.fetchone(
         """SELECT count(*) FILTER (WHERE kind = 'connected') AS ok, count(*) FILTER (WHERE kind = 'auth_fail') AS fail

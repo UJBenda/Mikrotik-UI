@@ -1541,3 +1541,14 @@ Přehled (`dash.site_dash`, `GET …/sites/{id}/dash?hours=`) jen čte, co sbír
 1.1.1.1 a 8.8.8.8 (5 paketů přes REST `/ping`). Internet se bere jako dostupný, když odpoví aspoň jeden cíl;
 dostupnost = podíl takových měření. Lokalita bez spravované brány se neměří. Retence 30 dní. Rychlost linky
 (speed test), toky a aplikace (NetFlow) zatím nejsou.
+
+### Mapa: Topologie a Infrastruktura, porty s časovou osou
+
+- Mapa má vlevo přepínač **Topologie / Infrastruktura** (`mapf.mode`, `localStorage mtc.mapMode`). Infrastruktura =
+  jen zařízení, vlevo karty s porty. Topologie = stejný strom i s klienty a vlevo filtry (`renderMapSide`): stav
+  zařízení (jen zvýrazní – ostatní zprůhlední), klienti drátoví / Wi-Fi, VLAN, SSID a volba popisků (port u klienta,
+  signál a síť u Wi-Fi klientů). Filtruje se v prohlížeči nad daty `…/infra`. Pásmo 2,4 / 5 GHz u klienta
+  neukládáme, proto se Wi-Fi nedělí. Dřívější záložka Topologie (tabulka linek ze sousedů) se jmenuje Linky.
+- Porty: přepínač Časová osa ukáže vedle schématu události vybraného zařízení (`…/timeline?cats=alert,port,change
+  &device=`), klik na událost portu ho vybere ve schématu. Nad schématem jsou upozornění na porty s chybami a na
+  porty, za kterými je spravované zařízení offline.

@@ -213,6 +213,17 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["dash-range"].children.length !== 4 || byId["dash-layers"].children.length !== 3) errors.push("přehled: ovládání grafu");
       await byId["nav-map"].fire("click"); await tlTick();
       if (byId["view-map"].hidden || !byId["view-dash"].hidden) errors.push("navigace: mapa je samostatná sekce");
+      // mapa: pohled Topologie ukáže klienty a filtry místo karet zařízení
+      await byId["map-mode"].children[0].fire("click");
+      const mf = byId["map-filters"];
+      if (mf.hidden || !byId["infra-list"].hidden || !mf.textContent.includes("Drátoví (") || !mf.textContent.includes("Stav zařízení") || !mf.textContent.includes("Popisky")) errors.push("mapa: filtry topologie " + mf.textContent.slice(0, 200));
+      const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      const leafs = () => all(byId["infra-svg"], (n) => n.attrs && n.attrs.class === "client").length;
+      const before = leafs(), wired = all(mf, (n) => n.tagName === "INPUT")[2];
+      wired.checked = false; await wired.fire("change");
+      if (!before || leafs() >= before || !byId["map-filters"].textContent.includes("Zrušit filtry")) errors.push(`mapa: filtr drátových klientů ${before} → ${leafs()}`);
+      await byId["map-mode"].children[1].fire("click");
+      if (!byId["map-filters"].hidden || byId["infra-list"].hidden) errors.push("mapa: návrat na infrastrukturu");
     }
     // časová osa vedle mapy: značky událostí (shluknuté), souhrn
     {
@@ -371,6 +382,8 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const tilesOf = () => { const t = []; find(byId["pm-diagram"], (n) => { if (n.tagName === "BUTTON") t.push(n); return false; }); return t; };
       const tiles = tilesOf(), rows = byId["pm-body"].children;
       if (byId["view-ports"].hidden || tiles.length !== 3 || rows.length !== 3) errors.push(`porty: schéma ${tiles.length}, řádků ${rows.length}`);
+      // upozornění nad schématem (port s chybami) a časová osa jen u vybraného zařízení
+      if (!byId["pm-banners"].textContent.includes("ether3: 1310 chyb za 24 h") || !byId["pm-tl"].hidden) errors.push("porty: upozornění / osa " + byId["pm-banners"].textContent);
       else {
         if (!tiles[1].className.includes("s-1g") || !tiles[2].className.includes("s-100")) errors.push("porty: barva podle rychlosti " + tiles.map((t) => t.className));
         if (!rows[1].children[4].textContent.includes("AP-1") || !rows[1].children[4].textContent.includes("ether1")) errors.push("porty: protější port " + rows[1].children[4].textContent);
