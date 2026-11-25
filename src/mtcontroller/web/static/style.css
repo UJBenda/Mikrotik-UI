@@ -1613,3 +1613,33 @@ header { z-index: 45; }
 #bt-list td { vertical-align: top; padding-top: 8px; padding-bottom: 8px; }
 #bt-list td:nth-child(4) small { display: block; }
 #bt-list td:last-child { width: 300px; }
+
+/* mapa lokality podle makety 4: jeden rámec – panel zařízení, časová osa a plátno vedle sebe */
+.infra { --l: 290px; gap: 0; align-items: stretch; height: clamp(440px, calc(100vh - 252px), 1200px); margin-top: 8px;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+.infra-side { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-right: 1px solid var(--line); overflow-y: auto; min-width: 0; }
+.infra-side[hidden] { display: none; }
+.infra-side .infra-list { max-height: none; overflow: visible; gap: 0; margin-top: 8px; }
+.infra-side .infra-dev { border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 11px 0 12px; background: none; }
+.infra-side .infra-dev:hover { background: none; } .infra-side .infra-dev:hover .row1 b { color: var(--accent); }
+.infra-side .infra-dev.offline { border-left: 0; } .infra-side .infra-dev.offline .row1 b { color: var(--bad); }
+.infra-side .infra-dev .row1 b { font-weight: 600; }
+.infra-side .strip { display: flex; flex-wrap: wrap; gap: 3px; width: auto; margin: 7px 0 6px; padding: 7px 8px; background: var(--accent-weak);
+  border: 1px solid var(--line); border-radius: 6px; }
+.infra-side .strip .pp { flex: none; }
+.infra-links { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.infra .infra-tl { border: 0; border-right: 1px solid var(--line); border-radius: 0; min-height: 0; }
+.infra .infra-canvas.mapbox { border: 0; border-radius: 0; height: 100%; min-height: 0; background: var(--card); }
+.infra-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.infra-warn { display: flex; flex-direction: column; gap: 4px; padding: 0 16px; }
+.infra-warn .banner { margin: 10px 0 0; padding: 5px 12px; border-left: 0; border-radius: 6px; font-size: 13px; }
+.infra-warn .banner + .banner { margin-top: 0; }
+.infra .infra-canvas.mapbox { flex: 1; }
+.infra-canvas .map-ctl { right: auto; top: auto; left: 16px; bottom: 16px; box-shadow: 0 2px 6px rgba(20, 25, 40, .08); }
+.infra-canvas .map-hint { left: 64px; bottom: 16px; }
+@media (max-width: 900px) {
+  .infra, .infra.nolist, .infra.notl, .infra.nolist.notl { display: block; height: auto; }
+  .infra-side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 260px; }
+  .infra .infra-tl { display: none; }
+  .infra .infra-canvas.mapbox { height: 70vh; flex: none; }
+}

@@ -5100,18 +5100,19 @@ function mapControl(box, svg) {
   };
 }
 const infraMap = mapControl($("infra-canvas"), $("infra-svg"));
+$("infra-fit").addEventListener("click", () => { const b = document.querySelector('#infra-canvas [data-map="fit"]'); if (b) b.click(); });
 
 $("infra-list-btn").addEventListener("click", () => {
-  const hide = !$("infra-list").hidden;
+  const hide = !$("infra-side").hidden;
   setInfraList(!hide);
   try { localStorage.setItem("mtc.infraList", hide ? "0" : "1"); } catch (_e) { /* jen pohodlí */ }
 });
 function setInfraList(show) {
-  $("infra-list").hidden = !show;
+  $("infra-side").hidden = !show;
   const b = $("infra-list-btn"), label = show ? __("Skrýt seznam zařízení") : __("Zobrazit seznam zařízení");
   b.setAttribute("aria-expanded", show ? "true" : "false");
   b.textContent = show ? "‹" : "›"; b.title = label; b.setAttribute("aria-label", label);
-  $("infra-list").parentNode.classList.toggle("nolist", !show);
+  $("infra-side").parentNode.classList.toggle("nolist", !show);
 }
 try { if (localStorage.getItem("mtc.infraList") === "0") setInfraList(false); } catch (_e) { /* jen pohodlí */ }
 
@@ -5246,8 +5247,8 @@ function renderInfra() {
     c.appendChild(head);
     if (n.ports.length) c.appendChild(miniPorts(n.ports));
     const foot = el("div", null, "row2 muted");
-    foot.append(el("span", (n.version || "").split(" ")[0]), el("span", n.poe_w ? `⚡ ${n.poe_w} W` : ""),
-                el("span", `CPU ${n.cpu != null ? n.cpu + " %" : "–"}`), el("span", `RAM ${n.mem != null ? n.mem + " %" : "–"}`));
+    foot.append(el("span", (n.version || "").split(" ")[0]),
+                el("span", [n.poe_w ? `PoE ${n.poe_w} W` : "", `CPU ${n.cpu != null ? n.cpu + " %" : "–"}`, `RAM ${n.mem != null ? n.mem + " %" : "–"}`].filter(Boolean).join(" · ")));
     c.appendChild(foot);
     // klienti zařízení s MAC (rozbalí se klikem na počet)
     const cl = n.clients || [];

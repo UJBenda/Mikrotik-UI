@@ -89,19 +89,21 @@
             </div>
           </div>
       <div id="infra-wrap" class="pane" hidden>
-        <div id="infra-warn"></div>
-        <div class="infra-bar">
-          <label class="check"><input type="checkbox" id="infra-clients"> klienti (MAC)</label>
-          <label class="check"><input type="checkbox" id="infra-ext"> další zařízení (nespravovaní sousedé)</label>
-          <label class="check"><input type="checkbox" id="infra-tl-on" checked> časová osa</label>
-        </div>
         <div class="infra">
-          <div id="infra-list" class="infra-list"></div>
+          <div id="infra-side" class="infra-side">
+            <label class="ux-switch"><span>Časová osa</span><input type="checkbox" id="infra-tl-on" checked><i></i></label>
+            <label class="ux-switch"><span>Klienti v mapě</span><input type="checkbox" id="infra-clients"><i></i></label>
+            <label class="ux-switch" title="Nespravovaní sousedé z LLDP/MNDP"><span>Další zařízení</span><input type="checkbox" id="infra-ext"><i></i></label>
+            <div id="infra-list" class="infra-list"></div>
+            <div class="infra-links"><button id="infra-fit" type="button" class="ux-link">Vejít do okna</button></div>
+          </div>
           <div id="infra-tl" class="infra-tl" aria-label="Časová osa událostí">
             <div class="itl-head"><span id="itl-sum" class="muted"></span><div id="itl-range" class="seg"></div></div>
             <div id="itl-axis" class="itl-axis"></div>
             <div id="itl-pop" class="itl-pop" hidden></div>
           </div>
+          <div class="infra-main">
+          <div id="infra-warn" class="infra-warn"></div>
           <div class="infra-canvas mapbox" id="infra-canvas">
             <svg id="infra-svg" role="img" aria-label="Infrastruktura lokality"></svg>
             <button id="infra-list-btn" type="button" class="map-tab" aria-expanded="true" title="Skrýt seznam zařízení" aria-label="Skrýt seznam zařízení">‹</button>
@@ -112,6 +114,7 @@
               <button type="button" data-map="one" title="Skutečná velikost" aria-label="Skutečná velikost">1:1</button>
             </div>
             <p class="map-hint muted">Kolečko = zoom · tažení = posun · dvojklik = přiblížit</p>
+          </div>
           </div>
         </div>
       </div>
