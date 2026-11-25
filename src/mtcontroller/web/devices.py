@@ -1224,6 +1224,33 @@ async def site_timeline(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_infra_at(request: Request, p: Principal, tid: str) -> Response:
+    """Stav lokality v minulosti (?at=ISO čas) pro posouvání časové osy u mapy."""
+    import datetime as dt
+
+    from .. import timeline
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    try:
+        at = dt.datetime.fromisoformat(str(request.query_params.get("at") or "").replace("Z", "+00:00"))
+    except ValueError:
+        raise ServiceError("at: čas ve tvaru ISO 8601") from None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=dt.timezone.utc)
+    now = dt.datetime.now(dt.timezone.utc)
+    at = max(min(at, now), now - dt.timedelta(hours=timeline.MAX_HOURS))
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            return timeline.state_at(tx, sid, at)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
 async def client_search(request: Request, p: Principal, tid: str) -> Response:
     """Hledání klienta ve všech lokalitách tenanta (historie, MAC/IP/jméno)."""
     from .. import clients
@@ -2122,6 +2149,7 @@ def routes() -> list[Route]:
         Route(s + "/topology", topology, methods=["GET"]),
         Route(s + "/clients/timeline", site_clients_timeline, methods=["GET"]),
         Route(s + "/timeline", site_timeline, methods=["GET"]),
+        Route(s + "/infra-at", site_infra_at, methods=["GET"]),
         Route(s + "/availability", site_availability, methods=["GET"]),
         Route(s + "/links", site_links, methods=["GET"]),
         Route(s + "/unmanaged", site_unmanaged, methods=["GET"]),

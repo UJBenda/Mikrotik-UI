@@ -82,3 +82,48 @@ def test_timeline_api():
         assert c.get(f"/api/admin/tenants/{tid}/sites/{tid}/timeline").status_code == 404
     finally:
         drop_db(name)
+
+
+def test_state_at_for_map_replay():
+    from helpers import drop_db
+    from test_flow import _login
+    from test_modules import _adopted, _env
+
+    from mtcontroller.db import operator_scope
+
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        sw = _adopted(db, box, tid, sid, "SW1", "10.200.1.2", "sw-hala")
+        ap = _adopted(db, box, tid, sid, "AP1", "10.200.1.3", "ap-sklad")
+        now = dt.datetime.now(dt.timezone.utc)
+        ago = lambda m: now - dt.timedelta(minutes=m)  # noqa: E731
+        with operator_scope(db) as tx:
+            tx.execute("""INSERT INTO alert (tenant_id, device_id, kind, severity, message, opened_at, resolved_at)
+                          VALUES (%(t)s, %(d)s, 'offline', 'critical', 'zařízení se neozývá', %(o)s, %(r)s)""",
+                       {"t": tid, "d": ap, "o": ago(50), "r": ago(40)})
+            tx.execute("""INSERT INTO alert (tenant_id, device_id, kind, subject, severity, message, opened_at)
+                          VALUES (%(t)s, %(d)s, 'port_errors', 'ether5', 'warning', 'chyby na portu', %(o)s)""",
+                       {"t": tid, "d": sw, "o": ago(45)})
+            lid = tx.fetchone("""INSERT INTO wlink (tenant_id, site_id, kind, a_device, a_iface, a_mac, b_device, b_iface, b_mac)
+                                 VALUES (%(t)s, %(s)s, 'foreign', %(a)s, 'ether7', '-', %(b)s, 'ether1', '-') RETURNING id""",
+                              {"t": tid, "s": sid, "a": sw, "b": ap})["id"]
+            for m, up, loss in ((48, False, 100), (30, True, 4), (2, True, 0)):
+                tx.execute("INSERT INTO wlink_sample (tenant_id, link_id, at, up, loss) VALUES (%(t)s, %(l)s, %(a)s, %(u)s, %(x)s)",
+                           {"t": tid, "l": lid, "a": ago(m), "u": up, "x": loss})
+        c = _login(app)
+        url = f"/api/admin/tenants/{tid}/sites/{sid}/infra-at"
+        from urllib.parse import quote
+
+        get = lambda v: c.get(url + "?at=" + quote(v))  # noqa: E731
+        at = lambda m: ago(m).isoformat()  # noqa: E731
+        r = get(at(46)).json()
+        assert r["offline"] == [ap] and [a["kind"] for a in r["alerts"]] == ["offline"] and r["links"] == {str(lid): "down"}
+        r = get(at(29)).json()                                   # AP zpět, chyby na portu trvají, spoj ztrácí
+        assert r["offline"] == [] and [(a["kind"], a["device"]) for a in r["alerts"]] == [("port_errors", "sw-hala")]
+        assert r["links"] == {str(lid): "degraded"}
+        r = get(at(60)).json()                                   # před tím vším klid, spoj bez měření
+        assert r["alerts"] == [] and r["links"] == {}
+        assert get(at(1)).json()["links"] == {str(lid): "ok"}
+        assert get("včera").status_code == 400
+    finally:
+        drop_db(name)

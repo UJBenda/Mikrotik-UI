@@ -5117,8 +5117,9 @@ function setInfraList(show) {
 try { if (localStorage.getItem("mtc.infraList") === "0") setInfraList(false); } catch (_e) { /* jen pohodlí */ }
 
 // --- časová osa vedle mapy: události lokality na svislé ose (nahoře teď), klik zvýrazní zařízení v mapě ------
-// Neumí vrátit mapu do minulého stavu – ukazuje, kdy se co stalo, a vede na podrobnou osu v Aktivitě.
-const itl = { hours: 24, data: null };
+// Osu jde chytit a posunout (nebo kolečkem): modrá čára zůstává, pod ní se posouvá čas. Mapa pak ukazuje tehdejší
+// stav – co bylo offline, jaké alerty byly otevřené, stav měřených spojů. Topologie a klienti zůstávají dnešní.
+const itl = { hours: 24, data: null, at: null, state: null, off: 0, timer: null, dragged: false };
 const ITL_H = 620;                     // výška osy v px
 function itlShow(on) {
   $("infra-tl").hidden = !on; $("infra-tl-on").checked = on;
@@ -5149,12 +5150,13 @@ function itlHighlight(ids) {
 function renderInfraTimeline() {
   const d = itl.data; if (!d) return;
   segmented($("itl-range"), [[6, __("6 h")], [24, __("24 h")], [168, __("7 d")]], itl.hours, (h) => { itl.hours = h; loadInfraTimeline(); });
-  const ax = $("itl-axis"); ax.textContent = ""; $("itl-pop").hidden = true;
-  ax.style.height = ITL_H + "px";
+  const ax = $("itl-move"); ax.textContent = ""; $("itl-pop").hidden = true;
+  $("itl-axis").style.height = ITL_H + "px";
   const t1 = new Date(d.until).getTime(), t0 = new Date(d.since).getTime(), span = t1 - t0;
   const y = (t) => Math.round((t1 - t) / span * (ITL_H - 30)) + 24;          // nahoře teď, dolů do minulosti
-  ax.appendChild(el("div", null, "itl-bar"));
-  const now = el("div", __("TEĎ"), "itl-now"); ax.appendChild(now);
+  if (itl.at && (itl.at < t0 || itl.at >= t1)) itlLive(false);
+  itl.off = itl.at ? (t1 - itl.at) / span * (ITL_H - 30) : 0;
+  itlPlace();
   // popisky času: 8 dílků
   for (let i = 1; i <= 8; i++) {
     const t = t1 - span * i / 8, lab = el("div", null, "itl-tick"); lab.style.top = y(t) + "px";
@@ -5176,6 +5178,7 @@ function renderInfraTimeline() {
     b.title = evs.slice(0, 6).map((e) => `${new Date(e.at).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })} ${e.device ? e.device + ": " : ""}${tlText(e)}`).join("\n");
     b.setAttribute("aria-label", b.title);
     b.addEventListener("click", () => {
+      if (itl.dragged) return;                     // konec tažení není klik na událost
       itlHighlight(evs.map((e) => e.device_id).filter(Boolean));
       const pop = $("itl-pop"); pop.textContent = ""; pop.hidden = false; pop.style.top = Math.min(ITL_H - 120, k * 14 + 30) + "px";
       for (const e of evs.slice(0, 8)) {
@@ -5195,6 +5198,76 @@ function renderInfraTimeline() {
     ax.appendChild(b);
   }
   $("itl-sum").textContent = d.total ? __`${d.total} událostí` : __("bez událostí");
+}
+
+// posun osy: itl.off px do minulosti → čas pod modrou čarou; mapa se překreslí, až se posun na chvíli zastaví
+function itlTime() {
+  const d = itl.data; if (!d || itl.off < 1) return null;
+  const t1 = new Date(d.until).getTime(), span = t1 - new Date(d.since).getTime();
+  return Math.round((t1 - itl.off / (ITL_H - 30) * span) / 60000) * 60000;
+}
+function itlPlace() {
+  $("itl-move").style.transform = `translateY(${-Math.round(itl.off)}px)`;
+  const t = itlTime(), now = $("itl-now");
+  now.textContent = t ? new Date(t).toLocaleString(LOCALE, itl.hours > 24 ? { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" }) + "  ✕" : __("TEĎ");
+  now.className = "itl-now" + (t ? " past" : "");
+  now.title = t ? __("Zpět na současný stav") : "";
+}
+function itlLive(redraw = true) {
+  itl.at = null; itl.state = null; itl.off = 0; clearTimeout(itl.timer);
+  itlPlace();
+  if (redraw && infraData) renderInfra();
+}
+function itlScrub(off) {
+  if (!itl.data) return;
+  itl.off = Math.max(0, Math.min(ITL_H - 30, off));
+  $("itl-pop").hidden = true;
+  itlPlace();
+  clearTimeout(itl.timer);
+  itl.timer = setTimeout(itlLoadState, 180);
+}
+async function itlLoadState() {
+  const t = itlTime();
+  if (!t) return itlLive();
+  itl.at = t;
+  let s;
+  try { s = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/infra-at?at=${encodeURIComponent(new Date(t).toISOString())}`); } catch (_e) { return; }
+  if (itl.at !== t) return;                        // mezitím se posunulo jinam
+  itl.state = s;
+  if (infraData) renderInfra();
+}
+// do dat mapy promítne stav z minulosti (nebo vrátí živý): stav zařízení a měřených spojů
+function itlApply() {
+  const s = itl.at ? itl.state : null;
+  for (const n of infraData.nodes) {
+    if (n.kind === "hub" || !n.id) continue;
+    if (n.liveState === undefined) n.liveState = n.state;
+    n.state = !s ? n.liveState : s.offline.includes(n.id) ? "offline" : n.liveState === "offline" ? "adopted" : n.liveState;
+  }
+  for (const l of Object.values(infraWl)) {
+    if (!l.live) l.live = { state: l.state, score: l.score, why: l.why };
+    if (s) { l.state = s.links[l.id] || "unknown"; l.score = null; l.why = []; } else Object.assign(l, l.live);
+  }
+  return s;
+}
+$("itl-now").addEventListener("click", () => { if (itl.at || itl.off) itlLive(); });
+{
+  const ax = $("itl-axis");
+  let y0 = null, off0 = 0;
+  ax.addEventListener("pointerdown", (e) => {
+    if (e.button || (e.target && e.target.id === "itl-now")) return;
+    y0 = e.clientY; off0 = itl.off; itl.dragged = false;
+  });
+  ax.addEventListener("pointermove", (e) => {
+    if (y0 == null) return;
+    const dy = e.clientY - y0;
+    if (!itl.dragged && Math.abs(dy) < 4) return;
+    if (!itl.dragged) { itl.dragged = true; ax.classList.add("grabbing"); try { ax.setPointerCapture(e.pointerId); } catch (_e) { /* jen pohodlí */ } }
+    itlScrub(off0 - dy);                           // tah nahoru = do minulosti (obsah osy jede pod čarou nahoru)
+  });
+  const end = () => { if (y0 == null) return; y0 = null; ax.classList.remove("grabbing"); setTimeout(() => { itl.dragged = false; }, 0); };
+  ax.addEventListener("pointerup", end); ax.addEventListener("pointercancel", end);
+  ax.addEventListener("wheel", (e) => { if (e.preventDefault) e.preventDefault(); itlScrub(itl.off + e.deltaY / 4); }, { passive: false });
 }
 
 let infraWl = {};
@@ -5232,7 +5305,19 @@ function miniPorts(ports) {
 function renderInfra() {
   const d = infraData;
   const warn = $("infra-warn"); warn.textContent = "";
-  for (const w of d.warnings) {
+  const past = itlApply();
+  if (past) {
+    // stav z minulosti: místo dnešních upozornění, co platilo tehdy
+    const b = el("div", null, "banner info hist"), al = past.alerts || [];
+    const when = new Date(past.at).toLocaleString(LOCALE, { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+    b.append(el("b", "◷ " + __`Stav k ${when}`), document.createTextNode(" · " + (al.length ? __`${past.offline.length} zařízení offline, ${al.length} otevřených upozornění` : __("bez otevřených upozornění"))
+      + " · " + __("topologie, klienti a vytížení jsou dnešní") + " "));
+    const back = el("button", __("Zpět na teď"), "ux-link"); back.type = "button"; back.addEventListener("click", () => itlLive());
+    b.appendChild(back);
+    b.title = al.slice(0, 12).map((a) => `${a.device}: ${a.message}`).join("\n");
+    warn.appendChild(b);
+  }
+  for (const w of past ? [] : d.warnings) {
     const b = el("div", null, "banner " + (w.severity === "warning" ? "warn" : "info"));
     b.append(el("b", w.severity === "warning" ? "⚠ " : "ⓘ "), document.createTextNode(w.text));
     warn.appendChild(b);

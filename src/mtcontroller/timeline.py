@@ -24,6 +24,32 @@ from .db import Tx
 
 CATS = ("alert", "port", "client", "wifi", "change", "audit")
 MAX_HOURS = 24 * 30
+
+
+def state_at(tx: Any, site_id: Any, at: Any) -> dict:
+    """Stav lokality v čase `at` pro přehrávání na mapě: která zařízení byla offline, jaké alerty byly otevřené
+    a v jakém stavu byly měřené spoje. Topologii v čase neukládáme – přehrává se jen stav nad dnešní mapou."""
+    from . import wlink
+
+    p = {"s": str(site_id), "t": at}
+    alerts = tx.fetchall(
+        """SELECT a.device_id, coalesce(nullif(d.identity, ''), d.serial) AS device, a.kind, a.subject,
+                  a.severity::text AS severity, a.message, a.opened_at
+           FROM alert a JOIN device d ON d.id = a.device_id
+           WHERE d.site_id = %(s)s AND a.opened_at <= %(t)s AND (a.resolved_at IS NULL OR a.resolved_at > %(t)s)
+           ORDER BY a.severity DESC, a.opened_at DESC LIMIT 200""", p)
+    links = {}
+    for r in tx.fetchall(
+            """SELECT DISTINCT ON (s.link_id) s.link_id, s.up, s.loss FROM wlink_sample s JOIN wlink l ON l.id = s.link_id
+               WHERE l.site_id = %(s)s AND s.at <= %(t)s AND s.at > %(t)s::timestamptz - interval '20 minutes'
+               ORDER BY s.link_id, s.at DESC""", p):
+        loss = r["loss"]
+        links[str(r["link_id"])] = ("down" if not r["up"] else "bad" if loss is not None and loss >= wlink.LOSS_CRIT
+                                    else "degraded" if loss is not None and loss >= wlink.LOSS_WARN else "ok")
+    return {"at": _iso(at), "offline": sorted({str(a["device_id"]) for a in alerts if a["kind"] == "offline"}),
+            "alerts": [{"device_id": str(a["device_id"]), "device": a["device"], "kind": a["kind"], "subject": a["subject"],
+                        "severity": a["severity"], "message": a["message"], "opened_at": a["opened_at"]} for a in alerts],
+            "links": links}
 LIMIT = 500
 BUCKETS = 48
 SEV_RANK = {"critical": 3, "warning": 2, "ok": 1, "info": 0}

@@ -1510,3 +1510,12 @@ Navazuje na polohu klientů výše. Tři věci:
 Omezení: počet klientů za portem kolísá (spící zařízení), proto práh 3 a čekání 10 minut; switch, za kterým jsou
 jen 1–2 klienti a žádné spravované zařízení, nepoznáme. Ping přes úsek měří i kabeláž a switche po cestě, ne jen
 cizí rádio. Na skutečné síti zatím neověřeno.
+
+## Přehrávání stavu na mapě (posun časové osy)
+
+Osu vedle mapy jde chytit kdekoli a táhnout (nebo točit kolečkem): modrá čára zůstává, pod ní se posouvá čas a místo
+„TEĎ“ je vidět zvolený okamžik. Po zastavení posunu (180 ms) se zavolá `GET …/sites/{id}/infra-at?at=ISO`
+(`timeline.state_at`): zařízení s tehdy otevřeným alertem `offline`, všechny tehdy otevřené alerty a stav měřených
+spojů z nejbližšího vzorku `wlink_sample` (do 20 minut zpět). `itlApply` to promítne do dat mapy (stav uzlů, barvy
+spojů), nad plátnem je pruh „Stav k …“ s návratem na teď. Topologii, klienty ani vytížení v čase neukládáme –
+přehrává se jen stav nad dnešní mapou. Dosah je rozsah osy (6 h / 24 h / 7 dní).

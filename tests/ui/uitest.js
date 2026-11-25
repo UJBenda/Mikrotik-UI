@@ -202,9 +202,16 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     }
     // časová osa vedle mapy: značky událostí (shluknuté), souhrn
     {
-      const evs = byId["itl-axis"].children.filter((x) => x.className.startsWith("itl-ev"));
+      const evs = byId["itl-move"].children.filter((x) => x.className.startsWith("itl-ev"));
       if (!evs.length || !evs.some((x) => x.className.includes("tl-s-critical"))) errors.push("mapa: časová osa " + evs.length);
       if (!byId["itl-sum"].textContent.includes("9")) errors.push("mapa: souhrn osy " + byId["itl-sum"].textContent);
+      // posun osy do minulosti: čas místo „TEĎ“, mapa dostane tehdejší stav a pruh s návratem
+      await byId["itl-axis"].fire("wheel", { deltaY: 400 });
+      await ctx.itlLoadState(); await tlTick();      // časovač v testu neběží – načtení stavu se zavolá přímo
+      if (byId["itl-now"].textContent.includes("TEĎ") || !requests.some((r) => r.includes("/infra-at?at=2026-11-21T07%3A56%3A00.000Z"))) errors.push("mapa: posun osy " + byId["itl-now"].textContent + " " + requests.filter((r) => r.includes("infra-at")).join(","));
+      if (!byId["infra-warn"].textContent.includes("Stav k") || !byId["infra-warn"].textContent.includes("1 zařízení offline")) errors.push("mapa: stav v minulosti " + byId["infra-warn"].textContent);
+      await byId["itl-now"].fire("click"); await tlTick();
+      if (!byId["itl-now"].textContent.includes("TEĎ") || byId["infra-warn"].textContent.includes("Stav k")) errors.push("mapa: návrat na teď");
     }
     // dostupnost: řádek na zařízení, 30 sloupečků dnů, trvající výpadek
     await byId["avail-btn"].fire("click"); await tlTick();
