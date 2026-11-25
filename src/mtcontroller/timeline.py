@@ -46,7 +46,9 @@ def state_at(tx: Any, site_id: Any, at: Any) -> dict:
         loss = r["loss"]
         links[str(r["link_id"])] = ("down" if not r["up"] else "bad" if loss is not None and loss >= wlink.LOSS_CRIT
                                     else "degraded" if loss is not None and loss >= wlink.LOSS_WARN else "ok")
-    return {"at": _iso(at), "offline": sorted({str(a["device_id"]) for a in alerts if a["kind"] == "offline"}),
+    from . import timemachine
+
+    return {"infra": timemachine.at(tx, site_id, at), "at": _iso(at), "offline": sorted({str(a["device_id"]) for a in alerts if a["kind"] == "offline"}),
             "alerts": [{"device_id": str(a["device_id"]), "device": a["device"], "kind": a["kind"], "subject": a["subject"],
                         "severity": a["severity"], "message": a["message"], "opened_at": a["opened_at"]} for a in alerts],
             "links": links}

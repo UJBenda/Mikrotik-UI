@@ -235,7 +235,15 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       await ctx.itlLoadState(); await tlTick();      // časovač v testu neběží – načtení stavu se zavolá přímo
       if (byId["itl-now"].textContent.includes("TEĎ") || !requests.some((r) => r.includes("/infra-at?at=2026-11-21T07%3A56%3A00.000Z"))) errors.push("mapa: posun osy " + byId["itl-now"].textContent + " " + requests.filter((r) => r.includes("infra-at")).join(","));
       if (!byId["infra-warn"].textContent.includes("Stav k") || !byId["infra-warn"].textContent.includes("1 zařízení offline")) errors.push("mapa: stav v minulosti " + byId["infra-warn"].textContent);
-      await byId["itl-now"].fire("click"); await tlTick();
+      {
+        // cestování v čase: mapa kreslí tehdejší snímek (ap-hala tam ještě nebyl), po návratu zase živý stav
+        const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+        const devs = () => all(byId["infra-svg"], (n) => n.attrs && n.attrs["data-dev"]).map((n) => n.attrs["data-dev"]).sort().join(",");
+        if (!byId["infra-warn"].textContent.includes("jsou z té doby") || devs() !== "gw,lost,sw") errors.push("mapa: tehdejší topologie " + devs() + " " + byId["infra-warn"].textContent.slice(0, 160));
+        if (!byId["infra-list"].textContent.includes("core-gw") || byId["infra-list"].textContent.includes("ap-hala")) errors.push("mapa: seznam zařízení v minulosti");
+        await byId["itl-now"].fire("click"); await tlTick();
+        if (devs() !== "ap,gw,lost,sw") errors.push("mapa: návrat živé topologie " + devs());
+      }
       if (!byId["itl-now"].textContent.includes("TEĎ") || byId["infra-warn"].textContent.includes("Stav k")) errors.push("mapa: návrat na teď");
     }
     // dostupnost: řádek na zařízení, 30 sloupečků dnů, trvající výpadek

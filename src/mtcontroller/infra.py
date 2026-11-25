@@ -428,3 +428,37 @@ def insert_unmanaged(out: dict, wireless: set[tuple[str, str]] | None = None) ->
 
         bump(hid, {hid})
     return added
+
+
+# sekce inventury, ze kterých se mapa lokality skládá
+SECTIONS = ["interfaces", "neighbors", "resource", "ethernet_monitor", "poe_monitor", "stp_bridges",
+            "stp_ports", "bridges", "bridge_ports", "routes_default", "dhcp_client", "addresses", "bridge_hosts"]
+
+
+def site_view(tx: Any, site_id: Any) -> dict:
+    """Mapa lokality tak, jak ji ukazuje rozhraní: strom zařízení, připojení klienti u svých zařízení
+    a odhadnuté nespravované switche. Společné pro API i pro snímky topologie (cestování v čase)."""
+    from . import clientmeta, inventory
+
+    sid = str(site_id)
+    devs = tx.fetchall("""SELECT id, serial, identity, model, role::text AS role, state::text AS state, ros_version
+                          FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline', 'provisioning')""",
+                       {"s": sid})
+    invs = {str(d["id"]): inventory.load(tx, d["id"], SECTIONS) for d in devs}
+    # připojení klienti (poslední inventura klientů do 10 min) s MAC, popiskem a logem
+    cl = [dict(r) for r in tx.fetchall(
+        """SELECT mac, ip, hostname, device_id, port, vlan, ssid, signal FROM client
+           WHERE site_id = %(s)s AND last_seen > now() - interval '10 minutes' AND device_id IS NOT NULL
+           ORDER BY port, mac""", {"s": sid})]
+    clientmeta.annotate(tx, cl)
+    wl = {(str(r["a_device"]), r["a_iface"]) for r in tx.fetchall(
+        "SELECT a_device, a_iface FROM wlink WHERE site_id = %(s)s AND kind <> 'foreign'", {"s": sid})}
+    out = site_infra(devs, invs)
+    by_dev: dict[str, list] = {}
+    for c in cl:
+        c["device_id"] = str(c["device_id"])
+        by_dev.setdefault(c["device_id"], []).append(c)
+    for n in out["nodes"]:
+        n["clients"] = by_dev.get(n["id"], [])
+    insert_unmanaged(out, wl)
+    return out

@@ -261,6 +261,10 @@ def record(db: Database) -> int:
             if rows:
                 tx.execute(_UPSERT, {"t": str(s["tenant_id"]), "s": str(s["site_id"]), "rows": rows})
             _sessions(tx, s["tenant_id"], s["site_id"], rows)
+            # přesuny klientů mezi porty / AP: poloha v čase (cestování v čase) a přeskakování MAC
+            from . import timemachine
+
+            timemachine.record_moves(tx, s["tenant_id"], s["site_id"], rows)
             n += len(rows)
     with operator_scope(db) as tx:
         # lokality, které se přestaly hlásit: relace končí, kdy byly naposledy potvrzené

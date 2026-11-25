@@ -483,6 +483,8 @@ function alertReactions(a) {
     port_half_duplex: [__("Port jede v half-duplexu – zkontroluj autonegociaci."), []],
     link_down: [__("Bezdrátový spoj je dole – zkontroluj napájení a směrování protistrany."), [actBtn(__("Spoje"), () => openSub("links", "links"), "small")]],
     link_degraded: [__("Bezdrátový spoj je horší než obvykle – na kartě spoje je vidět, co a kdy se změnilo."), [actBtn(__("Spoje"), () => openSub("links", "links"), "small")]],
+    mac_flap: [__("Stejná MAC adresa se střídavě objevuje na různých portech. Bývá to smyčka (kabel zapojený dvakrát), dvě zařízení se stejnou MAC, nebo klient připojený drátem i jinou cestou. Na časové ose mapy uvidíš, kdy to začalo."), [actBtn(__("Mapa"), () => openSub("map", "infra"), "small")]],
+    loop_suspect: [__("Víc klientů najednou přeskakuje mezi porty – nejspíš smyčka v síti. Zkontroluj naposledy zapojené kabely a nespravované switche; na portech pomůže zapnout ochranu proti smyčce (loop protect) nebo RSTP."), [actBtn(__("Mapa"), () => openSub("map", "infra"), "small"), actBtn("STP", () => openSub("map", "stp"), "small")]],
     unmanaged_switch: [__("Na portu přibylo zařízení, které větví síť a controller ho nespravuje. Pokud o něm víš, schval ho – přestane se hlásit."), [actBtn(__("Nespravované switche"), () => openSub("devices", "unm"), "small")]],
     sfp_power: [__("Optický výkon na SFP klesl proti obvyklému – vyčisti konektory, zkontroluj vlákno a modul."), []],
     cpu_high: [__("Vysoké vytížení CPU."), []], memory_high: [__("Málo volné paměti."), []],
@@ -5788,6 +5790,8 @@ function itlApply() {
     if (!l.live) l.live = { state: l.state, score: l.score, why: l.why };
     if (s) { l.state = s.links[l.id] || "unknown"; l.score = null; l.why = []; } else Object.assign(l, l.live);
   }
+  // snímek topologie má stav zařízení po 5 minutách; otevřený alert „offline“ je přesnější
+  if (s && s.infra) for (const n of s.infra.nodes) if (s.offline.includes(n.id)) n.state = "offline";
   return s;
 }
 $("itl-now").addEventListener("click", () => { if (itl.at || itl.off) itlLive(); });
@@ -5861,7 +5865,8 @@ function renderMapSide() {
   $("infra-clients-row").hidden = topo; $("infra-list").hidden = topo; box.hidden = !topo;
   box.textContent = "";
   if (!topo || !infraData) return;
-  const devs = infraData.nodes.filter((n) => n.kind !== "hub"), cls = infraData.nodes.flatMap((n) => n.clients || []);
+  const shown = infraShown();
+  const devs = shown.nodes.filter((n) => n.kind !== "hub"), cls = shown.nodes.flatMap((n) => n.clients || []);
   const count = (arr, f) => { const m = new Map(); for (const x of arr) { const k = f(x); if (k != null) m.set(k, (m.get(k) || 0) + 1); } return [...m.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true })); };
   const group = (title, rows) => {
     if (!rows.length) return;
@@ -5897,16 +5902,19 @@ function miniPorts(ports) {
   return strip;
 }
 
+// co mapa právě kreslí: živá data, nebo při cestování v čase tehdejší snímek (topologie + tehdy připojení klienti)
+const infraShown = () => (itl.at && itl.state && itl.state.infra ? itl.state.infra : infraData);
 function renderInfra() {
-  const d = infraData;
   const warn = $("infra-warn"); warn.textContent = "";
   const past = itlApply();
+  const d = infraShown();
   if (past) {
     // stav z minulosti: místo dnešních upozornění, co platilo tehdy
     const b = el("div", null, "banner info hist"), al = past.alerts || [];
     const when = new Date(past.at).toLocaleString(LOCALE, { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
     b.append(el("b", "◷ " + __`Stav k ${when}`), document.createTextNode(" · " + (al.length ? __`${past.offline.length} zařízení offline, ${al.length} otevřených upozornění` : __("bez otevřených upozornění"))
-      + " · " + __("topologie, klienti a vytížení jsou dnešní") + " "));
+      + " · " + (past.infra ? __`topologie, porty a klienti jsou z té doby (snímek z ${new Date(past.infra.snapshot_at).toLocaleString(LOCALE, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })})`
+        : __("z té doby ještě není uložený snímek – topologie a klienti jsou dnešní")) + " "));
     const back = el("button", __("Zpět na teď"), "ux-link"); back.type = "button"; back.addEventListener("click", () => itlLive());
     b.appendChild(back);
     b.title = al.slice(0, 12).map((a) => `${a.device}: ${a.message}`).join("\n");
@@ -5955,7 +5963,7 @@ function renderInfra() {
 }
 
 function drawInfra() {
-  const d = infraData, svg = $("infra-svg"); svg.textContent = "";
+  const d = infraShown(), svg = $("infra-svg"); svg.textContent = "";
   const NW = 250, NH = 66, GX = 76, LV = 180, WH = 56, TOP = 20, EW = 172, EH = 40;
   const showExt = $("infra-ext").checked;
   const byId = {}, kids = {};

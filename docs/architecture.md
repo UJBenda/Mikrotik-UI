@@ -1522,6 +1522,27 @@ spojů z nejbližšího vzorku `wlink_sample` (do 20 minut zpět). `itlApply` to
 spojů), nad plátnem je pruh „Stav k …“ s návratem na teď. Topologii, klienty ani vytížení v čase neukládáme –
 přehrává se jen stav nad dnešní mapou. Dosah je rozsah osy (6 h / 24 h / 7 dní).
 
+## Cestování v čase na mapě a přeskakování MAC (`timemachine.py`)
+
+Posun časové osy u mapy vrací celou tehdejší mapu, ne jen stavy. `GET …/sites/{id}/infra-at` (`timeline.state_at`)
+k dosavadním polím (offline, alerty, stav spojů) přidává `infra` ve tvaru živé mapy, složené ze tří zdrojů:
+
+- `infra_snapshot` (migrace 0037) – strom zařízení, stav zařízení, porty (linka / rychlost) a linky k internetu.
+  Krok workeru `snapshots` každých 5 minut sestaví mapu stejnou funkcí jako API (`infra.site_view`) a uloží ji, jen
+  když se liší podpis (bez CPU, RAM, PoE a klientů). Platí poslední snímek před zvoleným časem;
+- `client_move` – přesuny klientů (zařízení, port, SSID), zapisuje `clients.record` při změně místa. Poloha klienta
+  v čase T = poslední přesun před T;
+- `client_session` – kdo byl v čase T připojený.
+
+Když z té doby snímek není (před aktualizací), `infra` je null a rozhraní přehraje jen stavy nad dnešní mapou.
+Vytížení (CPU, RAM) a signál klientů se v čase neukládají. Retence 30 dní, poslední snímek a poslední poloha klienta
+zůstávají vždy.
+
+**Přeskakování MAC** (`timemachine.alerts`): drátový klient s aspoň 4 přesuny za hodinu, který se vrací na stejná
+místa (počet míst < počet přesunů), dává alert `mac_flap`; 5 a víc takových klientů najednou v lokalitě je
+`loop_suspect` (critical). Wi-Fi roaming a nejisté polohy (port `?`) se nepočítají. Rozlišení je dané intervalem
+inventury – smyčku trvající pár sekund to nezachytí.
+
 ## Přehled lokality a měření internetu
 
 Levý pruh má **Přehled** a **Mapu** zvlášť (Mapa = dřívější blok Infrastruktura se záložkami Mapa / Topologie / STP).

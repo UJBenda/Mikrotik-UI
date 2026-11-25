@@ -1326,34 +1326,14 @@ async def site_wifi(request: Request, p: Principal, tid: str) -> Response:
 
 @endpoint(READ)
 async def site_infra(request: Request, p: Principal, tid: str) -> Response:
-    from .. import clientmeta, infra
+    from .. import infra
 
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
 
     def q():
         with tenant_scope(st.db, tid) as tx:
-            devs = tx.fetchall("""SELECT id, serial, identity, model, role::text AS role, state::text AS state, ros_version
-                                  FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline', 'provisioning')""",
-                               {"s": sid})
-            invs = {str(d["id"]): inventory.load(tx, d["id"], INFRA_SECTIONS) for d in devs}
-            # připojení klienti (poslední inventura klientů do 10 min) s MAC, popiskem a logem
-            cl = [dict(r) for r in tx.fetchall(
-                """SELECT mac, ip, hostname, device_id, port, vlan, ssid, signal FROM client
-                   WHERE site_id = %(s)s AND last_seen > now() - interval '10 minutes' AND device_id IS NOT NULL
-                   ORDER BY port, mac""", {"s": sid})]
-            clientmeta.annotate(tx, cl)
-            wl = {(str(r["a_device"]), r["a_iface"]) for r in tx.fetchall(
-                "SELECT a_device, a_iface FROM wlink WHERE site_id = %(s)s AND kind <> 'foreign'", {"s": sid})}
-        out = infra.site_infra(devs, invs)
-        by_dev: dict[str, list] = {}
-        for c in cl:
-            c["device_id"] = str(c["device_id"])
-            by_dev.setdefault(c["device_id"], []).append(c)
-        for n in out["nodes"]:
-            n["clients"] = by_dev.get(n["id"], [])
-        infra.insert_unmanaged(out, wl)
-        return out
+            return infra.site_view(tx, sid)
 
     return json_response(await run_in_threadpool(q))
 
@@ -1404,8 +1384,6 @@ async def uplinks(request: Request, p: Principal, tid: str) -> Response:
     return json_response(await run_in_threadpool(q))
 
 
-INFRA_SECTIONS = ["interfaces", "neighbors", "resource", "ethernet_monitor", "poe_monitor", "stp_bridges",
-                  "stp_ports", "bridges", "bridge_ports", "routes_default", "dhcp_client", "addresses", "bridge_hosts"]
 
 
 @endpoint(READ)

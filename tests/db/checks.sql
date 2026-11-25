@@ -599,6 +599,32 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20i) snímky topologie a přesuny klientů izolované mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO infra_snapshot (tenant_id, site_id, sig, data)
+SELECT d.tenant_id, d.site_id, 'x', '{"nodes": []}'::jsonb FROM device d
+WHERE d.tenant_id = '00000000-0000-0000-0000-0000000000b1' AND d.site_id IS NOT NULL LIMIT 1;
+INSERT INTO client_move (tenant_id, site_id, mac, device_id, port)
+SELECT d.tenant_id, d.site_id, 'AA:BB:CC:00:00:99', d.id, 'ether1' FROM device d
+WHERE d.tenant_id = '00000000-0000-0000-0000-0000000000b1' AND d.site_id IS NOT NULL LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM infra_snapshot) <> 0 OR (SELECT count(*) FROM client_move) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí snímky topologie nebo přesuny klientů tenanta B'; END IF;
+  RAISE NOTICE 'OK 20i snímky topologie a přesuny klientů izolované';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM pg_class WHERE relname IN ('infra_snapshot', 'client_move') AND relrowsecurity AND relforcerowsecurity) <> 2 THEN
+    RAISE EXCEPTION 'FAIL: infra_snapshot / client_move bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);
