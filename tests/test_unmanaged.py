@@ -100,9 +100,15 @@ def test_unmanaged_record_alert_approve_and_foreign_link(monkeypatch):
             assert key(tx) == {("ether7", False, True)}
             tx.execute("UPDATE unmanaged_port SET last_seen = now()")
 
-        # cizí úsek sw:ether7 → ap se měří pingem
+        # úsek přes nespravované zařízení se sám nezakládá – hlídat ho musí správce ručně
         state = {"loss": 0, "fail": False}
         monkeypatch.setattr(services, "device_api", lambda tx, b, dev, timeout=10.0: FakeApi("-", -50, loss=state["loss"]))
+        assert w.sample(db, box, force=True) == 0
+        url = f"/api/admin/tenants/{tid}/sites/{sid}/links"
+        assert c.post(url, json_body={"a_device": sw, "a_iface": "ether7", "b_device": sw}).status_code == 400
+        r = c.post(url, json_body={"a_device": sw, "a_iface": "ether7", "b_device": ap})
+        assert r.status_code == 200 and [x["kind"] for x in r.json()["links"]] == ["foreign"]
+        assert len(c.post(url, json_body={"a_device": sw, "a_iface": "ether7", "b_device": ap}).json()["links"]) == 1
         assert w.sample(db, box, force=True) == 1
         with tenant_scope(db, tid) as tx:
             v = w.site_links(tx, sid)
@@ -116,5 +122,11 @@ def test_unmanaged_record_alert_approve_and_foreign_link(monkeypatch):
         # mapa: uzel nespravovaného switche zůstává (není to bezdrátový spoj mezi našimi)
         tree = c.get(f"/api/admin/tenants/{tid}/sites/{sid}/infra").json()
         assert any(n.get("kind") == "hub" and n.get("guess") for n in tree["nodes"])
+        lid = c.get(url).json()["links"][0]["id"]
+        assert c.delete(f"/api/admin/tenants/{tid}/links/{lid}").status_code == 200
+        assert c.get(url).json()["links"] == [] and c.delete(f"/api/admin/tenants/{tid}/links/{lid}").status_code == 404
+        with operator_scope(db) as tx:
+            assert {r["action"] for r in tx.fetchall("SELECT action FROM audit_log WHERE action LIKE 'wlink.%%'")} == {
+                "wlink.watch", "wlink.unwatch"}
     finally:
         drop_db(name)

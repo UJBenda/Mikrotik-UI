@@ -1403,7 +1403,9 @@ i.pm-tile { cursor: default; }
 .wl-t small { font-size: 11px; }
 .wl-tag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 9px; font-size: 10.5px; background: var(--hover); color: var(--muted); }
 .wl-h { margin: 26px 0 4px; font-size: 14px; font-weight: 600; }
-.wl-h + .wl-note { max-width: 760px; }
+.wl-h + .wl-note { max-width: 760px; } .wl-h.first { margin-top: 6px; }
+.wl-acts { white-space: nowrap; text-align: right; } .wl-acts button + button { margin-left: 6px; }
+#infra-svg .hub.clickable { cursor: pointer; } #infra-svg .hub.clickable:hover .card { stroke: var(--accent); }
 .wl-bad { color: #dc2626; font-weight: 600; } .wl-warn { color: #9a5b00; font-weight: 600; }
 .wl-badge { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap; background: var(--hover); color: var(--muted); }
 .wl-badge.s-ok { background: #e3f6ea; color: #17794a; } .wl-badge.s-degraded { background: #fdf0cf; color: #8a5a00; }

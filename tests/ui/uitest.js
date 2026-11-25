@@ -141,9 +141,9 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (/setAttribute\(\s*["']style["']/.test(src) || /[{,]\s*style:\s*[`"']/.test(src) || /style\s*=\s*["'`][^"'`]*:/.test(src.replace(/\.style\.[a-zA-Z]+ = /g, ""))) errors.push("app.js nastavuje atribut style – v produkci ho zablokuje CSP");
       if (/\sstyle="/.test(require("fs").readFileSync(process.argv[3], "utf8"))) errors.push("index.html obsahuje atribut style – zablokuje ho CSP");
     }
-    // levá navigace: 6 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
+    // levá navigace: 7 sekcí lokality + celý tenant (lokality, uživatelé, systém), odznaky, přepínání
     const navBtns = byId["nav-items"].children.filter((b) => b.tagName === "BUTTON");
-    if (navBtns.length !== 6 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
+    if (navBtns.length !== 7 || navBtns[0].textContent !== "Přehled" || navBtns[0].title !== "Přehled a topologie") errors.push("navigace: sekce " + navBtns.map((b) => b.textContent));
     // správa zákazníka je v nabídce v záhlaví (lokality, uživatelé, systém), zvonek nese počet k řešení, uživatel má vlastní nabídku
     {
       const items = byId["tmenu-list"].children.filter((b) => b.tagName === "BUTTON");
@@ -268,20 +268,22 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await byId["topo-btn"].fire("click");
     if (byId["topo-wrap"].hidden || !byId["infra-wrap"].hidden) errors.push("přehled: podzáložka topologie");
     // bezdrátové spoje: seznam se stavem, karta spoje s pásy grafu, štítky odchylek a seznam úseků
+    // Zařízení → Nespravované: nový nález se stavem, schválení, hlídání úseku pingem
     await byId["nav-devices"].fire("click");
-    await byId["links-btn"].fire("click");
+    await byId["unm-btn"].fire("click");
+    await tlTick();
+    {
+      const t = byId["unm-main"].textContent;
+      if (byId["unm-wrap"].hidden || !t.includes("Nespravované switche") || !t.includes("sw-hala ether7") || !t.includes("3 klientů + spravované zařízení") || !t.includes("Nový") || !t.includes("Výchozí stav") || !t.includes("Schválit") || !t.includes("Hlídat pingem") || !t.includes("Zatím se nehlídá žádný úsek")) errors.push("nespravované: tabulka " + t.slice(-300));
+      if (!byId["unm-side"].textContent.includes("Z toho nových1")) errors.push("nespravované: počet nových");
+    }
+    await byId["nav-links"].fire("click");
     await tlTick();
     {
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
       const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
       const main = byId["wl-main"], row = find(main, (n) => n.tagName === "TR" && n.className === "clickable");
-      {
-        // nespravované switche pod seznamem spojů: nový nález se stavem a tlačítkem ke schválení
-        const t = main.textContent;
-        if (!t.includes("Nespravované switche") || !t.includes("sw-hala ether7") || !t.includes("3 klientů + spravované zařízení") || !t.includes("Nový") || !t.includes("Výchozí stav") || !t.includes("Schválit")) errors.push("spoje: nespravované switche " + t.slice(-300));
-        if (!byId["wl-side"].textContent.includes("Z toho nových1")) errors.push("spoje: počet nových nespravovaných portů");
-      }
-      if (byId["links-wrap"].hidden || !row) errors.push("spoje: seznam");
+      if (byId["view-links"].hidden || !row) errors.push("spoje: seznam");
       else {
         const txt = row.textContent;
         if (!txt.includes("spoj-hala ↔ spoj-sklad") || !txt.includes("Zhoršený · 48") || !txt.includes("−71 / −69 dBm") || !txt.includes("4,0 %")) errors.push("spoje: řádek " + txt);
@@ -316,7 +318,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       else {
         if (!hit[0].textContent.includes("spoj-hala ↔ spoj-sklad") || !hit[0].textContent.includes("Zhoršený · 48")) errors.push("mapa: popisek spoje " + hit[0].textContent);
         await hit[0].fire("click", { stopPropagation() {} }); await tlTick(); await tlTick();
-        if (byId["view-devices"].hidden || byId["links-wrap"].hidden || !byId["wl-side"].textContent.includes("Všechny spoje (1)")) errors.push("mapa: klik na spoj neotevřel kartu");
+        if (byId["view-links"].hidden || !byId["wl-side"].textContent.includes("Všechny spoje (1)")) errors.push("mapa: klik na spoj neotevřel kartu");
       }
     }
     // zálohy zařízení: pravidla zákazníka, výběr zařízení, verze a porovnání s aktuální konfigurací

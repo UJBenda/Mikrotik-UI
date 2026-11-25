@@ -1499,13 +1499,15 @@ Navazuje na polohu klientů výše. Tři věci:
   `unmanaged_switch` (warning), dokud to správce neschválí (`approved`, poznámka, audit `site.unmanaged_approve`)
   nebo to nezmizí; neschválený zmizelý nález se po 24 h zapomene. API `GET …/sites/{id}/unmanaged`,
   `PUT …/sites/{id}/unmanaged/{uid}` `{approved, note}`. UI: Zařízení → Spoje, tabulka „Nespravované switche“.
-- **Cizí úsek** (`wlink.find_foreign`, `wlink.kind = 'foreign'`): dvojice rodič → potomek ze stromu topologie, mezi
-  kterými je něco nespravovaného (port rodiče je v evidenci se `shared`, za portem je víc spravovaných zařízení, nebo
-  se vidí jen přes společnou síť). Rádio cizího spoje nevidíme, takže `measure` dělá jen ping z rodiče na adresu
-  potomka ve společné síti (`up` = aspoň jedna odpověď); bez takové adresy se neměří. Hodnocení, graf a alerty
-  `link_down` / `link_degraded` jsou společné s bezdrátovými spoji (text „úsek přes nespravované zařízení“). Měří se,
-  jen dokud ho topologie do 2 h potvrzuje. V mapě je hrana z uzlu nespravovaného switche k potomkovi obarvená stavem
-  úseku (značka ⇄) a klik otevře kartu.
+- **Hlídaný úsek** (`wlink.watch` / `unwatch`, `wlink.kind = 'foreign'`, `manual`, migrace 0035): úsek mezi dvěma
+  spravovanými zařízeními přes něco nespravovaného zakládá správce ručně – tlačítkem „Hlídat pingem“ u portu
+  v Zařízení → Nespravované nebo klikem na odhadnutý nespravovaný switch v mapě (`POST …/sites/{id}/links`
+  `{a_device, a_iface, b_device}`, zrušení `DELETE …/links/{id}`, audit `wlink.watch` / `wlink.unwatch`). `measure` dělá
+  jen ping z A na adresu B ve společné síti; bez takové adresy úsek založit nejde. Hodnocení, graf a alerty jsou
+  společné s bezdrátovými spoji. Automatické hledání (`find_foreign`) se nepoužívá: na skutečné síti dělalo
+  z obyčejných switchů desítky planých dvojic a falešné výpadky; migrace 0035 takové záznamy maže.
+- **Rozdělení v rozhraní**: levý pruh má samostatnou sekci **Spoje** jen pro rádia (Wi-Fi, wireless, 60 GHz);
+  nespravované switche a hlídané úseky jsou v Zařízení → Nespravované.
 
 Omezení: počet klientů za portem kolísá (spící zařízení), proto práh 3 a čekání 10 minut; switch, za kterým jsou
 jen 1–2 klienti a žádné spravované zařízení, nepoznáme. Ping přes úsek měří i kabeláž a switche po cestě, ne jen

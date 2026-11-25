@@ -877,6 +877,19 @@ async def site_links(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     sid = _uuid(request.path_params["site_id"])
 
+    if request.method == "POST":
+        # ručně hlídaný úsek přes nespravované zařízení: {a_device, a_iface, b_device}
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+        data = await _json(request)
+
+        def w():
+            with tenant_scope(st.db, tid) as tx:
+                return wlink.watch(tx, tid, sid, _uuid(str(data.get("a_device") or "")), str(data.get("a_iface") or "?"),
+                                   _uuid(str(data.get("b_device") or "")), p.user_id, client_ip(request))
+
+        await run_in_threadpool(w)
+
     def q():
         with tenant_scope(st.db, tid) as tx:
             return {"links": wlink.site_links(tx, sid)}
@@ -892,6 +905,17 @@ async def link_detail(request: Request, p: Principal, tid: str) -> Response:
     st = get_state(request)
     lid = _uuid(request.path_params["link_id"])
     hours = _int(request.query_params.get("hours"), 24, 1, 24 * 30)
+    if request.method == "DELETE":
+        if not p.can(tid, MANAGE):
+            return _err(403, "nedostatečná oprávnění")
+
+        def rm():
+            with tenant_scope(st.db, tid) as tx:
+                return wlink.unwatch(tx, tid, lid, p.user_id, client_ip(request))
+
+        if not await run_in_threadpool(rm):
+            raise NotFound("hlídaný úsek neexistuje")
+        return json_response({"ok": True})
     if request.method == "PUT":
         if not p.can(tid, MANAGE):
             return _err(403, "nedostatečná oprávnění")
@@ -2151,10 +2175,10 @@ def routes() -> list[Route]:
         Route(s + "/timeline", site_timeline, methods=["GET"]),
         Route(s + "/infra-at", site_infra_at, methods=["GET"]),
         Route(s + "/availability", site_availability, methods=["GET"]),
-        Route(s + "/links", site_links, methods=["GET"]),
+        Route(s + "/links", site_links, methods=["GET", "POST"]),
         Route(s + "/unmanaged", site_unmanaged, methods=["GET"]),
         Route(s + "/unmanaged/{unmanaged_id}", site_unmanaged, methods=["PUT"]),
-        Route(T + "/links/{link_id}", link_detail, methods=["GET", "PUT"]),
+        Route(T + "/links/{link_id}", link_detail, methods=["GET", "PUT", "DELETE"]),
         Route(s + "/clients", site_clients, methods=["GET"]),
         Route(s + "/wifi", site_wifi, methods=["GET"]),
         Route(s + "/stp", site_stp, methods=["GET"]),

@@ -141,8 +141,8 @@
         <h2 class="sr-only">Zařízení</h2>
         <div id="devs-tabs" class="seg">
           <button id="devlist-btn" type="button">Seznam</button>
-          <button id="sports-btn" type="button">Porty všech switchů</button>
-          <button id="links-btn" type="button">Spoje</button>
+          <button id="sports-btn" type="button">Porty switchů</button>
+          <button id="unm-btn" type="button">Nespravované</button>
         </div>
       </div>
       <button type="button" class="ux-toggle" data-ux="devs-ux" aria-expanded="true" title="Skrýt panel filtrů" aria-label="Skrýt panel filtrů">‹</button>
@@ -171,9 +171,9 @@
           <div id="dev-count" class="ux-count muted"></div>
         </div>
       </div>
-      <div id="links-wrap" class="pane" hidden>
-        <div class="ux-side" id="wl-side"></div>
-        <div class="ux-main" id="wl-main"></div>
+      <div id="unm-wrap" class="pane" hidden>
+        <div class="ux-side" id="unm-side"></div>
+        <div class="ux-main" id="unm-main"></div>
       </div>
       <div id="sports-wrap" class="pane" hidden>
         <div class="ux-side">
@@ -194,6 +194,16 @@
         </div>
       </div>
     </div>
+      </div>
+
+      <div id="view-links" class="view" hidden>
+        <div class="card ux" id="links-ux">
+          <h2 class="sr-only">Bezdrátové spoje</h2>
+          <div id="links-wrap" class="pane">
+            <div class="ux-side" id="wl-side"></div>
+            <div class="ux-main" id="wl-main"></div>
+          </div>
+        </div>
       </div>
 
       <div id="view-ports" class="view" hidden>

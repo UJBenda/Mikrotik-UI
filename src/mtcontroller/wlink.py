@@ -43,7 +43,7 @@ SECTIONS = ["interfaces", "wifi", "wireless", "wgig", "wgig_monitor", "wifi_clie
 # co navíc potřebuje strom topologie (infra.site_infra) pro hledání cizích úseků
 FOREIGN_SECTIONS = ["neighbors", "ethernet_monitor", "stp_bridges", "stp_ports", "bridges", "bridge_ports", "routes_default",
                     "dhcp_client", "bridge_hosts"]
-FOREIGN_FRESH_H = 2               # cizí úsek se měří, jen dokud ho topologie pořád potvrzuje
+
 _UNITS = {"": 1, "k": 1e3, "m": 1e6, "g": 1e9}
 _last_discover = 0.0
 
@@ -188,7 +188,9 @@ def find_foreign(devices: list[dict], invs: dict[str, dict], shared: set[tuple[s
     """Cizí úseky: dvě spravovaná zařízení, mezi kterými je něco nespravovaného (switch, cizí bezdrátový spoj).
     Pozná se to tak, že na portu rodiče směrem k potomkovi visí i klienti (`shared` z evidence nespravovaných
     portů), že za jedním portem je víc spravovaných zařízení, nebo že se zařízení vidí jen přes společnou síť.
-    Signál cizího rádia neznáme – měří se jen ping přes úsek."""
+    Signál cizího rádia neznáme – měří se jen ping přes úsek.
+    Pozor: samo se to nepoužívá. Na skutečné síti to z obyčejných switchů dělalo desítky planých dvojic,
+    proto úseky zakládá správce ručně (`watch`); funkce zůstává jako pomůcka pro nabídku kandidátů."""
     from . import infra
 
     nodes = infra.site_infra(devices, invs).get("nodes") or []
@@ -218,6 +220,46 @@ def find_foreign(devices: list[dict], invs: dict[str, dict], shared: set[tuple[s
     return out
 
 
+def watch(tx: Tx, tenant_id: Any, site_id: Any, a_device: Any, a_iface: str, b_device: Any, user_id: Any = None,
+          ip: str | None = None) -> str:
+    """Ručně založený hlídaný úsek: ping z A (port a_iface) na B přes nespravované zařízení. Vrací id."""
+    from . import inventory
+    from .services import ServiceError, audit
+
+    a_device, b_device, a_iface = str(a_device), str(b_device), str(a_iface or "?").strip()[:100] or "?"
+    devs = {str(r["id"]) for r in tx.fetchall(
+        "SELECT id FROM device WHERE site_id = %(s)s AND id = ANY(string_to_array(%(i)s, ',')::uuid[])",
+        {"s": str(site_id), "i": f"{a_device},{b_device}"})}
+    if a_device == b_device or devs != {a_device, b_device}:
+        raise ServiceError("vyber dvě různá zařízení této lokality")
+    ping = _ping_ip(inventory.load(tx, a_device, ["addresses"]), inventory.load(tx, b_device, ["addresses"]))
+    if not ping:
+        raise ServiceError("zařízení nemají adresu ve společné síti – přes úsek není na co pingat")
+    r = tx.fetchone(
+        """INSERT INTO wlink (tenant_id, site_id, kind, manual, a_device, a_iface, a_mac, b_device, b_iface, b_mac, ping_ip)
+           VALUES (%(t)s, %(s)s, 'foreign', true, %(a)s, %(ai)s, '-', %(b)s, '?', '-', %(ip)s)
+           ON CONFLICT (a_device, a_iface, b_device, b_iface) DO UPDATE SET ping_ip = EXCLUDED.ping_ip, last_seen = now()
+           RETURNING id""",
+        {"t": str(tenant_id), "s": str(site_id), "a": a_device, "ai": a_iface, "b": b_device, "ip": ping})
+    audit(tx, "wlink.watch", tenant_id=tenant_id, user_id=user_id, target=str(r["id"]),
+          after={"a_device": a_device, "a_iface": a_iface, "b_device": b_device, "ping_ip": ping}, ip=ip)
+    return str(r["id"])
+
+
+def unwatch(tx: Tx, tenant_id: Any, link_id: Any, user_id: Any = None, ip: str | None = None) -> bool:
+    """Zruší ručně založený úsek i s měřeními. Bezdrátový spoj (nalezený z rádií) takhle smazat nejde."""
+    from .services import audit
+
+    ln = tx.fetchone("SELECT id, a_device, a_iface, b_device FROM wlink WHERE id = %(l)s AND kind = 'foreign'",
+                     {"l": str(link_id)})
+    if not ln:
+        return False
+    tx.execute("DELETE FROM wlink WHERE id = %(l)s", {"l": str(link_id)})
+    audit(tx, "wlink.unwatch", tenant_id=tenant_id, user_id=user_id, target=str(link_id),
+          before={"a_device": str(ln["a_device"]), "a_iface": ln["a_iface"], "b_device": str(ln["b_device"])}, ip=ip)
+    return True
+
+
 def discover(db: Database) -> int:
     """Projde inventury a založí/obnoví spoje. Zmizelý spoj se nemaže (historie a alert „spoj je dole“)."""
     from . import inventory
@@ -233,17 +275,9 @@ def discover(db: Database) -> int:
                                      FROM device WHERE site_id = %(s)s AND state IN ('adopted', 'offline')""", {"s": sid})
             if len(members) < 2:
                 continue
-            invs = {str(m["id"]): inventory.load(tx, m["id"], SECTIONS + FOREIGN_SECTIONS) for m in members}
-            links = find_links(members, invs)
-            wireless = {(x["device"], x["iface"]) for ln in links for x in (ln["a"], ln["b"])}
-            shared = {(str(r["device_id"]), r["port"]) for r in tx.fetchall(
-                """SELECT device_id, port FROM unmanaged_port WHERE site_id = %(s)s AND shared
-                   AND last_seen > now() - interval '2 hours'""", {"s": sid})}
-            try:
-                links += find_foreign(members, invs, shared, wireless)
-            except Exception:   # topologie je odhad – chyba v ní nesmí zastavit bezdrátové spoje
-                log.exception("lokalita %s: hledání cizích úseků selhalo", sid)
-            for ln in links:
+            invs = {str(m["id"]): inventory.load(tx, m["id"], SECTIONS) for m in members}
+            # jen skutečná rádia; úseky přes nespravované zařízení zakládá správce ručně (watch)
+            for ln in find_links(members, invs):
                 tx.execute(
                     """INSERT INTO wlink (tenant_id, site_id, kind, a_device, a_iface, a_mac, b_device, b_iface, b_mac, ping_ip)
                        VALUES (%(t)s, %(s)s, %(k)s, %(ad)s, %(ai)s, %(am)s, %(bd)s, %(bi)s, %(bm)s, %(ip)s)
@@ -378,9 +412,8 @@ def sample(db: Database, box: Any, limit: int = 100, force: bool = False) -> int
                       b.state AS b_state, host(b.tunnel_ip) AS b_ip, b.api_cert_fingerprint AS b_fp
                FROM wlink l JOIN device a ON a.id = l.a_device JOIN device b ON b.id = l.b_device
                WHERE a.state = 'adopted' AND a.tunnel_ip IS NOT NULL AND a.api_cert_fingerprint IS NOT NULL
-                 AND (l.kind <> 'foreign' OR l.last_seen > now() - make_interval(hours => %(fh)s))
                  AND (%(force)s OR l.sampled_at IS NULL OR l.sampled_at < now() - make_interval(mins => %(m)s))
-               ORDER BY l.sampled_at NULLS FIRST LIMIT %(n)s""", {"m": SAMPLE_EVERY_MIN, "n": limit, "force": force, "fh": FOREIGN_FRESH_H})
+               ORDER BY l.sampled_at NULLS FIRST LIMIT %(n)s""", {"m": SAMPLE_EVERY_MIN, "n": limit, "force": force})
         jobs = []
         for ln in links:
             try:
