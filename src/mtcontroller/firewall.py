@@ -13,6 +13,7 @@ se do matice nepočítají – ukazují se zvlášť, stejně jako v UniFi.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any
 
 BUILTIN = {"all", "none", "dynamic", "static"}
@@ -49,23 +50,119 @@ def zones(inv: dict) -> tuple[list[str], dict[str, list[str]]]:
     return names, members
 
 
-def _match(rule: dict, side: str, all_zones: list[str], members: dict[str, list[str]]) -> set[str]:
-    """Zóny, na které se pravidlo vztahuje na straně in/out."""
-    lst, ifc = rule.get(f"{side}-interface-list"), rule.get(f"{side}-interface")
-    if lst:
-        neg = str(lst).startswith("!")
-        name = str(lst).lstrip("!")
-        if name == "all":
-            return set() if neg else set(all_zones)
-        return set(all_zones) - {name} if neg else ({name} & set(all_zones)) or {name}
-    if ifc:
-        neg = str(ifc).startswith("!")
-        name = str(ifc).lstrip("!")
-        hit = {z for z in all_zones if name in members.get(z, [])}
+# --- kam pravidlo míří: zóny podle seznamu rozhraní, rozhraní, adresy i address-listu ---------------------------
+# Úroveň shody pravidla se zónou: FULL = pravidlo pokrývá celou zónu, PART = jen její část (jedno rozhraní z více,
+# jedna adresa z podsítě), 0 = zóny se netýká. Podmínky na jedné straně se kombinují jako průnik (minimum).
+FULL, PART = 2, 1
+SIDE_KEYS = {"in": ("in-interface-list", "in-interface", "src-address", "src-address-list"),
+             "out": ("out-interface-list", "out-interface", "dst-address", "dst-address-list")}
+LOCATION_KEYS = {k for ks in SIDE_KEYS.values() for k in ks}
+
+
+def _nets(value: Any) -> list:
+    """Adresa pravidla (IP, CIDR, rozsah a–b) → seznam sítí; IPv6 a jména se přeskočí."""
+    out = []
+    for part in str(value or "").split(","):
+        part = part.strip()
+        try:
+            if "-" in part:
+                a, b = part.split("-", 1)
+                out.extend(ipaddress.summarize_address_range(ipaddress.IPv4Address(a.strip()), ipaddress.IPv4Address(b.strip())))
+            elif part:
+                out.append(ipaddress.IPv4Network(part, strict=False))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+class Ctx:
+    """Co je o zónách potřeba vědět k zařazení pravidla: členové, podsítě, rozhraní k internetu, address-listy."""
+
+    def __init__(self, inv: dict, zl: list[str], members: dict[str, list[str]]):
+        self.zones, self.members = zl, members
+        by_if: dict[str, list] = {}
+        for a in _rows(inv, "addresses"):
+            if _true(a.get("disabled")) or not a.get("interface"):
+                continue
+            by_if.setdefault(str(a["interface"]), []).extend(_nets(a.get("address")))
+        self.znets = {z: [n for i in members.get(z, []) for n in by_if.get(i, [])] for z in zl}
+        wan_if = set()
+        for r in _rows(inv, "routes_default"):
+            for key in ("immediate-gw", "gateway"):
+                v = str(r.get(key) or "")
+                if "%" in v:
+                    wan_if.add(v.split("%", 1)[1])
+        for d in _rows(inv, "dhcp_client"):
+            if d.get("interface") and not _true(d.get("disabled")):
+                wan_if.add(str(d["interface"]))
+        self.wan = {z for z in zl if wan_if & set(members.get(z, []))}
+        self.lists: dict[str, list] | None = None
+        if "fw_addrlists" in inv:
+            self.lists = {}
+            for e in _rows(inv, "fw_addrlists"):
+                if not _true(e.get("disabled")) and e.get("list"):
+                    self.lists.setdefault(str(e["list"]), []).extend(_nets(e.get("address")))
+
+    def by_ifaces(self, ifs: set[str], named: str | None = None) -> dict[str, int]:
+        out = {}
+        for z in self.zones:
+            m = set(self.members.get(z, []))
+            if z == named or (m and m <= ifs):
+                out[z] = FULL
+            elif m & ifs:
+                out[z] = PART
+        return out
+
+    def by_nets(self, nets: list) -> dict[str, int]:
+        out, local = {}, False
+        for z in self.zones:
+            zn = self.znets.get(z) or []
+            if zn and all(any(n.subnet_of(r) for r in nets) for n in zn):
+                out[z] = FULL
+            elif any(n.overlaps(r) for n in zn for r in nets):
+                out[z] = PART
+            local = local or z in out
+        if not local:
+            # adresa mimo všechny místní podsítě = někde za linkou k internetu
+            out = {z: PART for z in self.wan}
+        return out
+
+
+def _invert(hit: dict[str, int], zl: list[str]) -> dict[str, int]:
+    """Negace (!): co pravidlo pokrývalo celé, vypadne; co částečně, zůstává částečně; ostatní zóny celé."""
+    return {z: (PART if hit.get(z) == PART else FULL) for z in zl if hit.get(z) != FULL}
+
+
+def _side(rule: dict, side: str, ctx: Ctx, addresses: bool = True) -> tuple[dict[str, int], bool]:
+    """({zóna: úroveň shody}, je_pravidlo_na_této_straně_omezené_místem)."""
+    lst_k, if_k, addr_k, al_k = SIDE_KEYS[side]
+    cur = {z: FULL for z in ctx.zones}
+    scoped = False
+    for key in (lst_k, if_k, addr_k, al_k) if addresses else (lst_k, if_k):
+        raw = rule.get(key)
+        if not raw:
+            continue
+        neg, val = str(raw).startswith("!"), str(raw).lstrip("!")
+        if key == lst_k:
+            if val == "all":
+                hit = {z: FULL for z in ctx.zones}
+            else:
+                hit = ctx.by_ifaces(set(ctx.members.get(val, [])), val if val in ctx.members else None)
+        elif key == if_k:
+            hit = ctx.by_ifaces({val})
+        elif key == addr_k:
+            hit = ctx.by_nets(_nets(val))
+        else:
+            if ctx.lists is None or val not in ctx.lists:
+                # seznam adres neznáme (ještě není v inventuře, dynamický, jména) – může se týkat kterékoli zóny
+                hit, neg = {z: PART for z in ctx.zones}, False
+            else:
+                hit = ctx.by_nets(ctx.lists[val])
         if neg:
-            return set(all_zones) - hit if hit else set(all_zones)
-        return hit or {f"if:{name}"}
-    return set(all_zones)
+            hit = _invert(hit, ctx.zones)
+        scoped = True
+        cur = {z: min(lv, hit[z]) for z, lv in cur.items() if z in hit}
+    return cur, scoped
 
 
 def _states(rule: dict) -> set[str]:
@@ -120,21 +217,26 @@ def _kind(rule: dict) -> str:
         return "return"
     if st == {"invalid"}:
         return "invalid"
-    if act == "jump" or any(rule.get(k) for k in COND_KEYS):
+    if act == "jump" or any(rule.get(k) for k in COND_KEYS if k not in LOCATION_KEYS or rule.get("chain") == "input" and k.startswith("dst-")):
         return "cond"
     if st and not ({"new"} <= st):
         return "cond"
     return "uncond"
 
 
-def _cell(rules: list[dict], pairs: list[tuple[set[str], set[str]]], src: str, dst: str | None) -> dict:
+def _cell(rules: list[dict], sides: list[tuple], src: str, dst: str | None) -> dict:
+    """Co se stane s novým spojením src → dst: první pravidlo, které dvojici pokrývá celou a bez dalších podmínek,
+    rozhodne. Před ním jsou výjimky – jen pravidla, která se místem (rozhraním, adresou) vážou právě k těmto zónám;
+    pravidla bez určení místa (např. „povol ICMP odkudkoli“) platí všude a vedou se zvlášť jako obecná."""
     exceptions: list[int] = []
-    for r, (ins, outs) in zip(rules, pairs):
-        if src not in ins or (dst is not None and dst not in outs):
+    for r, (ins, in_sc, outs, out_sc) in zip(rules, sides):
+        lv = min(ins.get(src, 0), outs.get(dst, 0) if dst is not None else FULL)
+        if not lv:
             continue
         k = r["_kind"]
-        if k == "cond":
-            exceptions.append(r["index"])
+        if k == "cond" or (k == "uncond" and lv == PART):
+            if in_sc or out_sc:
+                exceptions.append(r["index"])
         elif k == "uncond":
             act = str(r.get("action") or "accept")
             if act in ALLOW or act in BLOCK:
@@ -153,11 +255,23 @@ def analyze(inv: dict) -> dict | None:
     rules = []
     for idx, r in enumerate(_rows(inv, "fw_filter")):
         rules.append(dict(r, index=idx, _kind=_kind(r)))
-    out: dict[str, Any] = {"zones": zl, "members": members, "matrix": {}, "router": {},
-                           "return_traffic": {}, "drop_invalid": {}}
+    ctx = Ctx(inv, zl, members)
+    out: dict[str, Any] = {"zones": zl, "members": members, "matrix": {}, "router": {}, "general": {},
+                           "return_traffic": {}, "drop_invalid": {},
+                           "subnets": {z: sorted({str(n) for n in ctx.znets.get(z, [])}) for z in zl}}
+    scope: dict[int, dict] = {}
     for chain in ("forward", "input"):
         ch = [r for r in rules if r.get("chain") == chain]
-        pairs = [(_match(r, "in", zl, members), _match(r, "out", zl, members)) for r in ch]
+        pairs = []
+        for r in ch:
+            ins, in_sc = _side(r, "in", ctx)
+            # do routeru (input) cílová adresa neurčuje zónu – je to podmínka
+            outs, out_sc = _side(r, "out", ctx, addresses=chain == "forward") if chain == "forward" else ({z: FULL for z in zl}, False)
+            pairs.append((ins, in_sc, outs, out_sc))
+            scope[r["index"]] = {"src": sorted(ins) if in_sc else None, "dst": sorted(outs) if out_sc else None}
+        # obecná pravidla: mají podmínku, ale žádné určení místa – platí pro všechny dvojice zón
+        out["general"][chain] = [r["index"] for r, (_i, in_sc, _o, out_sc) in zip(ch, pairs)
+                                 if r["_kind"] == "cond" and not in_sc and not out_sc]
         out["return_traffic"][chain] = any(r["_kind"] == "return" and r.get("action") in ("accept", "fasttrack-connection")
                                            for r in ch)
         out["drop_invalid"][chain] = any(r["_kind"] == "invalid" and r.get("action") in BLOCK for r in ch)
@@ -170,7 +284,8 @@ def analyze(inv: dict) -> dict | None:
                      "summary": describe(r), "comment": r.get("comment"), "disabled": _true(r.get("disabled")),
                      "dynamic": _true(r.get("dynamic")), "invalid": _true(r.get("invalid")),
                      "packets": _int(r.get("packets")), "bytes": _int(r.get("bytes")), "log": _true(r.get("log")),
-                     "kind": r["_kind"]} for r in rules]
+                     "kind": r["_kind"], "src_zones": scope.get(r["index"], {}).get("src"),
+                     "dst_zones": scope.get(r["index"], {}).get("dst")} for r in rules]
     out["nat"] = [{"index": i, "chain": r.get("chain"), "action": r.get("action"), "summary": describe(r),
                    "comment": r.get("comment"), "disabled": _true(r.get("disabled")), "dynamic": _true(r.get("dynamic")),
                    "packets": _int(r.get("packets")), "bytes": _int(r.get("bytes"))}

@@ -124,6 +124,8 @@ SECTIONS: list[Section] = [
             "comment,bytes,packets,invalid"),
     # řízená brána: kdo smí spravovat router (address-list mtc-admin z fwmatrix)
     Section("fw_admin", "/ip/firewall/address-list", "list,address,dynamic,disabled", (("list", "mtc-admin"),)),
+    # ručně vedené seznamy adres: matice zón podle nich pozná, kterých zón se pravidlo týká (dynamické se nečtou)
+    Section("fw_addrlists", "/ip/firewall/address-list", "list,address,disabled", (("dynamic", "false"),)),
     Section("if_lists", "/interface/list", "name,builtin,include,exclude,comment"),
     Section("if_list_members", "/interface/list/member", "list,interface,disabled,dynamic"),
     # WAN: výchozí routy (jen 0.0.0.0/0) a DHCP klient – pro pohled Infrastruktura

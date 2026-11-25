@@ -2651,7 +2651,7 @@ function setBlock(box, title, icon, cols, rows, links, empty) {
     for (const c of cols) tr.appendChild(el("th", c));
     const th = el("thead"); th.appendChild(tr); t.appendChild(th);
     const tb = el("tbody");
-    for (const r of rows) { const x = el("tr"); for (const c of r) { const td = el("td"); if (c && typeof c === "object") td.appendChild(c); else td.textContent = c == null || c === "" ? "–" : String(c); x.appendChild(td); } tb.appendChild(x); }
+    for (const r of rows) { const x = el("tr"); if (r.cls) x.className = r.cls; for (const c of r) { const td = el("td"); if (c && typeof c === "object") td.appendChild(c); else td.textContent = c == null || c === "" ? "–" : String(c); x.appendChild(td); } tb.appendChild(x); }
     t.appendChild(tb); s.appendChild(t);
   }
   const l = el("div", null, "so-links");
@@ -2722,7 +2722,16 @@ async function loadSetInternet() {
 }
 
 // Nastavení → Firewall: zóny, matice a pravidla brány lokality (maketa 11). Jen čtení – úpravy zatím nejsou.
-const setfw = { fw: null, gw: null, sel: null };
+const setfw = { fw: null, gw: null, sel: null, state: "all" };
+const FW_STATES = [["all", __("Vše")], ["on", __("Zapnutá")], ["off", __("Vypnutá")]];
+const fwStateOk = (r) => setfw.state === "all" || (setfw.state === "off") === !!r.disabled;
+const fwZones = (z) => (z == null ? __("kdekoli") : z.length ? z.join(", ") : "–");
+// řádek pravidla: vypnuté je podbarvené a má štítek
+function fwRow(r, cols) {
+  const row = cols(r);
+  if (r.disabled) { row.cls = "fw-off"; const s = el("span"); s.append(document.createTextNode(String(r.index) + " "), el("i", __("vypnuté"), "fw-offtag")); row[0] = s; }
+  return row;
+}
 async function loadSetFirewall() {
   if (!tenantId || !siteId()) return;
   const site = siteId();
@@ -2744,7 +2753,8 @@ function renderSetFirewall() {
   intro.append(document.createTextNode(__("Firewall brány") + " "), dev, document.createTextNode(" · " + __`${fw.rules.length} pravidel, ${fw.zones.length} zón. Zóna = seznam rozhraní na bráně. Zatím jen čtení – úpravy pravidel odsud zatím nejdou.`));
   box.appendChild(intro);
   for (const n of fw.notes || []) box.appendChild(el("div", "▲ " + n, "dz-banner"));
-  setBlock(box, __("Zóny"), "zone", [__("Zóna"), __("Rozhraní")], fw.zones.map((z) => [z, (fw.members[z] || []).join(", ") || __("bez členů")]), [],
+  const sub = fw.subnets || {};
+  setBlock(box, __("Zóny"), "zone", [__("Zóna"), __("Rozhraní"), __("Podsítě")], fw.zones.map((z) => [z, (fw.members[z] || []).join(", ") || __("bez členů"), (sub[z] || []).join(", ") || __("bez adresy")]), [],
     __("Brána nemá žádné seznamy rozhraní – matici nejde sestavit, pravidla jsou níže."));
   if (fw.zones.length) {
     const s = el("section", null, "so-block"), h = el("div", null, "so-h");
@@ -2769,23 +2779,39 @@ function renderSetFirewall() {
     }
     t.appendChild(tb); s.appendChild(t);
     const rt = fw.return_traffic || {};
+    s.appendChild(el("p", __("Číslo v závorce = výjimky, které se k té dvojici zón vážou místem: seznamem rozhraní, rozhraním, adresou nebo seznamem adres. Pravidlo s adresou se přiřadí zóně, do jejíž podsítě adresa patří; zóna bez adresy se pozná jen podle rozhraní."), "muted"));
+    const gen = [...((fw.general || {}).forward || []), ...((fw.general || {}).input || [])];
+    if (gen.length) {
+      const p = el("p", null, "muted"), b = el("button", __`Obecná pravidla (${gen.length})`, "ux-link fw-inl"); b.type = "button";
+      b.addEventListener("click", () => { setfw.sel = setfw.sel === "*" ? null : "*"; renderSetFirewall(); });
+      p.append(b, document.createTextNode(" " + __("nemají určení místa, platí pro všechny dvojice zón a do počtů v matici se nepočítají.")));
+      s.appendChild(p);
+    }
     s.appendChild(el("p", __`Odpovědi na navázaná spojení: ${rt.forward ? __("povolené") : __("pravidlo chybí")}. Neplatné pakety: ${fw.drop_invalid && fw.drop_invalid.forward ? __("zahazují se") : __("nezahazují se")}.`, "muted"));
     box.appendChild(s);
   }
+  const bar = el("div", null, "fw-bar"), seg = el("div");
+  segmented(seg, FW_STATES.map(([v, l]) => [v, v === "all" ? l : `${l} (${[...fw.rules, ...(fw.nat || [])].filter((r) => (v === "off") === !!r.disabled).length})`]), setfw.state, (v) => { setfw.state = v; renderSetFirewall(); });
+  bar.append(el("span", __("Pravidla a NAT:"), "muted"), seg); box.appendChild(bar);
   // pravidla: vybraná buňka = její výjimky a rozhodující pravidlo, jinak všechna
   let list = fw.rules, title = __`Všechna pravidla (${fw.rules.length})`;
-  if (setfw.sel && fw.zones.length) {
+  if (setfw.sel === "*") {
+    const idx = new Set([...((fw.general || {}).forward || []), ...((fw.general || {}).input || [])]);
+    list = fw.rules.filter((r) => idx.has(r.index));
+    title = __`Obecná pravidla (${list.length}) – platí pro všechny zóny`;
+  } else if (setfw.sel && fw.zones.length) {
     const [src, dst] = setfw.sel.split("|"), c = dst ? fw.matrix[src][dst] : fw.router[src];
     const idx = new Set([...c.exceptions, ...(c.rule != null ? [c.rule] : [])]);
     list = fw.rules.filter((r) => idx.has(r.index));
     title = `${src} → ${dst || __("Brána")}: ` + (c.decision === "allow" ? __("povoleno") : __("blokováno")) + (c.note ? ` (${c.note})` : "");
   }
   const act = (r) => el("span", r.action, ["accept", "fasttrack-connection"].includes(r.action) ? "dz-ok-t" : ["drop", "reject", "tarpit"].includes(r.action) ? "dz-bad-t" : "");
-  setBlock(box, title, "rules", ["#", __("Řetězec"), __("Akce"), __("Podmínky"), __("Komentář"), __("Zásahů")],
-    list.map((r) => [r.index, r.chain, act(r), r.summary + (r.disabled ? " · " + __("vypnuté") : ""), r.comment || "–", FW_HITS(r.packets)]),
-    setfw.sel ? [[__("Zobrazit všechna pravidla"), () => { setfw.sel = null; renderSetFirewall(); }]] : [], __("Pro tuhle dvojici zón není žádné pravidlo – platí výchozí povolení."));
+  setBlock(box, title, "rules", ["#", __("Řetězec"), __("Akce"), __("Ze zóny"), __("Do zóny"), __("Podmínky"), __("Komentář"), __("Zásahů")],
+    list.filter(fwStateOk).map((r) => fwRow(r, (x) => [x.index, x.chain, act(x), fwZones(x.src_zones), x.chain === "input" ? __("Brána") : fwZones(x.dst_zones), x.summary, x.comment || "–", FW_HITS(x.packets)])),
+    setfw.sel ? [[__("Zobrazit všechna pravidla"), () => { setfw.sel = null; renderSetFirewall(); }]] : [],
+    setfw.state !== "all" ? __("Žádné pravidlo neodpovídá filtru.") : __("Pro tuhle dvojici zón není žádné vlastní pravidlo – platí obecná pravidla a výchozí povolení."));
   if (fw.nat && fw.nat.length) setBlock(box, __`Překlad adres (NAT, ${fw.nat.length})`, "route", ["#", __("Řetězec"), __("Akce"), __("Podmínky"), __("Komentář"), __("Zásahů")],
-    fw.nat.map((r) => [r.index, r.chain, r.action, r.summary, r.comment || "–", FW_HITS(r.packets)]), [], "");
+    fw.nat.filter(fwStateOk).map((r) => fwRow(r, (x) => [x.index, x.chain, x.action, x.summary, x.comment || "–", FW_HITS(x.packets)])), [], __("Žádné pravidlo neodpovídá filtru."));
 }
 
 // --- rychlé hledání v záhlaví (Ctrl+K): kde co je + zařízení ----------------------------------------------

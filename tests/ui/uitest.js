@@ -466,7 +466,14 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const cells = all(fb, (n) => n.tagName === "BUTTON" && n.className.startsWith("fwz-c"));
       if (byId["setfw-wrap"].hidden || !fb.textContent.includes("Matice zón") || !fb.textContent.includes("Všechna pravidla (") || cells.length < 4) errors.push("nastavení: firewall " + cells.length + " " + fb.textContent.slice(0, 200));
       else {
-        await cells[1].fire("click");
+        // obecná pravidla se do buněk nepočítají, vypnutá pravidla jsou označená a jdou odfiltrovat
+        const txt = () => byId["setfw-body"].textContent;
+        if (!txt().includes("Obecná pravidla (4)") || !txt().includes("bez adresy") || !txt().includes("vypnuté") || !txt().includes("Vypnutá (2)")) errors.push("nastavení: firewall – obecná / vypnutá " + txt().slice(0, 300));
+        const offRows = () => all(byId["setfw-body"], (n) => n.tagName === "TR" && n.className === "fw-off").length;
+        const segOn = all(byId["setfw-body"], (n) => n.tagName === "BUTTON" && n.textContent.startsWith("Zapnutá"))[0];
+        if (offRows() !== 2 || !segOn) errors.push("nastavení: firewall – řádky vypnutých " + offRows());
+        else { await segOn.fire("click"); if (offRows() !== 0) errors.push("nastavení: firewall – filtr zapnutých"); await all(byId["setfw-body"], (n) => n.tagName === "BUTTON" && n.textContent === "Vše")[0].fire("click"); }
+        await all(byId["setfw-body"], (n) => n.tagName === "BUTTON" && n.className.startsWith("fwz-c"))[1].fire("click");
         if (!byId["setfw-body"].textContent.includes("Zobrazit všechna pravidla") || byId["setfw-body"].textContent.includes("Všechna pravidla (")) errors.push("nastavení: firewall – pravidla buňky");
       }
     }

@@ -1569,5 +1569,11 @@ funguje beze změny): Přehled · Wi-Fi · Sítě · Internet · Profily portů 
   (stejná data jako záložka Firewall v detailu zařízení, bere se `…/devices/{brána}`). Klik na buňku ukáže výjimky
   a rozhodující pravidlo dvojice zón, u pravidel je počet zásahů (packets). Jen čtení.
 
+  Zařazení pravidla do zón (`firewall.Ctx`, `_side`): podle seznamu rozhraní, jednoho rozhraní, adresy (zóna, do jejíž
+  podsítě adresa patří; adresa mimo místní podsítě = zóna s linkou k internetu) i seznamu adres (sekce inventury
+  `fw_addrlists`, jen nedynamické položky). Shoda je buď úplná (pravidlo pokrývá celou zónu → může rozhodnout), nebo
+  částečná (→ výjimka). Výjimky se počítají jen u dvojic, ke kterým se pravidlo váže místem; pravidla s podmínkou
+  bez určení místa jsou „obecná“ (`general`) a ukazují se zvlášť. Vypnutá pravidla jsou podbarvená a jdou filtrovat.
+
 Další kroky podle maket 10 a 11 (zatím neuděláno): oznámení po událostech, úpravy firewallu (s plánem a automatickým
 vrácením, generátor je v `fwmatrix.py`), VPN server.

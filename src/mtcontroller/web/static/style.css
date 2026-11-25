@@ -1746,3 +1746,9 @@ button.dz-bar, .dz-watch { cursor: pointer; } button.dz-bar:hover .dz-name, .dz-
 .dz-ok-t { color: var(--ok); } .dz-bad-t { color: var(--bad); }
 #setfw-body .so-t td { white-space: normal; } #setfw-body .dz-banner { font-weight: 500; }
 #setfw-body > p .ux-link { display: inline; width: auto; padding: 0; } .so-links:empty { display: none; }
+
+/* firewall: vypnutá pravidla jemně podbarvená, filtr stavu */
+.so-t tr.fw-off td { background: #f4f5f7; color: var(--muted); }
+.fw-offtag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px; background: #e3e6eb; color: #5c6370; font-style: normal; font-size: 10.5px; line-height: 16px; }
+.fw-bar { display: flex; align-items: center; gap: 10px; font-size: 12.5px; } .fw-bar .seg button { white-space: nowrap; }
+.ux-link.fw-inl { display: inline; width: auto; padding: 0; }
