@@ -150,7 +150,9 @@ def test_bulk_profile_with_watchdog_and_site_ports():
         assert isinstance(sp["networks"], list)
         d = sp["devices"][0]
         e2 = next(p for p in d["ports"] if p["port"] == "ether2")
-        assert e2["clients"] == [{"mac": "AA:AA:AA:00:00:01", "ip": "10.0.0.9", "name": "tiskarna"}], e2["clients"]
+        c0 = e2["clients"][0]
+        assert len(e2["clients"]) == 1 and (c0["mac"], c0["ip"], c0["name"], c0["hostname"]) == ("AA:AA:AA:00:00:01", "10.0.0.9", "tiskarna", "tiskarna")
+        assert {"vendor", "icon", "logo", "label"} <= set(c0)       # podklad pro ikonku klienta ve schématu portů
         assert {"rate", "poe_w", "poe_status", "stp_role", "peer", "sfp"} <= set(e2)
         assert d["manage"] and [p["port"] for p in d["ports"]][:3] == ["ether1", "ether2", "ether3"]
         assert next(p for p in d["ports"] if p["port"] == "ether3")["neighbor"] == "AP-1"

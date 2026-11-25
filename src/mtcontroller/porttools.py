@@ -343,7 +343,14 @@ def site_ports(tx: Tx, site_id: Any) -> list[dict]:
                WHERE c.site_id = %(s)s AND c.device_id IS NOT NULL AND c.port IS NOT NULL AND c.ssid IS NULL
                  AND c.last_seen > now() - interval '20 minutes' ORDER BY c.mac""", {"s": str(site_id)}):
         on_port.setdefault((str(c["device_id"]), str(c["port"])), []).append(
-            {"mac": c["mac"], "ip": c["ip"], "name": c["note"] or c["hostname"] or None})
+            {"mac": c["mac"], "ip": c["ip"], "name": c["note"] or c["hostname"] or None, "hostname": c["hostname"]})
+    # výrobce, popisek, ikona a logo klienta – schéma portů u něj ukazuje ikonku a vede na jeho kartu
+    from . import clientmeta
+
+    clientmeta.annotate(tx, [c for cl in on_port.values() for c in cl])
+    for cl in on_port.values():
+        for c in cl:
+            c["name"] = c.get("label") or c["name"]
     from . import porthealth
 
     health = porthealth.site_health(tx, site_id)

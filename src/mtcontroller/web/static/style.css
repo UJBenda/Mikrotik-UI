@@ -1752,3 +1752,15 @@ button.dz-bar, .dz-watch { cursor: pointer; } button.dz-bar:hover .dz-name, .dz-
 .fw-offtag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px; background: #e3e6eb; color: #5c6370; font-style: normal; font-size: 10.5px; line-height: 16px; }
 .fw-bar { display: flex; align-items: center; gap: 10px; font-size: 12.5px; } .fw-bar .seg button { white-space: nowrap; }
 .ux-link.fw-inl { display: inline; width: auto; padding: 0; }
+
+/* schéma portů: popisek s ikonkou a proklikem na zařízení / klienta */
+.pm-lab.top, .pm-lab.bot { height: 38px; max-width: 46px; width: 46px; }
+.pm-who { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; padding: 0; border: 0; background: none; font: inherit; cursor: pointer; overflow: visible; }
+.pm-who.bot { justify-content: flex-start; }
+.pm-who .pm-name { display: block; width: 46px; font-size: 10px; line-height: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.pm-who:hover .pm-name { color: var(--accent); } .pm-who:hover .cav, .pm-who:hover .pm-ico { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pm-who .cav.sm { width: 20px; height: 20px; font-size: 9px; } .pm-who .cav.sm.ico { font-size: 12px; }
+.pm-ico { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 5px; background: var(--accent-weak); color: var(--accent); }
+.pm-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.pm-ico.off { background: #fde8e8; color: var(--bad); }
+span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center; }

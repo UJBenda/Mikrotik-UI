@@ -5210,6 +5210,35 @@ function pmWhat(p) {
   return p.neighbor || "";
 }
 
+// popisek u dlaždice portu: ikonka + jméno toho, co na portu visí; klik vede na zařízení / kartu klienta,
+// najetí ukáže celé jméno, IP a MAC (jména se do 46 px nevejdou)
+function pmLabel(p, pos) {
+  const cl = p.clients || [];
+  if (!p.peer && !cl.length) { const s = el("span", p.neighbor || "", "pm-lab " + pos); if (p.neighbor) s.title = __`${p.neighbor} (nespravovaný soused z LLDP/MNDP)`; return s; }
+  const b = el("button", null, "pm-lab pm-who " + pos); b.type = "button";
+  let ico, name;
+  if (p.peer) {
+    const dev = devicesCache.find((x) => x.id === p.peer.device_id) || {};
+    ico = el("span", null, "pm-ico dev" + (dev.state === "offline" ? " off" : "")); ico.appendChild(navIcon(dev.role === "ap" ? "links" : dev.role === "gateway" ? "devices" : "ports"));
+    name = p.peer.device || "?";
+    b.title = [name + (p.peer.port ? " · " + p.peer.port : ""), dev.model, dev.tunnel_ip || dev.ip, dev.state === "offline" ? __("offline") : ""].filter(Boolean).join("\n");
+    b.addEventListener("click", () => openDetail(p.peer.device_id));
+  } else {
+    const c = cl[0];
+    ico = clientAvatar(c, "sm"); ico.title = "";
+    name = (c.name || c.mac) + (cl.length > 1 ? ` +${cl.length - 1}` : "");
+    b.title = cl.slice(0, 12).map((x) => [x.name || x.hostname || x.mac, x.ip, x.mac, x.vendor].filter(Boolean).join(" · ")).join("\n") + (cl.length > 12 ? "\n…" : "");
+    b.addEventListener("click", (ev) => {
+      const full = (x) => ({ ...x, hostname: x.hostname || x.name || "" });
+      if (cl.length === 1) return openClient(full(c));
+      ctxMenu(ev, __`${p.port}: ${cl.length} klientů`, cl.slice(0, 20).map((x) => ({ label: (x.name || x.mac) + (x.ip ? " · " + x.ip : ""), act: () => openClient(full(x)) })));
+    });
+  }
+  const t = el("span", name, "pm-name");
+  if (pos === "top") b.append(t, ico); else b.append(ico, t);
+  return b;
+}
+
 async function loadPortMap() {
   if (!tenantId || !siteId()) return;
   try { pm.data = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/ports`); } catch (e) { return msg(e.message, true); }
@@ -5297,9 +5326,9 @@ function pmGrid(d, cell, labels) {
     const grp = el("div", null, "pm-grp"), two = g.length > 8;
     for (let i = 0; i < g.length; i += two ? 2 : 1) {
       const col = el("div", null, "pm-col"), a = g[i], b = two ? g[i + 1] : null;
-      if (labels) col.appendChild(el("span", labels(a), "pm-lab"));
+      if (labels) col.appendChild(labels(a, "top"));
       col.appendChild(cell(a));
-      if (two) { col.appendChild(b ? cell(b) : el("span", "", "pm-gap")); if (labels) col.appendChild(el("span", b ? labels(b) : "", "pm-lab")); }
+      if (two) { col.appendChild(b ? cell(b) : el("span", "", "pm-gap")); if (labels) col.appendChild(b ? labels(b, "bot") : el("span", "", "pm-lab")); }
       grp.appendChild(col);
     }
     face.appendChild(grp);
@@ -5355,7 +5384,7 @@ function renderPortMap() {
       a.addEventListener("click", (e) => { e.preventDefault(); pm.dev = d.device_id; pm.sel = null; renderPortMap(); });
       h.append(a, el("small", " " + [d.model, d.online ? "" : __("offline")].filter(Boolean).join(" · "), "muted")); box.appendChild(h);
     }
-    box.appendChild(pmGrid(d, tile(d), o.conn ? (p) => pmWhat(p).split(" · ")[0] : null));
+    box.appendChild(pmGrid(d, tile(d), o.conn ? pmLabel : null));
     dg.appendChild(box);
   }
   // legenda

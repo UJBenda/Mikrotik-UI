@@ -379,9 +379,15 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     await tlTick();
     {
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
-      const tilesOf = () => { const t = []; find(byId["pm-diagram"], (n) => { if (n.tagName === "BUTTON") t.push(n); return false; }); return t; };
+      const tilesOf = () => { const t = []; find(byId["pm-diagram"], (n) => { if (n.tagName === "BUTTON" && n.className.startsWith("pm-tile")) t.push(n); return false; }); return t; };
       const tiles = tilesOf(), rows = byId["pm-body"].children;
       if (byId["view-ports"].hidden || tiles.length !== 3 || rows.length !== 3) errors.push(`porty: schéma ${tiles.length}, řádků ${rows.length}`);
+      {
+        // popisek u portu: ikonka, celé jméno a IP po najetí, klik otevře zařízení / kartu klienta
+        const who = []; find(byId["pm-diagram"], (n) => { if (n.tagName === "BUTTON" && n.className.includes("pm-who")) who.push(n); return false; });
+        if (who.length !== 2 || !who[0].title.includes("AP-1 · ether1") || !who[1].title.includes("tiskarna · 10.0.10.21 · AA:BB:CC:00:00:01") || who[1].children.length !== 2) errors.push("porty: popisky s ikonkou " + who.map((w) => w.title));
+        else { byId["cl-dlg"].hidden = true; await who[1].fire("click"); if (byId["cl-dlg"].hidden || !byId["cl-title"].textContent.includes("tiskarna")) errors.push("porty: proklik na klienta"); byId["cl-dlg"].hidden = true; }
+      }
       // upozornění nad schématem (port s chybami) a časová osa jen u vybraného zařízení
       if (!byId["pm-banners"].textContent.includes("ether3: 1310 chyb za 24 h") || !byId["pm-tl"].hidden) errors.push("porty: upozornění / osa " + byId["pm-banners"].textContent);
       else {
