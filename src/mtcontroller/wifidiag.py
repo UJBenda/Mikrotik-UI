@@ -311,9 +311,13 @@ def record_samples(tx: Tx, tenant_id: Any, site_id: Any, device_id: Any, data: d
             if not re.fullmatch(r"[0-9A-F]{2}(:[0-9A-F]{2}){5}", mac):
                 continue
             sig = re.match(r"\s*(-\d{2,3})", str(r.get("signal") or r.get("signal-strength") or ""))
-            tx.execute("""INSERT INTO wifi_sample (tenant_id, site_id, device_id, mac, iface, ssid, signal, tx_rate, rx_rate, uptime)
-                          VALUES (%(t)s, %(s)s, %(d)s, %(m)s, %(i)s, %(ss)s, %(sg)s, %(tr)s, %(rr)s, %(u)s)""",
+            # „bytes“ = "odesláno,přijato" z pohledu AP od připojení klienta
+            by = re.fullmatch(r"\s*(\d+)\s*,\s*(\d+)\s*", str(r.get("bytes") or ""))
+            tx.execute("""INSERT INTO wifi_sample (tenant_id, site_id, device_id, mac, iface, ssid, signal, tx_rate, rx_rate,
+                                                   uptime, tx_bytes, rx_bytes)
+                          VALUES (%(t)s, %(s)s, %(d)s, %(m)s, %(i)s, %(ss)s, %(sg)s, %(tr)s, %(rr)s, %(u)s, %(tb)s, %(rb)s)""",
                        {"t": str(tenant_id), "s": str(site_id) if site_id else None, "d": str(device_id), "m": mac,
+                        "tb": int(by.group(1)) if by else None, "rb": int(by.group(2)) if by else None,
                         "i": str(r.get("interface") or "")[:64], "ss": str(r.get("ssid") or "")[:64],
                         "sg": int(sig.group(1)) if sig else None, "tr": str(r.get("tx-rate") or "")[:40],
                         "rr": str(r.get("rx-rate") or "")[:40], "u": str(r.get("uptime") or "")[:40]})

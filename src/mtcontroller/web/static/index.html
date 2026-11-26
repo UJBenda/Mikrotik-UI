@@ -273,6 +273,20 @@
       </div>
 
       <div id="view-clients" class="view" hidden>
+        <div class="seg cv-tabs" role="group" aria-label="Pohled na klienty">
+          <button id="clv-btn" type="button">Rozbor připojení</button>
+          <button id="cll-btn" type="button">Seznam</button>
+        </div>
+        <div id="clv-wrap" class="cv" hidden>
+          <aside class="cv-side" aria-label="Filtry klientů">
+            <input id="cv-q" type="search" placeholder="Hledat jméno, MAC, IP…" aria-label="Hledat klienty">
+            <div id="cv-facets"></div>
+            <button id="cv-clear" type="button" class="ux-link">Zrušit filtry</button>
+          </aside>
+          <div class="cv-list"><div class="cv-list-h"><b>Název</b><span id="cv-count" class="muted"></span></div><div id="cv-list"></div></div>
+          <div class="cv-tl" id="cv-tl"></div>
+          <div class="cv-main" id="cv-main"></div>
+        </div>
         <div class="card ux" id="cl-ux">
           <div class="site-head">
             <h2 class="ux-title">Klienti <span id="cl-count" class="badge"></span></h2>

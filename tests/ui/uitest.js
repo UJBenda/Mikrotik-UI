@@ -423,7 +423,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
         byId["pm-o-vlan"].checked = false; await byId["pm-o-vlan"].fire("change");
       }
     }
-    await byId["nav-clients"].fire("click");
+    await byId["nav-clients"].fire("click"); await byId["cll-btn"].fire("click");
     if (byId["view-clients"].hidden) errors.push("klienti: sekce");
     await byId["nav-settings"].fire("click");
     await byId["wifi-btn"].fire("click");
@@ -735,7 +735,31 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     {
       const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
       const find = (n, pred) => (pred(n) ? n : (n.children || []).reduce((a, x) => a || (x instanceof El ? find(x, pred) : null), null));
-      await byId["nav-clients"].fire("click"); await tick();
+      await byId["nav-clients"].fire("click"); await tick(); await tick();
+      {
+        // klienti → rozbor připojení: výchozí filtr Online + Wi-Fi, první klient se vybere a načte se jeho rozbor
+        const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+        await byId["clv-btn"].fire("click"); await tlTick(); await tlTick(); await tlTick(); await tlTick();
+        const main = () => byId["cv-main"].textContent;
+        if (byId["clv-wrap"].hidden || !byId["cl-ux"].hidden || byId["clv-btn"].className !== "active") errors.push("rozbor: výchozí pohled klientů");
+        if (byId["cv-list"].children.length !== 1 || !byId["cv-list"].textContent.includes("A55-Martina") || !byId["cv-count"].textContent.startsWith("1 ")) errors.push("rozbor: seznam " + byId["cv-list"].textContent);
+        if (!byId["cv-facets"].textContent.includes("Online (1)") || !byId["cv-facets"].textContent.includes("Wi-Fi (1)") || !byId["cv-facets"].textContent.includes("ap-kancelar (1)")) errors.push("rozbor: filtry " + byId["cv-facets"].textContent);
+        if (!main().includes("ap-kancelar") || !main().includes("sw-hala") || !main().includes("Internet") || !main().includes("dostupnost 100 %")) errors.push("rozbor: cesta " + main().slice(0, 200));
+        if (!main().includes("Kanál 36 · 5 GHz · 40 MHz") || !main().includes("Signál -56 dBm") || !main().includes("Přeneseno 24 h")) errors.push("rozbor: klient " + main().slice(0, 400));
+        if (!main().includes("AP ap-kancelar") || !main().includes("Klientů 6") || !main().includes("Cizích sítí na kanálu 2") || !main().includes("ap-hala wifi1")) errors.push("rozbor: AP");
+        if (!main().includes("Odezva 8 ms") || !main().includes("Ztrátovost 0 %")) errors.push("rozbor: lokalita");
+        if (!main().includes("Přechod z ap-hala wifi1 (2,4 GHz) na ap-kancelar wifi2 (5 GHz)") || !main().includes("rychlý přechod (802.11r)") || !main().includes("Odpojeno od ap-hala wifi1") || !main().includes("connection lost")) errors.push("rozbor: záznam " + main().slice(-400));
+        const charts = all(byId["cv-main"], (n) => n.tagName === "SVG" && (n.attrs.class || "") === "cv-chart");
+        if (charts.length !== 3 || !all(charts[0], (n) => n.tagName === "CIRCLE").length) errors.push("rozbor: grafy a značky " + charts.length);
+        if (!all(byId["cv-tl"], (n) => n.tagName === "CIRCLE").length || !byId["cv-tl"].textContent.includes("TEĎ")) errors.push("rozbor: časová osa");
+        // kabel: jiný klient, panel s portem; zrušení filtrů ukáže všechny
+        await byId["cv-clear"].fire("click"); await tlTick(); await tlTick();
+        if (byId["cv-list"].children.length !== 3) errors.push("rozbor: zrušení filtrů " + byId["cv-list"].children.length);
+        await all(byId["cv-main"], (n) => n.tagName === "BUTTON" && n.textContent === "Provoz (NetFlow)")[0].fire("click");
+        if (!main().includes("Sběr provozu (NetFlow) zapneš")) errors.push("rozbor: záložka provoz");
+        await byId["cll-btn"].fire("click"); await tick();
+        if (byId["cl-ux"].hidden || !byId["clv-wrap"].hidden) errors.push("rozbor: přepnutí na seznam");
+      }
       const rows = byId["clients"].children;
       if (rows.length !== 2 || rows[0].children[0].children[0].textContent !== "🗄️" || !rows[1].textContent.includes("TP-LINK"))
         errors.push("klienti: avatar " + rows.length + " " + (rows[0] && rows[0].children[0].textContent));

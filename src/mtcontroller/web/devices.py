@@ -1956,6 +1956,27 @@ async def site_syslog(request: Request, p: Principal, tid: str) -> Response:
 
 
 @endpoint(READ)
+async def site_client_insight(request: Request, p: Principal, tid: str) -> Response:
+    """Rozbor připojení klienta: cesta sítí, signál a provoz v čase, stav AP, internet lokality, události."""
+    from .. import clientview, leases
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    mac = leases.norm_mac(request.query_params.get("mac"))
+    if not mac:
+        raise ServiceError("neplatná MAC adresa")
+    hours = _int(request.query_params.get("hours"), 24, 1, 168)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            return clientview.insight(tx, sid, mac, hours)
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(READ)
 async def site_wifi_journey(request: Request, p: Principal, tid: str) -> Response:
     """Wi-Fi časová osa klienta: u kterého AP byl, signál, roaming, odpojení s důvodem, nálezy."""
     from .. import clientmeta, leases, wifidiag
@@ -2172,6 +2193,7 @@ def routes() -> list[Route]:
         Route(d + "/flow", device_flow, methods=["POST"]),
         Route(s + "/syslog", site_syslog, methods=["POST"]),
         Route(s + "/wifi/journey", site_wifi_journey, methods=["GET"]),
+        Route(s + "/client-insight", site_client_insight, methods=["GET"]),
         Route(s + "/wifi/roaming", site_wifi_roaming, methods=["GET"]),
         Route(d + "/bwtest", device_bwtests, methods=["GET"]),
         Route(d + "/bwtest", device_bwtest_start, methods=["POST"]),

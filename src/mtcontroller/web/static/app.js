@@ -2449,7 +2449,7 @@ const SUBTABS = {
   devices: [["list", "devlist-btn", "devlist-wrap", () => loadDevices()], ["sports", "sports-btn", "sports-wrap", () => loadSitePorts()],
             ["unm", "unm-btn", "unm-wrap", () => loadUnm()]],
   links: [["links", null, null, () => loadLinks()]],
-  clients: [["clients", null, null, () => loadClients()]],
+  clients: [["insight", "clv-btn", "clv-wrap", () => loadClientView()], ["clients", "cll-btn", "cl-ux", () => loadClients()]],
   ports: [["ports", null, null, () => loadPortMap()]],
   settings: [["ov", "setov-btn", "setov-wrap", () => loadSetOverview()], ["inet", "inet-btn", "inet-wrap", () => loadSetInternet()], ["fw", "setfw-btn", "setfw-wrap", () => loadSetFirewall()], ["sec", "setsec-btn", "setsec-wrap", () => loadSetSecurity()],
              ["net", "net-btn", "net-wrap", () => loadNetworks()], ["wifi", "wifi-btn", "wifiset-wrap", () => { loadIntent(); loadWifi(); }],
@@ -2795,6 +2795,268 @@ function fwRow(r, cols) {
   if (r.disabled) { row.cls = "fw-off"; const s = el("span"); s.append(document.createTextNode(String(r.index) + " "), el("i", __("vypnuté"), "fw-offtag")); row[0] = s; }
   return row;
 }
+// --- Klienti → Rozbor připojení (clientview.py): filtry, seznam, časová osa, cesta, klient / AP / lokalita ---
+const cv = { site: null, clients: [], sel: null, hours: 24, q: "", data: null, tab: "log", seq: 0,
+  f: { state: new Set(["online"]), conn: new Set(["wifi"]), ap: new Set(), ssid: new Set(), vlan: new Set(), vendor: new Set() } };
+const CV_HOURS = [[6, __("6 h")], [24, __("24 h")], [168, __("7 dní")]];
+const CV_GROUPS = [["state", __("Stav")], ["conn", __("Připojení")], ["ap", __("Přístupové body")], ["ssid", __("Wi-Fi sítě")], ["vlan", __("Sítě (VLAN)")], ["vendor", __("Výrobce")]];
+const cvName = (c) => c.label || c.hostname || c.mac;
+function cvKeys(c) {
+  return { state: c.online ? "online" : "offline", conn: c.ssid ? "wifi" : "wired", ap: c.ssid ? c.device || "" : "", ssid: c.ssid || "", vlan: c.vlan || "", vendor: c.vendor || "" };
+}
+const CV_LABEL = { online: __("Online"), offline: __("Offline"), wifi: __("Wi-Fi"), wired: __("Kabel") };
+function cvMatch(c, skip) {
+  const k = cvKeys(c);
+  for (const [g] of CV_GROUPS) if (g !== skip && cv.f[g].size && !cv.f[g].has(k[g])) return false;
+  if (cv.q) { const q = cv.q.toLowerCase(); if (![c.label, c.hostname, c.mac, c.ip, c.vendor, c.device].some((x) => String(x || "").toLowerCase().includes(q))) return false; }
+  return true;
+}
+async function loadClientView() {
+  if (!tenantId || !siteId()) return;
+  const site = siteId();
+  if (cv.site !== site) { cv.site = site; cv.sel = null; cv.data = null; cv.clients = []; }
+  try { cv.clients = await api("GET", `/tenants/${tenantId}/sites/${site}/clients?history=1`); } catch (e) { msg(e.message, true); return; }
+  if (site !== siteId()) return;
+  cvRenderList();
+}
+function cvRenderList() {
+  const fb = $("cv-facets"); fb.textContent = "";
+  for (const [g, title] of CV_GROUPS) {
+    // počty u možností: klienti, kteří projdou ostatními skupinami filtrů
+    const counts = new Map();
+    for (const c of cv.clients) if (cvMatch(c, g)) { const k = cvKeys(c)[g]; if (k) counts.set(k, (counts.get(k) || 0) + 1); }
+    for (const k of cv.f[g]) if (!counts.has(k)) counts.set(k, 0);
+    if (!counts.size) continue;
+    const box = el("div", null, "cv-group"); box.appendChild(el("b", title));
+    const keys = [...counts.keys()].sort((a, b) => (g === "state" || g === "conn" ? 0 : counts.get(b) - counts.get(a)) || String(a).localeCompare(String(b), LOCALE));
+    for (const k of keys.slice(0, g === "vendor" ? 8 : 20)) {
+      const lab = el("label"), cb = el("input"); cb.type = "checkbox"; cb.checked = cv.f[g].has(k);
+      cb.addEventListener("change", () => { if (cb.checked) cv.f[g].add(k); else cv.f[g].delete(k); cvRenderList(); });
+      lab.append(cb, el("span", `${CV_LABEL[k] || k} (${counts.get(k)})`)); box.appendChild(lab);
+    }
+    fb.appendChild(box);
+  }
+  const list = $("cv-list"); list.textContent = "";
+  const rows = cv.clients.filter((c) => cvMatch(c)).sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || cvName(a).localeCompare(cvName(b), LOCALE));
+  $("cv-count").textContent = __`${rows.length} klientů`;
+  for (const c of rows.slice(0, 300)) {
+    const b = el("button", null, "cv-row" + (c.mac === cv.sel ? " active" : "")); b.type = "button"; b.title = `${c.mac}${c.ip ? " · " + c.ip : ""}`;
+    b.append(el("i", "", "dz-dot " + (c.online ? "ok" : "")), clientAvatar(c, "sm"), el("span", cvName(c)));
+    b.addEventListener("click", () => cvSelect(c.mac));
+    list.appendChild(b);
+  }
+  if (!rows.length) list.appendChild(el("p", __("Filtrům neodpovídá žádný klient."), "muted wl-note"));
+  if ((!cv.sel || !rows.some((c) => c.mac === cv.sel)) && rows.length) cvSelect(rows[0].mac);
+  else if (!rows.length) { cv.sel = null; cv.data = null; $("cv-main").textContent = ""; $("cv-tl").textContent = ""; }
+}
+async function cvSelect(mac) {
+  cv.sel = mac; const seq = ++cv.seq, site = siteId();
+  for (const b of $("cv-list").children) b.className = "cv-row" + (b.title.startsWith(mac) ? " active" : "");
+  let d = null;
+  try { d = await api("GET", `/tenants/${tenantId}/sites/${site}/client-insight?mac=${encodeURIComponent(mac)}&hours=${cv.hours}`); } catch (e) { msg(e.message, true); }
+  if (seq !== cv.seq || site !== siteId() || !d) return;
+  cv.data = d; cv.extra = {}; cvRender();
+  // doplňky z jiných koncových bodů: provoz rádia AP / portu klienta a NetFlow klienta
+  const c = d.client, jobs = [];
+  if (d.ap && d.ap.radio) jobs.push(api("GET", `/tenants/${tenantId}/devices/${d.ap.id}/traffic?interface=${encodeURIComponent(d.ap.radio)}&hours=${cv.hours}`).then((r) => { cv.extra.radio = r; }).catch(() => {}));
+  if (!c.ssid && c.device_id && c.port && c.port !== "?") jobs.push(api("GET", `/tenants/${tenantId}/devices/${c.device_id}/traffic?interface=${encodeURIComponent(c.port)}&hours=${cv.hours}`).then((r) => { cv.extra.port = r; }).catch(() => {}));
+  if (c.ip) jobs.push(api("GET", `/tenants/${tenantId}/sites/${site}/traffic?hours=${cv.hours}&client=${encodeURIComponent(c.ip)}`).then((r) => { cv.extra.flow = r; }).catch(() => {}));
+  if (jobs.length) { await Promise.all(jobs); if (seq === cv.seq) cvRender(); }
+}
+// graf na společné časové ose: series = [{pts: [[ms, hodnota]], lo, hi, cls, fill, step}], marks = [{t, n}], gaps = [[ms, ms]]
+function cvChart(o) {
+  const W = 760, H = 108, X0 = 6, X1 = W - 40, Y0 = 8, Y1 = H - 16, t0 = o.from, t1 = o.until;
+  const g = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "cv-chart", role: "img", "aria-label": o.label, preserveAspectRatio: "none" });
+  const x = (t) => X0 + (X1 - X0) * Math.min(1, Math.max(0, (t - t0) / (t1 - t0 || 1)));
+  for (const [a, b] of o.gaps || []) g.appendChild(svgEl("rect", { x: x(a), y: Y0, width: Math.max(0, x(b) - x(a)), height: Y1 - Y0, class: "gap" }));
+  for (let k = 0; k < 3; k++) {
+    const y = Y0 + (Y1 - Y0) * k / 2;
+    g.appendChild(svgEl("line", { x1: X0, y1: y, x2: X1, y2: y, class: k === 2 ? "axis" : "grid" }));
+    if (o.right && o.right[k] != null) g.appendChild(svgEl("text", { x: X1 + 5, y: y + 3, class: "lab" }, o.right[k]));
+  }
+  for (const s of o.series) {
+    if (!s.pts.length) continue;
+    const y = (v) => Y0 + (Y1 - Y0) * (1 - (Math.min(s.hi, Math.max(s.lo, v)) - s.lo) / (s.hi - s.lo || 1));
+    // čára se přeruší, kde chybí data déle než 3 kroky (klient nebyl připojený, měření neběželo)
+    const dts = s.pts.slice(1).map((q, i) => q[0] - s.pts[i][0]).sort((u, v) => u - v);
+    const gap = Math.max(s.gap || 20 * 60000, 3 * (dts[Math.floor(dts.length / 2)] || 0)), runs = [[]];
+    for (let i = 0; i < s.pts.length; i++) { if (i && s.pts[i][0] - s.pts[i - 1][0] > gap) runs.push([]); runs[runs.length - 1].push(s.pts[i]); }
+    for (const r of runs) {
+      let d = "";
+      r.forEach(([t, v], i) => { d += (i ? (s.step ? `H${x(t).toFixed(1)}V${y(v).toFixed(1)}` : `L${x(t).toFixed(1)},${y(v).toFixed(1)}`) : `M${x(t).toFixed(1)},${y(v).toFixed(1)}`); });
+      if (r.length === 1) d += `h1`;
+      if (s.fill) g.appendChild(svgEl("path", { d: `${d}L${x(r[r.length - 1][0]).toFixed(1)},${Y1}L${x(r[0][0]).toFixed(1)},${Y1}Z`, class: "fill " + s.cls }));
+      g.appendChild(svgEl("path", { d, class: "ln " + s.cls }));
+    }
+  }
+  for (const m of o.marks || []) {
+    g.appendChild(svgEl("line", { x1: x(m.t), y1: 18, x2: x(m.t), y2: Y1, class: "mark" }));
+    g.appendChild(svgEl("circle", { cx: x(m.t), cy: 11, r: 7, class: "mark" }));
+    g.appendChild(svgEl("text", { x: x(m.t), y: 14, class: "markn" }, String(m.n)));
+  }
+  const day = t1 - t0 > 36 * 3600000;
+  for (let k = 0; k <= 6; k++) {
+    const t = t0 + (t1 - t0) * k / 6;
+    g.appendChild(svgEl("text", { x: x(t), y: H - 3, class: "lab " + (k === 6 ? "end" : k ? "mid" : "") },
+      k === 6 ? __("teď") : new Date(t).toLocaleString(LOCALE, day ? { day: "numeric", month: "numeric", hour: "2-digit" } : { hour: "2-digit", minute: "2-digit" })));
+  }
+  return g;
+}
+function cvStat(cls, label, val) {
+  const s = el("span", null, "cv-stat"); if (cls) s.appendChild(el("i", "", "k " + cls));
+  s.append(document.createTextNode(label + " "), el("b", val)); return s;
+}
+function cvPanel(title, stats, chart, foot) {
+  const s = el("section", null, "cv-panel"), h = el("div", null, "cv-ph"); h.appendChild(el("b", title));
+  for (const x of stats) if (x) h.appendChild(x);
+  s.appendChild(h); if (chart) s.appendChild(chart); if (foot) s.appendChild(foot); return s;
+}
+// události pro záznam i značky v grafech: přechody mezi AP, připojení, odpojení, neúspěšná přihlášení
+function cvEvents(d) {
+  const j = d.journey, lanes = {}; for (const l of j.lanes) lanes[l.key] = l;
+  const ap = (k) => (lanes[k] ? `${lanes[k].ap} ${lanes[k].radio}${lanes[k].band ? " (" + lanes[k].band.replace(".", ",") + " GHz)" : ""}` : "?");
+  const sig = (v) => (v == null ? "" : ` · ${v} dBm`), out = [], roamAt = new Set();
+  for (const r of j.roams) {
+    roamAt.add(new Date(r.at).getTime());
+    out.push({ at: r.at, kind: "roam", text: __`Přechod z ${ap(r.from)} na ${ap(r.to)}` + (r.how === "ft" ? " · " + __("rychlý přechod (802.11r)") : r.how === "reconnect" ? " · " + __("s novým přihlášením") : r.how === "inferred" ? " · " + __("čas podle inventury") : "") });
+  }
+  for (const e of j.events) {
+    const t = new Date(e.at).getTime();
+    if (e.kind === "disconnected") out.push({ at: e.at, kind: "down", text: __`Odpojeno od ${ap(e.lane)}` + (e.reason ? " · " + e.reason : "") + sig(e.signal) });
+    else if (e.kind === "auth_fail") out.push({ at: e.at, kind: "fail", text: __`Neúspěšné přihlášení na ${ap(e.lane)}` + (e.reason ? " · " + e.reason : "") });
+    else if (!roamAt.has(t)) out.push({ at: e.at, kind: "up", text: __`Připojeno na ${ap(e.lane)}` + sig(e.signal) + (e.ft ? " · " + __("rychlý přechod (802.11r)") : "") });
+  }
+  return out.sort((a, b) => new Date(b.at) - new Date(a.at));
+}
+function cvMarks(evs, from, until) {
+  // značky blízko sebe (do 2 % šířky grafu) se sloučí do jedné s počtem
+  const tol = (until - from) * 0.02, out = [];
+  for (const e of evs.filter((x) => x.kind !== "up").map((x) => new Date(x.at).getTime()).sort((a, b) => a - b)) {
+    const last = out[out.length - 1];
+    if (last && e - last.t <= tol) last.n++; else out.push({ t: e, n: 1 });
+  }
+  return out;
+}
+function cvRender() {
+  const d = cv.data, main = $("cv-main"); main.textContent = "";
+  if (!d) return;
+  const c = d.client, j = d.journey, from = new Date(j.from).getTime(), until = new Date(j.until).getTime();
+  const evs = cvEvents(d), marks = cvMarks(evs, from, until), ms = (t) => new Date(t).getTime();
+  cvTimeline(evs, from, until);
+  // cesta k internetu
+  const path = el("section", null, "cv-panel cv-path");
+  d.path.forEach((h, i) => {
+    const n = el(h.kind === "device" && h.id ? "button" : "div", null, "cv-hop " + h.kind + (h.state === "offline" ? " off" : ""));
+    if (n.tagName === "BUTTON") { n.type = "button"; n.addEventListener("click", () => openDetail(h.id)); }
+    if (h.kind === "client") n.appendChild(clientAvatar(c, "sm")); else n.appendChild(navIcon(h.kind === "wan" ? "globe" : "devices"));
+    n.append(el("b", h.name || "?"), el("span", h.kind === "wan" && h.availability != null ? __`dostupnost ${h.availability} %` : h.l1 || "", "muted"), el("span", h.l2 || "", "muted"));
+    path.appendChild(n);
+    if (i < d.path.length - 1) { const w = el("div", null, "cv-wire" + (h.wireless ? " air" : "")); w.append(el("span", h.link || ""), el("i")); path.appendChild(w); }
+  });
+  main.appendChild(path);
+  // klient
+  const a = d.ap, w = d.wifi, band = (x) => (x.band ? `${String(x.band).replace(".", ",")} GHz` : "");
+  const sigPts = j.samples.filter((s) => s.signal != null).map((s) => [ms(s.at), s.signal]);
+  const actPts = d.activity.map((x) => [ms(x.at), x.down + x.up]), actMax = Math.max(1, ...actPts.map((p) => p[1]));
+  const total = d.activity.reduce((n, x) => n + x.down + x.up, 0);
+  const gaps = []; let prev = from;
+  for (const s of j.segments) { if (ms(s.start) - prev > 6 * 60000) gaps.push([prev, ms(s.start)]); prev = Math.max(prev, ms(s.end)); }
+  if (j.segments.length && until - prev > 10 * 60000) gaps.push([prev, until]);
+  if (c.ssid || j.samples.length) {
+    main.appendChild(cvPanel(__("Klient"), [
+      a && a.channel ? cvStat(null, __("Kanál"), `${a.channel} · ${band(a)}${a.width ? " · " + a.width + " MHz" : ""}`) : null,
+      w && w.signal != null ? cvStat("sig", __("Signál"), `${w.signal} dBm`) : null,
+      w && (w.tx_rate || w.rx_rate) ? cvStat(null, __("Rychlost"), `↓ ${String(w.tx_rate || "–").split("-")[0]} / ↑ ${String(w.rx_rate || "–").split("-")[0]}`) : null,
+      cvStat("act", cv.hours === 24 ? __("Přeneseno 24 h") : __("Přeneseno"), d.activity.length ? fmtBytes(total) : "–")],
+      cvChart({ label: __("Signál a přenesená data klienta"), from, until, gaps, marks, right: ["−40", "−67", "−95 dBm"],
+        series: [{ pts: actPts, lo: 0, hi: actMax, cls: "act", fill: true }, { pts: sigPts, lo: -95, hi: -40, cls: "sig" }] }),
+      el("p", sigPts.length ? __("šedě = klient nebyl připojený · kroužky = přechody mezi AP a odpojení") : __("Za zvolené období nejsou vzorky signálu – klient nebyl na Wi-Fi vidět."), "muted small")));
+  } else {
+    const pts = cv.extra.port && cv.extra.port.points || [];
+    const dn = pts.map((p) => [ms(p.t), Number(p.tx) || 0]), up = pts.map((p) => [ms(p.t), Number(p.rx) || 0]), mx = Math.max(1, ...dn.map((p) => p[1]), ...up.map((p) => p[1]));
+    main.appendChild(cvPanel(__("Klient"), [cvStat(null, __("Port"), `${c.port || "?"} · ${c.device || "?"}`), c.vlan ? cvStat(null, "VLAN", c.vlan) : null,
+      pts.length ? cvStat("act", __("Teď"), `↓ ${fmtBps(dn[dn.length - 1][1])} / ↑ ${fmtBps(up[up.length - 1][1])}`) : null],
+      cvChart({ label: __("Provoz portu klienta"), from, until, right: [fmtBps(mx), fmtBps(mx / 2), "0"], series: [{ pts: dn, lo: 0, hi: mx, cls: "act", fill: true, gap: 4 * 3600000 }, { pts: up, lo: 0, hi: mx, cls: "sig", gap: 4 * 3600000 }] }),
+      el("p", __("Klient na kabelu: provoz portu, na kterém je připojený (fialová = ke klientovi, zelená = od klienta)."), "muted small")));
+  }
+  // AP
+  if (a) {
+    const cl = a.series.map((p) => [ms(p.at), p.clients]), cmax = Math.max(4, ...cl.map((p) => p[1]));
+    const rp = cv.extra.radio && cv.extra.radio.points || [], rt = rp.map((p) => [ms(p.t), (Number(p.tx) || 0) + (Number(p.rx) || 0)]), rmax = Math.max(1, ...rt.map((p) => p[1]));
+    const foot = el("div", null, "cv-others");
+    if (a.others.length) {
+      foot.appendChild(el("span", __("Další AP za období:"), "muted"));
+      for (const o of a.others) { const t = el("span", null, "cv-other"); t.append(el("b", `${o.ap} ${o.radio}`), el("span", ` ${o.band ? o.band.replace(".", ",") + " GHz · " : ""}${o.times}×${o.last_signal != null ? " · " + o.last_signal + " dBm" : ""}`, o.last_signal != null && o.last_signal <= -75 ? "bad" : "muted")); foot.appendChild(t); }
+    }
+    main.appendChild(cvPanel(`AP ${a.name || ""}`, [cvStat(null, __("Rádio"), `${a.radio}${a.channel ? " · " + __("kanál") + " " + a.channel : ""}`), cvStat("cli", __("Klientů"), String(a.clients)),
+      rt.length ? cvStat("act", __("Provoz rádia"), fmtBps(rt[rt.length - 1][1])) : null, a.channel ? cvStat(null, __("Cizích sítí na kanálu"), String(a.foreign)) : null],
+      cvChart({ label: __("Počet klientů a provoz rádia AP"), from, until, marks, right: [String(cmax), String(Math.round(cmax / 2)), "0"],
+        series: [{ pts: rt, lo: 0, hi: rmax, cls: "act", fill: true, gap: 4 * 3600000 }, { pts: cl, lo: 0, hi: cmax, cls: "cli", step: true, gap: cv.hours > 48 ? 3 * 3600000 : 20 * 60000 }] }), a.others.length ? foot : null));
+  }
+  // lokalita
+  const sp = d.site.points, rtt = sp.filter((p) => p.rtt != null).map((p) => [ms(p.at), p.rtt]), loss = sp.map((p) => [ms(p.at), p.loss || 0]);
+  const rmx = Math.max(20, ...rtt.map((p) => p[1])), lastR = rtt.length ? rtt[rtt.length - 1][1] : null, lastL = loss.length ? loss[loss.length - 1][1] : null;
+  main.appendChild(cvPanel(__("Lokalita"), [cvStat("rtt", __("Odezva"), lastR == null ? "–" : `${Math.round(lastR)} ms`), cvStat("loss", __("Ztrátovost"), lastL == null ? "–" : `${Math.round(lastL)} %`),
+    cvStat("sig", __("Dostupnost"), d.site.availability == null ? "–" : `${d.site.availability} %`)],
+    sp.length ? cvChart({ label: __("Odezva a ztrátovost internetu"), from, until, right: [`${Math.round(rmx)} ms`, String(Math.round(rmx / 2)), "0"],
+      series: [{ pts: rtt, lo: 0, hi: rmx, cls: "rtt", gap: cv.hours > 48 ? 3 * 3600000 : 20 * 60000 }, { pts: loss, lo: 0, hi: 100, cls: "loss", gap: cv.hours > 48 ? 3 * 3600000 : 20 * 60000 }] }) : null,
+    sp.length ? null : el("p", __("Měření internetu zatím nemá data (potřebuje bránu s rolí Brána)."), "muted small")));
+  // záznam připojení / provoz
+  const log = el("section", null, "cv-panel cv-log"), seg = el("div", null, "seg");
+  for (const [k, lab] of [["log", __("Záznam připojení")], ["flow", __("Provoz (NetFlow)")]]) { const b = el("button", lab, cv.tab === k ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { cv.tab = k; cvRender(); }); seg.appendChild(b); }
+  const edit = actBtn(__("Karta klienta"), () => { const full = cv.clients.find((x) => x.mac === c.mac); if (full) openClient(full); }, "small secondary");
+  const lh = el("div", null, "cv-ph"); lh.append(seg, edit); log.appendChild(lh);
+  if (cv.tab === "log") {
+    for (const f of j.findings || []) if (f.severity !== "ok") log.appendChild(drillLine(f.severity, f.text.charAt(0).toUpperCase() + f.text.slice(1), f.fix, []));
+    if (!evs.length) log.appendChild(el("p", c.ssid || j.samples.length ? __("Za zvolené období žádné přechody ani odpojení.") : __("Klient na kabelu – záznam Wi-Fi připojení se ho netýká."), "muted wl-note"));
+    else {
+      const t = el("table", null, "so-t");
+      for (const e of evs.slice(0, 200)) { const tr = el("tr"); tr.append(el("td", e.text, "cv-ev " + e.kind), el("td", new Date(e.at).toLocaleString(LOCALE), "muted cv-when")); t.appendChild(tr); }
+      log.appendChild(t);
+    }
+  } else {
+    const fl = cv.extra.flow;
+    if (!fl || !fl.total || !fl.total.flows) log.appendChild(el("p", c.ip ? __("Pro tohoto klienta nejsou data z brány. Sběr provozu (NetFlow) zapneš v Aktivita → Provoz.") : __("Klient nemá známou IP adresu."), "muted wl-note"));
+    else {
+      const tot = (r) => r.up + r.down;
+      setBlock(log, __("Služby"), "rules", [__("Služba"), __("Staženo"), __("Odesláno")], fl.services.map((x) => [x.name === "ostatní" ? __("ostatní") : x.name, fmtBytes(x.down), fmtBytes(x.up)]), [], "");
+      setBlock(log, __("Kam provoz směřuje"), "globe", [__("Adresa"), __("Služba"), __("Celkem")], fl.peers.map((x) => [x.ip, x.service, fmtBytes(tot(x))]), [], "");
+    }
+  }
+  main.appendChild(log);
+}
+function cvTimeline(evs, from, until) {
+  const box = $("cv-tl"); box.textContent = "";
+  const seg = el("div", null, "seg");
+  for (const [h, lab] of CV_HOURS) { const b = el("button", lab, h === cv.hours ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { cv.hours = h; if (cv.sel) cvSelect(cv.sel); }); seg.appendChild(b); }
+  box.append(el("div", __`${evs.length} událostí`, "muted small"), seg);
+  const H = 520, g = svgEl("svg", { viewBox: `0 0 110 ${H}`, class: "cv-tlsvg", role: "img", "aria-label": __("Časová osa událostí klienta"), preserveAspectRatio: "xMidYMin meet" });
+  const y = (t) => 26 + (H - 36) * (until - t) / (until - from || 1);
+  g.appendChild(svgEl("rect", { x: 52, y: 26, width: 8, height: H - 36, rx: 4, class: "bar" }));
+  const day = until - from > 36 * 3600000;
+  for (let k = 1; k <= 6; k++) {
+    const t = until - (until - from) * k / 6;
+    g.appendChild(svgEl("text", { x: 44, y: y(t) + 3, class: "lab" }, new Date(t).toLocaleString(LOCALE, day ? { day: "numeric", month: "numeric" } : { hour: "2-digit", minute: "2-digit" })));
+    g.appendChild(svgEl("line", { x1: 47, y1: y(t), x2: 52, y2: y(t), class: "tick" }));
+  }
+  // události blízko sebe sloučit do jedné tečky s počtem; barva podle nejhorší
+  const tol = (until - from) * 0.025, groups = [];
+  for (const e of [...evs].sort((a, b) => new Date(b.at) - new Date(a.at))) {
+    const t = new Date(e.at).getTime(), last = groups[groups.length - 1];
+    if (last && last.t - t <= tol) { last.n++; last.bad = last.bad || e.kind === "down" || e.kind === "fail"; }
+    else groups.push({ t, n: 1, bad: e.kind === "down" || e.kind === "fail" });
+  }
+  for (const gr of groups) {
+    g.appendChild(svgEl("circle", { cx: 56, cy: y(gr.t), r: 5, class: "ev" + (gr.bad ? " bad" : "") }));
+    if (gr.n > 1) g.appendChild(svgEl("text", { x: 70, y: y(gr.t) + 4, class: "cnt" }, String(gr.n)));
+  }
+  g.appendChild(svgEl("line", { x1: 0, y1: 26, x2: 110, y2: 26, class: "now" }));
+  g.appendChild(svgEl("text", { x: 6, y: 18, class: "nowt" }, __("TEĎ")));
+  box.appendChild(g);
+}
+$("cv-q").addEventListener("input", () => { cv.q = $("cv-q").value.trim(); cvRenderList(); });
+$("cv-clear").addEventListener("click", () => { for (const [g] of CV_GROUPS) cv.f[g].clear(); cv.q = ""; $("cv-q").value = ""; cvRenderList(); });
+
 // --- Aktivita → Provoz: kdo s kým a kolik (NetFlow z brány, flow.py) -----------------------------------
 const flowv = { data: null, hours: 24, client: null };
 const FLOW_RANGES = [[24, __("24 hodin")], [168, __("7 dní")], [720, __("30 dní")]];
@@ -6327,7 +6589,7 @@ function drawInfra() {
       const pill = g("ext more");
       pill.appendChild(svgEl("rect", { x: x - EW / 2, y: top, width: EW, height: EH, rx: 8 }));
       pill.appendChild(svgEl("text", { x, y: top + 25, class: "t1" }, __`+ ${n.more} dalších klientů`));
-      pill.addEventListener("click", () => { showView("clients"); $("clients-filter").value = n.dev.label || ""; loadClients(); });
+      pill.addEventListener("click", () => { $("clients-filter").value = n.dev.label || ""; openSub("clients", "clients"); });
       nodes.appendChild(pill);
       continue;
     }

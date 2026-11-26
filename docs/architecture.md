@@ -1726,3 +1726,25 @@ podle MAC rádia a jména CAP (`/interface/wifi/radio` na správci, pole `cap` =
 jedno zařízení) a přes `master-interface` pro další SSID. Klient pak má `device` = AP a `port` = rádio AP;
 od toho se odvíjí mapa, Přehled (signál podle AP, počty klientů) i historie polohy. Starý CAPsMAN (`/caps-man`)
 se nepřekládá.
+
+## Klienti → Rozbor připojení (`clientview.py`)
+
+Výchozí pohled sekce Klienti (`loadClientView`, `cv*` v app.js; původní tabulka je druhá záložka „Seznam“).
+Rozložení podle UniFi: filtry (stav, drát / Wi-Fi, AP, Wi-Fi síť, VLAN, výrobce) → seznam klientů → svislá časová
+osa událostí → cesta klienta k internetu a tři grafy na společné časové ose (klient, jeho AP, lokalita) →
+záznam připojení / provoz z NetFlow.
+
+Jedna odpověď `GET …/sites/{id}/client-insight?mac=&hours=` skládá, co už máme: `wifidiag.client_journey`
+(dráhy AP, signál, přechody, odpojení, nálezy), `infra.site_view` (cesta přes nadřazená zařízení k bráně),
+skutečný kanál rádia (`wifi_monitor` na AP nebo rozhraní CAP na správci), počet klientů AP v čase (ze
+`wifi_sample`, rozhraní správce přeložená na AP), cizí sítě na kanálu (`wifi_bss`) a `wanprobe.series`.
+Provoz rádia AP, provoz portu u klienta na kabelu a NetFlow klienta si rozhraní dotahuje ze stávajících
+koncových bodů.
+
+Nově se ukládá jen přenesený objem Wi-Fi klienta: `wifi_sample.tx_bytes/rx_bytes` (migrace 0040) z pole `bytes`
+registrační tabulky; `clientview.activity` z čítačů počítá rozdíly (čítač, který klesl, nebo jiné rádio = nové
+připojení).
+
+Co proti UniFi chybí, protože to RouterOS přes API nedává: opakované přenosy (TX retries), vytížení éteru,
+rušení, seznam AP, která klienta slyší (ukazují se AP, na kterých klient v období skutečně byl), a rozpoznání
+aplikací.
