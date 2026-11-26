@@ -57,7 +57,7 @@ SECTIONS: list[Section] = [
             "chain,in-interface,src-mac-address,action,disabled,comment"),
     Section("bridges", "/interface/bridge",
             "name,vlan-filtering,protocol-mode,pvid,frame-types,ingress-filtering,disabled,comment,priority,"
-            "dhcp-snooping,add-dhcp-option82,igmp-snooping,mtu,mlag-peer-port,mlag-priority"),
+            "dhcp-snooping,add-dhcp-option82,igmp-snooping,mtu,mlag-peer-port,mlag-priority,region-name,region-revision"),
     Section("bridge_ports", "/interface/bridge/port",
             "bridge,interface,pvid,frame-types,ingress-filtering,hw,disabled,inactive,dynamic,comment,edge,trusted,learn"),
     Section("bridge_vlans", "/interface/bridge/vlan",

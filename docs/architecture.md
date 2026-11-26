@@ -1776,3 +1776,10 @@ Zařízení → Příprava: průvodce, kterým se naklikne konfigurace kusu, kte
   `deployed`; schválení zůstává ruční. Párování je v auditu `device.register`.
 - **Rozhraní**: schéma portů s výběrem tažením, Ctrl+klik a Shift+klik (rozsah), klávesnicí Enter/mezerník;
   průběžná kontrola, že VLAN správy vede ven.
+- **Doručení bez spojení s controllerem** je první volba v kroku kontroly: soubor `.rsc` + příkaz pro reset
+  s `run-after-reset` (sám pozná složku `flash/`). Jednořádkový příkaz je jen pro kus, který na controller vidí.
+- **Spanning tree**: návrh nese režim (RSTP / MSTP) a u MSTP jméno a revizi regionu; výchozí hodnota je to,
+  co převažuje na bridgích lokality (inventura čte `region-name`, `region-revision`). VLAN zůstávají v CIST,
+  mapování do MSTI se nepřenáší (průvodce na to upozorní).
+- **VLAN správy u lokality mimo řízení** (`_guess_mgmt`): síť, ve které má adresu nejvíc zařízení; netagovaná
+  síť se stejným rozsahem (táž síť viděná z brány) se z nabídky vypustí.

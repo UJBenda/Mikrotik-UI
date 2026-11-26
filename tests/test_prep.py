@@ -194,3 +194,33 @@ def test_api_and_pairing():
         assert c.get(f"/api/admin/tenants/{tid}/sites/00000000-0000-0000-0000-000000000000/prep").status_code == 404
     finally:
         drop_db(name)
+
+
+def test_mstp_and_mgmt_guess():
+    ports = [f"ether{i}" for i in range(1, 5)]
+    ctx = {"networks": [{"vid": v, "name": f"N{v}", "purpose": "lan", "subnet": None, "gateway": None, "dns": []} for v in (90, 93)],
+           "mgmt_vlan": 93, "mgmt_native": False, "managed": False, "models": [], "profiles": []}
+    base = {"name": "T", "model": "X", "port_names": ports, "poe_ports": [], "unset": "off",
+            "ports": {"ether1": {"mode": "access", "vlan": 90, "edge": True}, "ether4": {"mode": "trunk"}},
+            "mgmt": {"vid": 93, "native": False, "mode": "dhcp"}}
+    plan = prep.validate({**base, "stp": {"mode": "mstp", "region": "FIRMA", "revision": 3}})
+    s = prep.script(plan, ctx, "https://c.example/enroll/KEY", OPTS)
+    assert '/interface bridge set bridge protocol-mode=mstp region-name="FIRMA" region-revision=3' in s
+    assert _balanced(s) and s.isascii()
+    assert any("MSTI" in w for w in prep.build(plan, ctx)["warnings"])
+    assert "protocol-mode=mstp" not in prep.script(prep.validate(base), ctx, "https://c.example/enroll/KEY", OPTS)   # výchozí RSTP
+    with pytest.raises(Exception):
+        prep.validate({**base, "stp": {"mode": "mstp", "region": "má mezeru"}})
+    # co má lokalita: převažuje MSTP → nabídne se s regionem
+    invs = {"a": {"bridges": [{"name": "bridge", "protocol-mode": "mstp", "region-name": "FIRMA", "region-revision": "3"}]},
+            "b": {"bridges": [{"name": "bridge", "protocol-mode": "mstp"}]}, "c": {"bridges": [{"name": "b", "protocol-mode": "rstp"}]}}
+    assert prep._site_stp(invs) == {"mode": "mstp", "region": "FIRMA", "revision": 3}
+    assert prep._site_stp({}) == {"mode": "rstp", "region": "", "revision": 0}
+    # VLAN správy lokality mimo řízení: síť, kde má adresu nejvíc zařízení; na VLAN rozhraní = na trunku s tagem
+    obs = [{"vlan_id": None, "subnet": "192.168.93.0/24", "name": "bridge-vlan93"}, {"vlan_id": 90, "subnet": "192.168.90.0/24"},
+           {"vlan_id": 93, "subnet": "192.168.93.0/24"}]
+    sw = lambda ip: {"vlans": [{"name": "mng", "vlan-id": "93"}], "addresses": [{"address": ip, "interface": "mng"}]}
+    gw = {"addresses": [{"address": "192.168.90.1/24", "interface": "v90"}, {"address": "192.168.93.1/24", "interface": "bridge-vlan93"}]}
+    g = prep._guess_mgmt(obs, {"gw": gw, "s1": sw("192.168.93.40/24"), "s2": sw("192.168.93.41/24")})
+    assert g["vid"] == 93 and g["native"] is False
+    assert prep._guess_mgmt(obs, {"gw": gw}) is None

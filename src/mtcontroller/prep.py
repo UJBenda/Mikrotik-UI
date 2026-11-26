@@ -65,6 +65,54 @@ def catalog(tx: Tx) -> list[dict]:
     return sorted(out.values(), key=lambda m: m["model"])
 
 
+def _guess_mgmt(observed: list[dict], invs: dict[str, dict]) -> dict | None:
+    """Lokalita mimo řízení: VLAN správy = síť, ve které má adresu nejvíc zařízení (brána má adresu ve všech,
+    switche a AP jen ve správě). native = False, když ji zařízení mají na VLAN rozhraní (na trunku jde s tagem)."""
+    best = None
+    for o in observed:
+        vid = o.get("vlan_id")
+        if not vid or not o.get("subnet"):
+            continue
+        try:
+            net = ipaddress.ip_network(str(o["subnet"]))
+        except ValueError:
+            continue
+        count, on_vlan = 0, 0
+        for inv in invs.values():
+            vlan_ifaces = {str(v.get("name")) for v in _rows(inv, "vlans") if str(v.get("vlan-id")) == str(vid)}
+            hit = None
+            for a in _rows(inv, "addresses"):
+                try:
+                    if ipaddress.ip_interface(str(a.get("address"))).ip in net:
+                        hit = str(a.get("interface") or "")
+                        break
+                except ValueError:
+                    continue
+            if hit is not None:
+                count += 1
+                on_vlan += hit in vlan_ifaces
+        if count >= 2 and (best is None or count > best["count"]):
+            best = {"vid": int(vid), "subnet": o["subnet"], "count": count, "native": int(vid) == 1 or on_vlan * 2 < count}
+    return best
+
+
+def _site_stp(invs: dict[str, dict]) -> dict:
+    """Co má lokalita na bridgích: převažující režim STP a jméno/revize MSTP regionu (pokud ho inventura zná)."""
+    modes: dict[str, int] = {}
+    region, revision = "", 0
+    for inv in invs.values():
+        for b in _rows(inv, "bridges"):
+            mode = str(b.get("protocol-mode") or "none")
+            if str(b.get("disabled")).lower() == "true" or mode not in ("rstp", "mstp"):
+                continue
+            modes[mode] = modes.get(mode, 0) + 1
+            if mode == "mstp" and not region and b.get("region-name"):
+                region = str(b["region-name"])
+                revision = int(b["region-revision"]) if str(b.get("region-revision") or "").isdigit() else 0
+    mode = "mstp" if modes.get("mstp", 0) > modes.get("rstp", 0) else "rstp"
+    return {"mode": mode, "region": region if mode == "mstp" else "", "revision": revision if mode == "mstp" else 0}
+
+
 def context(tx: Tx, site_id: Any) -> dict:
     """Co průvodce potřebuje vědět o lokalitě: sítě (záměr, jinak zjištěné na zařízeních), VLAN správy, modely, profily."""
     sid = str(site_id)
@@ -72,7 +120,12 @@ def context(tx: Tx, site_id: Any) -> dict:
     devs = tx.fetchall("""SELECT id, serial, identity, model FROM device WHERE site_id = %(s)s
                           AND state IN ('adopted', 'offline')""", {"s": sid})
     invs = {str(d["id"]): inventory.load(tx, d["id"]) for d in devs}
-    it = cur["data"] if cur else intentmod.from_observed(dhcpguard.site_networks(devs, invs)["networks"])
+    observed = [] if cur else dhcpguard.site_networks(devs, invs)["networks"]
+    guess = None if cur else _guess_mgmt(observed, invs)
+    if guess:
+        # netagovaná síť se stejným rozsahem jako VLAN správy je táž síť viděná z brány – jako „VLAN 1“ by mátla
+        observed = [o for o in observed if o.get("vlan_id") or o.get("subnet") != guess["subnet"]]
+    it = cur["data"] if cur else intentmod.from_observed(observed)
     nets = {int(n["vlan_id"]): {"vid": int(n["vlan_id"]), "name": str(n.get("name") or f"VLAN {n['vlan_id']}"),
                                 "purpose": n.get("purpose") or "lan", "subnet": n.get("subnet"),
                                 "gateway": n.get("gateway"), "dns": n.get("dns") or []} for n in it.get("networks") or []}
@@ -84,9 +137,14 @@ def context(tx: Tx, site_id: Any) -> dict:
                     nets[int(part)] = {"vid": int(part), "name": f"VLAN {part}", "purpose": "lan", "subnet": None,
                                        "gateway": None, "dns": []}
     mgmt = next((n["vid"] for n in nets.values() if n["purpose"] == "mgmt"), None)
+    native = bool(it.get("mgmt_native", True))
+    if guess and guess["vid"] in nets:
+        for n in nets.values():
+            n["purpose"] = "mgmt" if n["vid"] == guess["vid"] else ("lan" if n["purpose"] == "mgmt" else n["purpose"])
+        mgmt, native = guess["vid"], guess["native"]
     profiles = tx.fetchall("SELECT id, name, pvid, tagged, poe, edge FROM port_profile ORDER BY name")
     return {"networks": sorted(nets.values(), key=lambda n: n["vid"]), "mgmt_vlan": mgmt,
-            "mgmt_native": bool(it.get("mgmt_native", True)), "managed": cur is not None,
+            "mgmt_native": native, "managed": cur is not None, "stp": _site_stp(invs),
             "models": catalog(tx),
             "profiles": [{"id": p["id"], "name": p["name"], "pvid": p["pvid"],
                           "tagged": [int(x) for x in str(p["tagged"] or "").split(",") if x.strip().isdigit()],
@@ -180,9 +238,22 @@ def validate(data: dict) -> dict:
         mgmt["dns"] = [_ip(x, "správa: DNS") for x in (m.get("dns") or [])][:3]
         if not mgmt["dns"]:
             raise ServiceError("správa: u pevné adresy zadej aspoň jeden DNS server (jinak se zařízení nespojí s controllerem)")
+    st = data.get("stp") or {}
+    stp: dict[str, Any] = {"mode": "mstp" if st.get("mode") == "mstp" else "rstp"}
+    if stp["mode"] == "mstp":
+        region = str(st.get("region") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{0,32}", region):
+            raise ServiceError("MSTP: jméno regionu smí mít nejvýš 32 znaků – písmena bez diakritiky, číslice, tečka, pomlčka, podtržítko")
+        try:
+            revision = int(st.get("revision") or 0)
+        except (TypeError, ValueError):
+            raise ServiceError("MSTP: revize regionu musí být číslo")
+        if not 0 <= revision <= 65535:
+            raise ServiceError("MSTP: revize regionu musí být 0–65535")
+        stp.update(region=region, revision=revision)
     unset = "default" if data.get("unset") == "default" else "off"
     out = {"name": name, "model": model, "serial": serial, "port_names": names, "poe_ports": poe_ports, "ports": ports,
-           "mgmt": mgmt, "unset": unset, "extra_vlans": extra}
+           "mgmt": mgmt, "unset": unset, "extra_vlans": extra, "stp": stp}
     if unset == "default":
         out["unset_vlan"] = _vid(data.get("unset_vlan"), "VLAN pro nenastavené porty")
     return out
@@ -247,6 +318,15 @@ def build(plan: dict, ctx: dict) -> dict:
     n_off = sum(1 for it in items if it["mode"] == "off")
     if n_off and plan["unset"] == "off":
         warnings.append(f"{n_off} portů zůstane vypnutých (nenastavené porty)")
+    stp = plan.get("stp") or {"mode": "rstp"}
+    if stp["mode"] == "mstp":
+        # všechny VLAN zůstávají v CIST (instance 0); mapování VLAN do dalších instancí se nepřenáší
+        extra_lines.append(f"/interface bridge set {switchcfg.BRIDGE} protocol-mode=mstp region-name={q(stp.get('region') or '')} "
+                           f"region-revision={int(stp.get('revision') or 0)}")
+        warnings.append("MSTP: nastaví se jméno a revize regionu, všechny VLAN zůstanou v základní instanci (CIST) – "
+                        "pokud síť mapuje VLAN do dalších instancí (MSTI), doplň je po adopci, jinak switch zůstane mimo region")
+        if not stp.get("region"):
+            warnings.append("MSTP: jméno regionu je prázdné – musí být stejné jako na ostatních switchích")
     if plan["mgmt"]["mode"] == "dhcp":
         warnings.append("správa přes DHCP – ve VLAN správy musí běžet DHCP server; doporučuji rezervaci adresy")
     m = plan["mgmt"]

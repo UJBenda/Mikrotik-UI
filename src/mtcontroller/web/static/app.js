@@ -2876,12 +2876,14 @@ function pwList() {
 }
 function pwBlank() {
   const m = pw.ctx.models[0] || { model: "", ports: [], poe: [] };
+  const st = pw.ctx.stp || { mode: "rstp", region: "", revision: 0 };
   return { id: null, name: "", model: m.model, serial: "", port_names: m.ports.slice(), poe_ports: m.poe.slice(), ports: {}, extra_vlans: [], unset: "off", unset_vlan: null,
+    stp: { mode: st.mode, region: st.region || "", revision: st.revision || 0 },
     mgmt: { vid: pw.ctx.mgmt_vlan || (pw.ctx.networks[0] || {}).vid || 1, native: pw.ctx.mgmt_native, mode: "dhcp", address: "", gateway: "", dns: "" } };
 }
 function pwFrom(p) {
-  const d = JSON.parse(JSON.stringify(p.data)), m = d.mgmt || {};
-  return { id: p.id, name: d.name, model: d.model, serial: d.serial || "", port_names: d.port_names, poe_ports: d.poe_ports || [], ports: d.ports || {}, extra_vlans: d.extra_vlans || [],
+  const d = JSON.parse(JSON.stringify(p.data)), m = d.mgmt || {}, st = d.stp || {};
+  return { stp: { mode: st.mode === "mstp" ? "mstp" : "rstp", region: st.region || "", revision: st.revision || 0 }, id: p.id, name: d.name, model: d.model, serial: d.serial || "", port_names: d.port_names, poe_ports: d.poe_ports || [], ports: d.ports || {}, extra_vlans: d.extra_vlans || [],
     unset: d.unset || "off", unset_vlan: d.unset_vlan || null, mgmt: { vid: m.vid, native: m.native !== false, mode: m.mode || "dhcp", address: m.address || "", gateway: m.gateway || "", dns: (m.dns || []).join(", ") } };
 }
 function pwNew(copy) { pw.cur = copy ? { ...pwFrom(copy), id: null, name: "", serial: "" } : pwBlank(); pw.step = 0; pw.sel = new Set(); pw.review = null; pwRender(); }
@@ -2890,6 +2892,7 @@ function pwPayload() {
   const c = pw.cur, m = c.mgmt;
   return { name: c.name.trim(), model: c.model, serial: c.serial.trim() || null, port_names: c.port_names, poe_ports: c.poe_ports, ports: c.ports, extra_vlans: c.extra_vlans,
     unset: c.unset, unset_vlan: c.unset === "default" ? Number(c.unset_vlan) : undefined,
+    stp: { mode: c.stp.mode, region: c.stp.region.trim(), revision: Number(c.stp.revision) || 0 },
     mgmt: { vid: Number(m.vid), native: !!m.native, mode: m.mode, address: m.address.trim(), gateway: m.gateway.trim(), dns: m.dns.split(/[\s,;]+/).filter(Boolean) } };
 }
 function pwCarriers() {
@@ -3115,6 +3118,18 @@ function pwStepMgmt(body) {
   } else card.appendChild(el("p", __("Ve VLAN správy musí běžet DHCP server. Doporučuji na něm adresu pro tohle zařízení rezervovat."), "muted small"));
   card.appendChild(el("p", __("NTP, časové pásmo a vypnutí zbytečných služeb (Telnet, FTP, www, api) se nastaví samy podle controlleru."), "muted small"));
   body.appendChild(card);
+  // spanning tree: musí sedět se zbytkem sítě (výchozí hodnota je to, co controller vidí na zařízeních lokality)
+  const sc = el("section", null, "pw-card"), st = c.stp, sseg = el("div", null, "seg");
+  sc.appendChild(el("h3", __("Spanning tree")));
+  for (const k of ["rstp", "mstp"]) { const b = el("button", k.toUpperCase(), st.mode === k ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { st.mode = k; pwRender(); }); sseg.appendChild(b); }
+  sc.appendChild(pwField(__("Režim"), sseg, __("Stejný jako na ostatních switchích lokality.")));
+  if (st.mode === "mstp") {
+    const row = el("div", null, "pw-row");
+    row.append(pwField(__("Jméno regionu"), pwInput(st.region, (v) => { st.region = v; }, { maxlength: "32", autocomplete: "off" })),
+      pwField(__("Revize regionu"), pwInput(st.revision, (v) => { st.revision = v; }, { type: "number", min: "0", max: "65535" })));
+    sc.append(row, el("p", __("Jméno i revize musí být na všech switchích regionu stejné. Všechny VLAN zůstanou v základní instanci (CIST); mapování VLAN do dalších instancí průvodce nenastavuje."), "muted small"));
+  }
+  body.appendChild(sc);
 }
 function pwStepReview(body) {
   const c = pw.cur, r = pw.review, card = el("section", null, "pw-card");
@@ -3132,11 +3147,16 @@ function pwStepReview(body) {
   if (!r.script) return;
   const out = el("section", null, "pw-card"); out.appendChild(el("h3", __("Jak konfiguraci dostat do zařízení")));
   const ol = el("ol", null, "pw-how");
-  const li1 = el("li"); li1.append(el("b", __("Zařízení má přístup k controlleru")), el("span", __("Vlož do terminálu RouterOS. Příkaz stáhne skript a resetuje zařízení na něj – stávající konfigurace se smaže.")));
-  const code = el("code", r.one_liner, "pw-code"); li1.append(code, actBtn(__("Kopírovat příkaz"), () => copyText(r.one_liner, __("Příkaz")), "small"));
-  const li2 = el("li"); li2.append(el("b", __("Bez sítě nebo přes Netinstall")), el("span", __("Stáhni soubor, nahraj ho do zařízení a spusť reset s run-after-reset, nebo ho dej Netinstallu jako vlastní výchozí konfiguraci.")));
-  const a = el("a", `mtc-${c.name}.rsc`, "pw-dl"); a.href = `/api/admin/tenants/${tenantId}/sites/${siteId()}/prep/${c.id}/file`; a.setAttribute("download", `mtc-${c.name}.rsc`); li2.appendChild(a);
-  ol.append(li1, li2); out.appendChild(ol);
+  // dvě cesty: kus na stole bez spojení s controllerem (soubor) × kus v síti, odkud na controller vidí (příkaz)
+  const file = `mtc-${c.name}.rsc`;
+  const reset = `{ :local p ""; :if ([:len [/file find name="flash" type="directory"]] > 0) do={ :set p "flash/" }; /system reset-configuration no-defaults=yes keep-users=yes skip-backup=no run-after-reset=($p . "${file}") }`;
+  const li2 = el("li"); li2.append(el("b", __("Zařízení leží na stole a na controller nevidí")), el("span", __("Stáhni soubor a nahraj ho do zařízení (Winbox → Files; pokud tam je složka flash, tak do ní). Pak vlož do terminálu příkaz – zařízení se resetuje a nastaví podle souboru. Controller k tomu není potřeba; ohlásí se mu až po zapojení na lokalitě.")));
+  const a = el("a", file, "pw-dl"); a.href = `/api/admin/tenants/${tenantId}/sites/${siteId()}/prep/${c.id}/file`; a.setAttribute("download", file);
+  li2.append(a, el("code", reset, "pw-code"), actBtn(__("Kopírovat příkaz pro reset"), () => copyText(reset, __("Příkaz")), "small"));
+  const li1 = el("li"); li1.append(el("b", __("Zařízení je v síti, odkud na controller vidí")), el("span", __("Vlož do terminálu RouterOS. Příkaz si skript stáhne z controlleru sám a resetuje zařízení na něj. Bez spojení s controllerem skript nestáhne a skončí chybou.")));
+  li1.append(el("code", r.one_liner, "pw-code"), actBtn(__("Kopírovat příkaz"), () => copyText(r.one_liner, __("Příkaz")), "small"));
+  out.appendChild(el("p", __("Obojí smaže stávající konfiguraci zařízení."), "muted small"));
+  ol.append(li2, li1); out.appendChild(ol);
   out.appendChild(el("p", __("Po zapojení na lokalitě se zařízení samo ohlásí a objeví se v Zařízení mezi čekajícími na schválení, spárované s tímhle návrhem."), "muted small"));
   const det = el("details", null, "pw-script"), sm = el("summary", __("Zobrazit celý skript")); det.append(sm, el("pre", r.script)); out.appendChild(det);
   body.appendChild(out);
