@@ -1748,3 +1748,8 @@ připojení).
 Co proti UniFi chybí, protože to RouterOS přes API nedává: opakované přenosy (TX retries), vytížení éteru,
 rušení, seznam AP, která klienta slyší (ukazují se AP, na kterých klient v období skutečně byl), a rozpoznání
 aplikací.
+
+**Přihlášení a ověření ve dvou krocích** mají vzhled průvodce instalací (třídy `.auth*` ve style.css: přechodové
+pozadí, karta, značka). Nastavení 2FA při prvním přihlášení ukazuje QR, tři kroky a klíč ke zkopírování; kód se
+po šesté číslici odešle sám. Chyby se píšou přímo do formuláře (`authErr`). Když se QR nepodaří připravit,
+je důvod vidět (dřív se chyba tiše zahodila a QR prostě chyběl); SVG s QR má pevné rozměry.

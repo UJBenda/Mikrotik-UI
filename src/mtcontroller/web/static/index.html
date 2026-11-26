@@ -36,30 +36,52 @@
   <nav id="nav" class="nav" aria-label="Sekce" hidden>
     <div id="nav-items" class="nav-items"></div>
   </nav>
-  <section id="login" hidden>
-    <h2>Přihlášení</h2>
-    <form id="login-form">
-      <label>E-mail <input name="email" type="email" autocomplete="username" required></label>
-      <label>Heslo <input name="password" type="password" autocomplete="current-password" required></label>
-      <button>Přihlásit</button>
-    </form>
-    <p class="muted small license-note">Svobodný software pod licencí AGPL-3.0 ·
+  <section id="login" class="auth" hidden>
+    <div class="auth-card">
+      <span class="auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 17h4v3H4zM10 12h4v8h-4zM16 7h4v13h-4z"/></svg></span>
+      <p class="auth-eyebrow">MikroTik Controller</p>
+      <h2>Přihlášení</h2>
+      <p class="auth-lead">Správa sítí MikroTik na jednom místě.</p>
+      <form id="login-form" class="auth-form">
+        <label class="auth-field"><span>E-mail</span><input name="email" type="email" autocomplete="username" required autofocus></label>
+        <label class="auth-field"><span>Heslo</span><input name="password" type="password" autocomplete="current-password" required></label>
+        <p id="login-err" class="auth-err" role="alert" hidden></p>
+        <button class="auth-btn">Přihlásit <i class="auth-arr" aria-hidden="true"></i></button>
+      </form>
+      <p class="auth-foot">Po hesle následuje ověření kódem z aplikace.</p>
+    </div>
+    <p class="muted small license-note auth-license">Svobodný software pod licencí AGPL-3.0 ·
       <a href="https://github.com/UJBenda/Mikrotik-UI" target="_blank" rel="noopener noreferrer">zdrojový kód</a></p>
   </section>
 
-  <section id="mfa" hidden>
-    <h2>Ověření (MFA)</h2>
-    <div id="mfa-setup" hidden>
-      <p>Naskenuj QR kód v autentizační aplikaci (Aegis, Google Authenticator, Bitwarden…):</p>
-      <div id="mfa-qr" class="mfa-qr" role="img" aria-label="QR kód pro autentizační aplikaci"></div>
-      <p>Nebo zadej klíč ručně:</p>
-      <p><code id="mfa-secret"></code></p>
-      <p class="muted">Nebo URI: <code id="mfa-uri"></code></p>
+  <section id="mfa" class="auth" hidden>
+    <div class="auth-card" id="mfa-card">
+      <span class="auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path class="tick" d="M9 12l2 2 4-4"/></svg></span>
+      <p class="auth-eyebrow" id="mfa-eyebrow">Krok 2 ze 2</p>
+      <h2 id="mfa-title">Ověření ve dvou krocích</h2>
+      <p class="auth-lead" id="mfa-lead">Zadej šestimístný kód z autentizační aplikace.</p>
+      <div id="mfa-setup" class="auth-setup" hidden>
+        <div id="mfa-qr" class="mfa-qr" role="img" aria-label="QR kód pro autentizační aplikaci"></div>
+        <ol class="auth-steps">
+          <li><b>Otevři autentizační aplikaci</b><span>Aegis, Google Authenticator, Microsoft Authenticator, Bitwarden…</span></li>
+          <li><b>Naskenuj QR kód</b><span>Nebo v aplikaci zadej klíč ručně.</span></li>
+          <li><b>Opiš šestimístný kód</b><span>Tím se účet s aplikací spáruje.</span></li>
+        </ol>
+        <div class="auth-secret">
+          <span>Klíč pro ruční zadání</span>
+          <code id="mfa-secret"></code>
+          <button type="button" id="mfa-copy" class="auth-ghost">Kopírovat</button>
+        </div>
+        <details class="auth-details"><summary>Odkaz pro aplikaci (otpauth)</summary><code id="mfa-uri"></code></details>
+      </div>
+      <form id="mfa-form" class="auth-form">
+        <label class="auth-field"><span>Kód z aplikace</span>
+          <input name="code" class="auth-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" required></label>
+        <p id="mfa-err" class="auth-err" role="alert" hidden></p>
+        <button class="auth-btn">Ověřit <i class="auth-arr" aria-hidden="true"></i></button>
+      </form>
+      <button type="button" id="mfa-back" class="auth-link">Přihlásit se jiným účtem</button>
     </div>
-    <form id="mfa-form">
-      <label>Kód z aplikace <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
-      <button>Ověřit</button>
-    </form>
   </section>
 
   <section id="app" hidden>

@@ -506,6 +506,19 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       }
     }
     {
+      // přihlášení: režim nastavení 2FA (QR s pevnými rozměry, širší karta) a chyba přímo ve formuláři
+      ctx.mfaMode(true);
+      if (byId["mfa-setup"].hidden || byId["mfa-card"].className !== "auth-card wide" || byId["mfa-title"].textContent !== "Nastav ověření ve dvou krocích") errors.push("2FA: režim nastavení");
+      ctx.drawQr(byId["mfa-qr"], ["101", "010", "101"]);
+      const svg = byId["mfa-qr"].children[0];
+      if (!svg || svg.attrs.width !== "200" || svg.attrs.viewBox !== "0 0 11 11") errors.push("2FA: QR " + JSON.stringify(svg && svg.attrs));
+      ctx.mfaMode(false);
+      if (!byId["mfa-setup"].hidden || byId["mfa-card"].className !== "auth-card" || byId["mfa-eyebrow"].textContent !== "Krok 2 ze 2") errors.push("2FA: režim ověření");
+      ctx.authErr("login-err", "špatný e-mail nebo heslo");
+      if (byId["login-err"].hidden || byId["login-err"].textContent !== "špatný e-mail nebo heslo") errors.push("přihlášení: chyba ve formuláři");
+      ctx.authErr("login-err", ""); if (!byId["login-err"].hidden) errors.push("přihlášení: skrytí chyby");
+    }
+    {
       // aktivita → provoz: součty, klienti, služby, protistrany; klik na klienta filtruje; vypnutí sběru se ptá
       const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
       ctx.openSub("activity", "flow"); await tlTick(); await tlTick();

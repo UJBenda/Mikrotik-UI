@@ -223,9 +223,12 @@ $("login-form").addEventListener("submit", async (ev) => {
     const r = await api("POST", "/login", { email: f.get("email"), password: f.get("password") });
     csrf = r.csrf;
     ev.target.reset();
+    authErr("login-err", "");
     startMfa(r.mfa === "setup");
-  } catch (e) { msg(e.message, true); }
+  } catch (e) { authErr("login-err", e.message); }
 });
+// chyba přímo ve formuláři (u přihlášení je srozumitelnější než vyskakovací hláška)
+function authErr(id, text) { const p = $(id); p.textContent = text || ""; p.hidden = !text; }
 
 // QR kód z matice ze serveru (řádky znaků 1/0) jako SVG – vždy tmavý na bílém, s tichým okrajem
 function drawQr(box, rows) {
@@ -234,6 +237,8 @@ function drawQr(box, rows) {
   const NS = "http://www.w3.org/2000/svg", n = rows.length, q = 4;
   const svg = document.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", `0 0 ${n + 2 * q} ${n + 2 * q}`); svg.setAttribute("shape-rendering", "crispEdges");
+  // pevné rozměry: bez nich některé prohlížeče SVG jen s viewBoxem nevykreslí (výška 0)
+  svg.setAttribute("width", "200"); svg.setAttribute("height", "200");
   const bg = document.createElementNS(NS, "rect");
   bg.setAttribute("width", "100%"); bg.setAttribute("height", "100%"); bg.setAttribute("fill", "#fff");
   let d = "";
@@ -242,19 +247,43 @@ function drawQr(box, rows) {
   svg.append(bg, p); box.appendChild(svg);
 }
 
+function mfaMode(setup) {
+  $("mfa-setup").hidden = !setup;
+  $("mfa-card").className = "auth-card" + (setup ? " wide" : "");
+  $("mfa-eyebrow").textContent = setup ? __("První přihlášení") : __("Krok 2 ze 2");
+  $("mfa-title").textContent = setup ? __("Nastav ověření ve dvou krocích") : __("Ověření ve dvou krocích");
+  $("mfa-lead").textContent = setup ? __("K heslu přibude kód z aplikace v telefonu. Bez něj se do controlleru nikdo nedostane, ani kdyby heslo uniklo.")
+    : __("Zadej šestimístný kód z autentizační aplikace.");
+}
 async function startMfa(setup) {
   show("mfa");
-  $("mfa-setup").hidden = true;
+  mfaMode(false); authErr("mfa-err", "");
   if (setup || (me && !me.mfa_ok && !me.mfa_enrolled)) {
     try {
       const s = await api("POST", "/mfa/setup");
+      mfaSecret = s.secret;
       $("mfa-secret").textContent = s.secret.replace(/(.{4})/g, "$1 ").trim();
       $("mfa-uri").textContent = s.uri;
       drawQr($("mfa-qr"), s.qr);
-      $("mfa-setup").hidden = false;
-    } catch (e) { /* MFA už nastavené – stačí kód */ }
+      mfaMode(true);
+    } catch (e) {
+      // „už je nastavené“ = stačí kód; cokoli jiného (vypršelá relace, chyba serveru) musí být vidět – jinak chybí QR bez vysvětlení
+      if (setup) authErr("mfa-err", __`QR kód se nepodařilo připravit: ${e.message}`);
+    }
   }
+  const inp = $("mfa-form").elements && $("mfa-form").elements.code;
+  if (inp && inp.focus) inp.focus();
 }
+let mfaSecret = "";
+$("mfa-copy").addEventListener("click", () => copyText(mfaSecret, __("Klíč")));
+$("mfa-back").addEventListener("click", async () => { await api("POST", "/logout").catch(() => {}); me = null; authErr("login-err", ""); show("login"); });
+// kód: jen číslice; po šesté se formulář odešle sám
+$("mfa-form").addEventListener("input", (ev) => {
+  const i = ev.target; if (!i || i.name !== "code") return;
+  const v = String(i.value || "").replace(/\D/g, "").slice(0, 6);
+  if (v !== i.value) i.value = v;
+  if (v.length === 6 && typeof $("mfa-form").requestSubmit === "function") $("mfa-form").requestSubmit();
+});
 
 $("mfa-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -264,8 +293,9 @@ $("mfa-form").addEventListener("submit", async (ev) => {
     ev.target.reset();
     me = await api("GET", "/me");
     csrf = me.csrf;
+    authErr("mfa-err", "");
     startApp();
-  } catch (e) { msg(e.message, true); }
+  } catch (e) { authErr("mfa-err", e.message); ev.target.reset(); }
 });
 
 // --- aplikace ----------------------------------------------------------------
