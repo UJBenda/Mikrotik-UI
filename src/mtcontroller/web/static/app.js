@@ -3158,6 +3158,11 @@ function pwStepReview(body) {
   out.appendChild(el("p", __("Obojí smaže stávající konfiguraci zařízení."), "muted small"));
   ol.append(li2, li1); out.appendChild(ol);
   out.appendChild(el("p", __("Po zapojení na lokalitě se zařízení samo ohlásí a objeví se v Zařízení mezi čekajícími na schválení, spárované s tímhle návrhem."), "muted small"));
+  // kudy se na switch dostat hned po nastavení: MAC Winbox dosáhne jen do VLAN správy, a to z portu, kde je bez tagu
+  const mg = Number(c.mgmt.vid), direct = c.port_names.filter((p) => { const x = c.ports[p]; return x && (((x.mode === "access" || x.mode === "hybrid") && x.vlan === mg) || (x.mode === "trunk" && c.mgmt.native)); });
+  out.appendChild(el("p", (direct.length ? __`Bez adresy se na switch dostaneš Winboxem přes MAC (Neighbors) jen z portu, kde je VLAN správy (${mg}) bez tagu: ${pwRange(direct)}.`
+    : __`VLAN správy (${mg}) není na žádném portu bez tagu – Winboxem přes MAC se na switch dostaneš jen s tagovanou VLAN ${mg} na počítači.`)
+    + " " + __("Z ostatních portů switch vidět není. Záloha je sériová konzole; MAC Telnet je kvůli bezpečnosti vypnutý."), "pw-check-b ok"));
   const det = el("details", null, "pw-script"), sm = el("summary", __("Zobrazit celý skript")); det.append(sm, el("pre", r.script)); out.appendChild(det);
   body.appendChild(out);
 }

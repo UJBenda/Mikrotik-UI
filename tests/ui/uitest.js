@@ -349,7 +349,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
       const t = body.textContent;
       if (!requests.some((r) => r.startsWith("PUT ") && r.endsWith("/prep/7"))) errors.push("příprava: návrh se neuložil");
-      if (!t.includes("Kopírovat příkaz pro reset") || !t.includes('run-after-reset=($p . "mtc-sw-sklad-2.rsc")') || !t.includes("na controller nevidí") || !t.includes("/enroll/KEY/prep/7") || !t.includes("mtc-sw-sklad-2.rsc") || !t.includes("zůstanou vypnuté")) errors.push("příprava: kontrola " + t.slice(0, 300));
+      if (!t.includes("Kopírovat příkaz pro reset") || !t.includes('run-after-reset=($p . "mtc-sw-sklad-2.rsc")') || !t.includes("na controller nevidí") || !t.includes("přes MAC (Neighbors) jen z portu") || !t.includes("/enroll/KEY/prep/7") || !t.includes("mtc-sw-sklad-2.rsc") || !t.includes("zůstanou vypnuté")) errors.push("příprava: kontrola " + t.slice(0, 300));
       const dl = all(body, (n) => n.tagName === "A")[0];
       if (!dl || !dl.href.endsWith("/prep/7/file")) errors.push("příprava: odkaz na soubor");
       await btn("Hotovo").fire("click");
