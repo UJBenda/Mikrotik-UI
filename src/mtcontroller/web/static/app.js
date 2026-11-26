@@ -1449,7 +1449,7 @@ let clEdit = null;   // {c, icon, upload: "client"|"vendor"}
 function openClient(c) {
   clEdit = { c, icon: c.icon || "" };
   $("cl-title").textContent = clientName(c);
-  $("cl-sub").textContent = `${c.mac}${c.vendor ? " · " + c.vendor : ""}`;
+  $("cl-sub").textContent = [c.mac, c.ip, c.vendor].filter(Boolean).join(" · ");
   $("cl-avatar").textContent = ""; $("cl-avatar").appendChild(clientAvatar(c, "big"));
   $("cl-label").value = c.label || ""; $("cl-label").placeholder = c.hostname || __("např. Tiskárna 2. patro");
   $("cl-note").value = c.note || "";

@@ -1516,6 +1516,8 @@ main { min-height: calc(100vh - 53px); }
 #detail.dev-drawer:not(.wide) .dgrid > div + div { margin-top: 14px; }
 #detail.dev-drawer .kv td, #detail.dev-drawer .kv th { padding-top: 5px; padding-bottom: 5px; }
 header { z-index: 45; }
+/* boční panely (klient, rychlý náhled) začínají pod horní lištou – jinak lišta zakryje hlavičku i křížek */
+.side-drawer { top: 53px; }
 
 /* bezdrátový spoj v záložce Topologie (stejné značení jako v mapě) */
 #topo path.link.wless { stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.6; stroke: #17a55a; }
