@@ -56,6 +56,7 @@ function route(method, url, body) {
   if (method !== "GET") return { ok: true, status: 200, json: async () => ({ ok: true, detail: "ok", command_id: 1 }) };
   const r = api.responses[p];
   if (r === undefined) { errors.push("chybí zachycená odpověď pro " + p); return { ok: false, status: 404, json: async () => ({ detail: "x" }) }; }
+  if (r && r.__status) return { ok: false, status: r.__status, json: async () => JSON.parse(JSON.stringify(r)) };   // simulace chyby serveru
   return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(r)) };
 }
 
@@ -309,6 +310,25 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const t = byId["unm-main"].textContent;
       if (byId["unm-wrap"].hidden || !t.includes("Nespravované switche") || !t.includes("sw-hala ether7") || !t.includes("3 klientů + spravované zařízení") || !t.includes("Nový") || !t.includes("Výchozí stav") || !t.includes("Schválit") || !t.includes("Hlídat pingem") || !t.includes("Zatím se nehlídá žádný úsek")) errors.push("nespravované: tabulka " + t.slice(-300));
       if (!byId["unm-side"].textContent.includes("Z toho nových1")) errors.push("nespravované: počet nových");
+    }
+    // chyba serveru: místo „HTTP 500“ trvalá hláška s kódem (jen jedna) a dialog s podrobnostmi ke zkopírování
+    {
+      const key = Object.keys(api.responses).find((k) => k.endsWith("/prep")), keep = api.responses[key];
+      api.responses[key] = { __status: 500, detail: "Vnitřní chyba controlleru (kód ab12cd34)", error_id: "ab12cd34", kind: "internal" };
+      await byId["nav-devices"].fire("click");
+      await byId["prep-btn"].fire("click"); await tlTick();
+      await byId["prep-btn"].fire("click"); await tlTick();
+      const toasts = byId["msg"].children.filter((n) => n.textContent.includes("ab12cd34"));
+      if (toasts.length !== 1 || !toasts[0].textContent.includes("vnitřní chybu") || !toasts[0].textContent.includes("2×")) errors.push("chyba serveru: hláška " + byId["msg"].textContent.slice(0, 200));
+      else {
+        await toasts[0].children[1].children[0].fire("click");
+        const t = byId["fault-text"].textContent;
+        if (byId["fault"].hidden || !t.includes("journalctl -u mtc-web | grep -A40 ab12cd34") || !t.includes("GET /tenants/") || !t.includes("HTTP 500")) errors.push("chyba serveru: podrobnosti " + t);
+        await byId["fault-close"].fire("click");
+        if (!byId["fault"].hidden) errors.push("chyba serveru: dialog nejde zavřít");
+        await toasts[0].children[1].children[1].fire("click");   // křížek (falešný DOM prvek neodebírá, jen nesmí spadnout)
+      }
+      api.responses[key] = keep;
     }
     // Zařízení → Příprava: seznam návrhů, průvodce (výběr portů tažením/Shift, použití VLAN), kontrola a skript
     await byId["nav-devices"].fire("click");

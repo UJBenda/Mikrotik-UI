@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -108,8 +109,17 @@ def create_app(state: AppState) -> Starlette:
     async def healthz(request: Request) -> Response:
         return json_response({"status": "ok", "version": __version__})
 
+    async def internal_error(request: Request, exc: Exception) -> Response:
+        # Neošetřená chyba: uživatel dostane kód, podle kterého se dá v logu dohledat (journalctl -u mtc-web | grep KÓD).
+        # Traceback vypíše uvicorn hned za tímhle řádkem; text výjimky do odpovědi nepatří (může nést data).
+        code = secrets.token_hex(4)
+        log.error("mtc-error %s %s %s: %s", code, request.method, redact_path(request.url.path), type(exc).__name__)
+        return json_response({"detail": f"Vnitřní chyba controlleru (kód {code})", "error_id": code, "kind": "internal"},
+                             status=500)
+
     routes = [Route("/healthz", healthz)] + checkin.routes() + admin.routes() + devices.routes()
-    app = Starlette(routes=routes, middleware=[Middleware(BaseHTTPMiddleware, dispatch=host_separation)])
+    app = Starlette(routes=routes, middleware=[Middleware(BaseHTTPMiddleware, dispatch=host_separation)],
+                    exception_handlers={Exception: internal_error})
     app.state.mtc = state
     return app
 

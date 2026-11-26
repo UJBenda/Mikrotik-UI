@@ -1957,3 +1957,12 @@ span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center;
 .pw-how li button { width: auto; } .pw-code { padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 11px; word-break: break-all; max-height: 96px; overflow: auto; }
 .pw-dl { font-weight: 600; } .pw-script summary { cursor: pointer; font-size: 13px; } .pw-script pre { max-height: 360px; overflow: auto; font-size: 11px; padding: 10px; border-radius: 8px; background: var(--bg); }
 @media (max-width: 1100px) { .ux .ux-main.pw.wizard.with-panel { grid-template-columns: 1fr; } .pw-panel { border-left: 0; border-top: 1px solid var(--line); } }
+
+/* chyba controlleru: trvalá hláška + dialog s podrobnostmi */
+#msg { z-index: 60; }
+#msg div.fault { display: flex; align-items: center; gap: 10px; background: var(--bad-weak); border-color: var(--bad); }
+#msg div.fault > span:first-child { flex: 1; }
+.fault-acts { display: flex; align-items: center; gap: 4px; flex: none; } .fault-acts button { width: auto; }
+.fault-x { border: 0; background: transparent; color: var(--text); font-size: 18px; line-height: 1; padding: 2px 6px; cursor: pointer; }
+.fault-h { margin: 0 0 8px; font-size: 16px; }
+.fault-pre { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); font-size: 12px; white-space: pre-wrap; word-break: break-all; user-select: all; }

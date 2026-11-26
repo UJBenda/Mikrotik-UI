@@ -138,6 +138,21 @@ def test_api_and_pairing():
         base = f"/api/admin/tenants/{tid}/sites/{sid}/prep"
         r = c.get(base).json()
         assert r["plans"] == []
+        # neošetřená chyba: žádné holé 500 – JSON s kódem, podle kterého se dá dohledat v logu; text výjimky ven nejde
+        import logging
+        seen = []
+        h = logging.Handler(); h.emit = lambda rec: seen.append(rec.getMessage())
+        logging.getLogger("mtc.web").addHandler(h)
+        orig = prep.context
+        prep.context = lambda *a: (_ for _ in ()).throw(ValueError("tajne-heslo"))
+        try:
+            e = c.get(base)
+        finally:
+            prep.context = orig
+            logging.getLogger("mtc.web").removeHandler(h)
+        assert e.status_code == 500 and e.json()["kind"] == "internal" and re.fullmatch(r"[0-9a-f]{8}", e.json()["error_id"])
+        assert e.json()["error_id"] in e.json()["detail"] and "tajne-heslo" not in e.text
+        assert any(e.json()["error_id"] in m and "ValueError" in m and "/prep" in m for m in seen)
         prof = {x["name"]: x for x in r["context"]["profiles"]}
         assert prof["Trunk"]["trunk"] is True and prof["Trunk"]["tagged"] == []
         assert prof["Telefon"]["trunk"] is False and prof["Telefon"]["tagged"] == [10]

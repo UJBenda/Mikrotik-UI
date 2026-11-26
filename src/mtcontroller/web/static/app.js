@@ -42,6 +42,8 @@ let sites = [];
 })();
 
 function msg(text, error = false) {
+  // chybu controlleru už ukazuje trvalá hláška s podrobnostmi – druhá stejná by jen přibyla
+  if (error && typeof faults !== "undefined") for (const o of faults.values()) if (text === o.node.children[0].textContent || text === faultText(o.info)) return;
   const d = document.createElement("div");
   d.textContent = text;
   if (error) d.className = "error";
@@ -168,13 +170,62 @@ async function api(method, path, body) {
     opt.headers["Content-Type"] = "application/json";
     opt.body = JSON.stringify(body);
   }
-  const r = await fetch("/api/admin" + path, opt);
+  let r;
+  try { r = await fetch("/api/admin" + path, opt); } catch (e) { throw fault({ kind: "network", method, path }); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     if (r.status === 401 && path !== "/login" && !path.startsWith("/mfa")) show("login");
+    // 5xx není chyba uživatele: místo holého „HTTP 500“ srozumitelná hláška s podrobnostmi
+    if (r.status >= 500) throw fault({ kind: data.kind === "internal" ? "internal" : "gateway", status: r.status, code: data.error_id || "", method, path });
     throw new Error(data.detail || ("HTTP " + r.status));
   }
+  faultsClear();
   return data;
+}
+
+// --- chyby controlleru: hláška, která zůstane, + podrobnosti ke zkopírování -------------------------------
+const faults = new Map();   // klíč → { info, node, count }
+function faultText(f) {
+  if (f.kind === "network") return __("Controller neodpovídá. Zkouším to dál – až se ozve, hláška zmizí.");
+  if (f.kind === "gateway") return __`Controller se restartuje nebo neběží (HTTP ${f.status}). Až naběhne, hláška zmizí.`;
+  return f.code ? __`Controller narazil na vnitřní chybu (kód ${f.code}).` : __`Controller narazil na vnitřní chybu (HTTP ${f.status}).`;
+}
+function faultDetails(f) {
+  const L = [__`Čas: ${f.at}`, __`Akce: ${f.method} ${f.path}`];
+  if (f.status) L.push(__`Odpověď: HTTP ${f.status}`);
+  if (f.code) L.push(__`Kód chyby: ${f.code}`, __`V logu: journalctl -u mtc-web | grep -A40 ${f.code}`);
+  L.push(__`Obrazovka: ${prefs.view || "–"}`, __`Prohlížeč: ${(navigator.userAgent || "").slice(0, 120)}`);
+  return L.join("\n");
+}
+function fault(info) {
+  const f = { ...info, at: new Date().toLocaleString("cs-CZ") }, text = faultText(f);
+  // výpadek spojení je jedna hláška, ať dotazů selže kolik chce; vnitřní chyba jedna na akci
+  const key = f.kind === "internal" ? `${f.method} ${f.path}` : "down", old = faults.get(key);
+  if (old) { old.info = f; old.count++; old.text.textContent = text + (old.count > 1 && f.kind === "internal" ? ` (${old.count}×)` : ""); }
+  else {
+    const d = el("div", null, "error fault"), t = el("span", text), acts = el("span", null, "fault-acts"), rec = { info: f, node: d, text: t, count: 1 };
+    const more = el("button", __("Podrobnosti"), "small secondary"); more.type = "button"; more.addEventListener("click", () => faultOpen(rec.info));
+    const x = el("button", "×", "fault-x"); x.type = "button"; x.setAttribute("aria-label", __("Zavřít")); x.addEventListener("click", () => { d.remove(); faults.delete(key); });
+    acts.append(more, x); d.append(t, acts); d.setAttribute("role", "alert");
+    $("msg").appendChild(d); faults.set(key, rec);
+    if (faults.size > 3) { const [k, o] = faults.entries().next().value; o.node.remove(); faults.delete(k); }
+  }
+  const e = new Error(text); e.fault = f; return e;
+}
+function faultsClear() {
+  // controller zase odpovídá → hláška o výpadku zmizí sama (vnitřní chyby zůstávají, dokud je uživatel nezavře)
+  const o = faults.get("down"); if (o) { o.node.remove(); faults.delete("down"); }
+}
+$("fault-close").addEventListener("click", () => { $("fault").hidden = true; });
+$("fault-copy").addEventListener("click", () => copyText($("fault-text").textContent, __("Podrobnosti")));
+function faultOpen(f) {
+  $("fault-title").textContent = f.kind === "internal" ? __("Controller narazil na vnitřní chybu") : __("Controller neodpovídá");
+  $("fault-hint").textContent = f.kind === "internal"
+    ? __("Není to tvoje chyba. Akce se nejspíš neprovedla – po zavření zkontroluj, v jakém stavu věc je. Podrobnosti níže stačí zkopírovat a poslat; podle kódu se chyba najde v logu controlleru.")
+    : f.kind === "gateway" ? __("Služba controlleru zrovna neběží – typicky se restartuje po aktualizaci. Pokud to trvá déle než minutu, zkontroluj na serveru: systemctl status mtc-web")
+      : __("Prohlížeč se ke controlleru nedostal. Zkontroluj síť nebo VPN; pokud to jinde funguje, zkontroluj na serveru: systemctl status mtc-web nginx");
+  $("fault-text").textContent = faultDetails(f);
+  $("fault").hidden = false;
 }
 
 function show(which) {

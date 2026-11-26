@@ -168,7 +168,12 @@ class AsgiClient:
             elif msg["type"] == "http.response.body":
                 out["body"] += msg.get("body", b"")
 
-        asyncio.run(self.app(scope, receive, send))
+        try:
+            asyncio.run(self.app(scope, receive, send))
+        except Exception:
+            # jako skutečný server: Starlette po odeslání odpovědi 500 výjimku pustí dál (kvůli logu) – odpověď platí
+            if not out.get("status"):
+                raise
         resp = Response(out["status"], out["headers"], out["body"])
         for k, v in resp.raw_headers:
             if k.lower() == b"set-cookie":

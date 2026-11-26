@@ -1783,3 +1783,12 @@ Zařízení → Příprava: průvodce, kterým se naklikne konfigurace kusu, kte
   mapování do MSTI se nepřenáší (průvodce na to upozorní).
 - **VLAN správy u lokality mimo řízení** (`_guess_mgmt`): síť, ve které má adresu nejvíc zařízení; netagovaná
   síť se stejným rozsahem (táž síť viděná z brány) se z nabídky vypustí.
+
+## Chyby controlleru v rozhraní
+
+- Neošetřená výjimka: `web.app.internal_error` vrátí `500` s `{"detail", "error_id", "kind": "internal"}` a zapíše
+  `mtc-error <kód> <metoda> <cesta bez tokenů>: <typ výjimky>`; traceback vypíše uvicorn hned za tím. Text výjimky
+  se do odpovědi nedává (může nést data).
+- `api()` v rozhraní z 5xx a z výpadku spojení udělá `fault()`: trvalou hlášku s tlačítkem Podrobnosti a dialog
+  s údaji ke zkopírování. Výpadek/restart je jedna hláška a zmizí sama při první úspěšné odpovědi; vnitřní chyba
+  je jedna na akci (s počítadlem opakování) a zavírá ji uživatel.
