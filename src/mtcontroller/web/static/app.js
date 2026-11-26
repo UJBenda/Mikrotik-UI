@@ -3046,7 +3046,8 @@ function pwPortPanel() {
   pw.formKey = sel.join(); if (f.mode === "hybrid") f.mode = "access"; f.tagged = f.tagged || [];
   if (pw.ctx.profiles.length) side.appendChild(pwField(__("Profil portu"), pwSelect([["", __("— vlastní nastavení —")], ...pw.ctx.profiles.map((p) => [p.id, p.name])], "", (v) => {
     const p = pw.ctx.profiles.find((x) => String(x.id) === v); if (!p) return;
-    Object.assign(f, { mode: "access", vlan: p.pvid || f.vlan, tagged: p.tagged.slice(), edge: p.edge !== "no", poe: p.poe || "" }); pwRender();
+    Object.assign(f, p.trunk ? { mode: "trunk", tagged: [], edge: p.edge === "yes", poe: p.poe || "" }
+      : { mode: "access", vlan: p.pvid || f.vlan, tagged: p.tagged.filter((t) => t !== (p.pvid || f.vlan)), edge: p.edge !== "no", poe: p.poe || "" }); pwRender();
   })));
   const seg = el("div", null, "seg");
   for (const [k, lab] of [["access", __("VLAN")], ["trunk", __("Trunk")], ["off", __("Vypnout")]]) { const b = el("button", lab, f.mode === k ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { f.mode = k; if (k === "trunk") f.edge = false; if (k === "access") f.edge = true; pwRender(); }); seg.appendChild(b); }

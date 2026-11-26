@@ -89,7 +89,9 @@ def context(tx: Tx, site_id: Any) -> dict:
             "mgmt_native": bool(it.get("mgmt_native", True)), "managed": cur is not None,
             "models": catalog(tx),
             "profiles": [{"id": p["id"], "name": p["name"], "pvid": p["pvid"],
-                          "tagged": [int(x) for x in str(p["tagged"] or "").split(",") if x], "poe": p["poe"],
+                          "tagged": [int(x) for x in str(p["tagged"] or "").split(",") if x.strip().isdigit()],
+                          # profil „všechny VLAN lokality“ (tagged = '*') odpovídá v průvodci trunku
+                          "trunk": str(p["tagged"] or "").strip() == "*", "poe": p["poe"],
                           "edge": p["edge"]} for p in profiles]}
 
 

@@ -129,10 +129,18 @@ def test_api_and_pairing():
                         + [{"name": "sfp-sfpplus1", "default-name": "sfp-sfpplus1"}],
             "bridge_vlans": [{"bridge": "bridge", "vlan-ids": "93", "tagged": "ether8"}, {"bridge": "bridge", "vlan-ids": "10,5"}],
             "addresses": [{"address": "10.9.3.2/24", "interface": "bridge", "network": "10.9.3.0"}]}, [])
+        # profil „všechny VLAN lokality“ (tagged = '*') nesmí průvodce shodit – je to trunk
+        from mtcontroller.db import tenant_scope
+        with tenant_scope(db, tid) as tx:
+            tx.execute("INSERT INTO port_profile (tenant_id, name, pvid, tagged) VALUES (%(t)s, 'Trunk', NULL, '*'), (%(t)s, 'Telefon', 5, '10')",
+                       {"t": tid})
         c = _login(app)
         base = f"/api/admin/tenants/{tid}/sites/{sid}/prep"
         r = c.get(base).json()
         assert r["plans"] == []
+        prof = {x["name"]: x for x in r["context"]["profiles"]}
+        assert prof["Trunk"]["trunk"] is True and prof["Trunk"]["tagged"] == []
+        assert prof["Telefon"]["trunk"] is False and prof["Telefon"]["tagged"] == [10]
         vids = {n["vid"] for n in r["context"]["networks"]}
         assert {5, 10, 93} <= vids                                             # i VLAN bez adresy jdou vybrat
         models = {m["model"]: m for m in r["context"]["models"]}
