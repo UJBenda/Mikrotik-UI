@@ -1907,3 +1907,53 @@ span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center;
 @media (prefers-color-scheme: dark) { .auth { --a1: #6b8cff; --a2: #9b82ff; --a-weak: #1c2542; --a-card: rgba(22, 27, 40, .88); --a-shadow: 0 24px 60px -20px rgba(0, 0, 0, .6); } }
 @media (max-width: 600px) { .auth { justify-content: flex-start; padding: 16px 12px; } .auth-card { padding: 24px 20px 20px; border-radius: 18px; }
   .auth-setup { grid-template-columns: 1fr; justify-items: center; } .auth-secret { grid-column: 1; width: 100%; } .auth-steps { width: 100%; } }
+
+/* Zařízení → Příprava: průvodce konfigurací před nasazením */
+#devs-tabs { flex-wrap: wrap; } #devs-tabs button { flex: 1 1 40%; }
+.pw-steps .pw-new { margin-top: 6px; }
+.pw-table td, .pw-table th { height: 36px; } .pw-acts { text-align: right; white-space: nowrap; } .pw-acts button { margin-left: 6px; width: auto; }
+.pw-st.ready { color: var(--ok); } .pw-st.draft { color: var(--warn); } .pw-st.deployed { color: var(--muted); }
+.ux .ux-main.pw.wizard { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0; overflow: visible; border-left: 1px solid var(--line); background: var(--bg); min-height: 620px; }
+.ux .ux-main.pw.wizard.with-panel { grid-template-columns: minmax(0, 1fr) 300px; }
+.pw-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.pw-name { font-size: 17px; font-weight: 700; margin: 2px 0; overflow-wrap: anywhere; }
+.pw-step { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 9px 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.pw-step i { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700; border: 1.5px solid var(--line); color: var(--muted); background: var(--card); }
+.pw-step.now i { background: var(--accent); border-color: var(--accent); color: #fff; } .pw-step.done i { background: var(--ok); border-color: var(--ok); color: #fff; }
+.pw-step span { display: flex; flex-direction: column; font-size: 13px; line-height: 1.35; } .pw-step small { color: var(--muted); font-size: 12px; } .pw-step.todo b { color: var(--muted); }
+.pw-note { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-weak); font-size: 12px; line-height: 1.45; }
+.pw-main { display: flex; flex-direction: column; min-width: 0; }
+.pw-body { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pw-foot { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--card); } .pw-foot button { width: auto; }
+.pw-foot .pw-next { margin-left: auto; }
+.pw-card { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pw-card h3 { margin: 0; font-size: 14px; } .pw-ch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; } .pw-quick { margin-left: auto; display: flex; gap: 6px; } .pw-quick button { width: auto; }
+.pw-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; min-width: 0; } .pw-field > span { color: var(--muted); }
+.pw-field input, .pw-field select { width: 100%; max-width: 420px; font-weight: 400; } .pw-field small { font-weight: 400; }
+.pw-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; } .pw-row .pw-field { flex: 1 1 120px; } .pw-row button { width: auto; }
+.pw-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; min-height: 30px; }
+.pw-diagram { display: flex; gap: 18px; align-items: flex-end; padding: 14px; border-radius: 10px; background: var(--bg); overflow-x: auto; user-select: none; }
+.pw-grp { display: flex; flex-direction: column; gap: 7px; } .pw-grp small { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pw-prow { display: flex; gap: 6px; }
+.pw-port { position: relative; flex: none; width: 38px; height: 40px; padding: 0; border: 0; border-radius: 6px; background: #d5dae3; color: #5c6370; font: 700 12px/1 inherit; cursor: pointer; }
+.pw-port.access, .pw-port.hybrid { color: #fff; } .pw-port.trunk { background: #1d2433; color: #fff; padding-bottom: 14px; }
+.pw-port.off { background: repeating-linear-gradient(45deg, #e3e6eb 0 5px, #cfd4dd 5px 10px); color: #7a8190; }
+.pw-port.sel { box-shadow: 0 0 0 2px var(--card), 0 0 0 4.5px var(--accent); z-index: 1; }
+.pw-port:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.pw-port em { position: absolute; top: 2px; right: 3px; font: 700 8px/1 inherit; font-style: normal; }
+.pw-tags { position: absolute; left: 3px; right: 3px; bottom: 3px; display: flex; flex-direction: column-reverse; gap: 1px; } .pw-tags i { display: block; height: 3px; border-radius: 1px; }
+.pw-legend { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 12px; } .pw-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pw-legend i, .pw-sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; flex: none; } .pw-gp { font-weight: 600; white-space: nowrap; } .pw-gp .pw-sw { margin-right: 8px; vertical-align: -1px; }
+.pw-check-b { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.45; border: 1px solid; }
+.pw-check-b.ok { background: var(--ok-weak); border-color: var(--ok); } .pw-check-b.bad { background: var(--bad-weak); border-color: var(--bad); }
+.pw-panel { padding: 16px; border-left: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pw-panel .seg { align-self: flex-start; } .pw-panel .pw-field select, .pw-panel .pw-field input { max-width: none; }
+.pw-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.pw-chip { width: auto; height: 28px; padding: 0 10px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--card); color: var(--text); font: 600 12px/1 inherit; cursor: pointer; }
+.pw-chip.on { color: #fff; border-color: transparent; }
+.pw-panel .pw-apply { flex: 1; } .pw-addv { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.pw-addv input { min-width: 0; flex: 1 1 60px; }
+.pw-how { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; } .pw-how li { font-size: 13px; } .pw-how li > * { display: block; margin-top: 4px; }
+.pw-how li button { width: auto; } .pw-code { padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 11px; word-break: break-all; max-height: 96px; overflow: auto; }
+.pw-dl { font-weight: 600; } .pw-script summary { cursor: pointer; font-size: 13px; } .pw-script pre { max-height: 360px; overflow: auto; font-size: 11px; padding: 10px; border-radius: 8px; background: var(--bg); }
+@media (max-width: 1100px) { .ux .ux-main.pw.wizard.with-panel { grid-template-columns: 1fr; } .pw-panel { border-left: 0; border-top: 1px solid var(--line); } }

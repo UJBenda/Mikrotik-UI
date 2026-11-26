@@ -275,9 +275,13 @@ def register_device(db: Database, box: SecretBox, token: str, payload: dict,
                 """INSERT INTO device_intent (tenant_id, device_id, role) VALUES (%(t)s, %(d)s, %(r)s)
                    ON CONFLICT (device_id) DO UPDATE SET role = EXCLUDED.role""",
                 {"t": str(tenant_id), "d": str(device_id), "r": DEVICE_ROLE[profile]})
+        # předem připravené zařízení (prep.py): spárovat s návrhem, ať je v čekajících vidět, co to je
+        from . import prep
+
+        paired = prep.pair(tx, tok["site_id"], device_id, serial, model)
         audit(tx, "device.register", tenant_id=tenant_id, target=f"device:{device_id}",
               after={"serial": serial, "model": model, "version": version, "via": "enroll" if enroll_key else "token",
-                     "profile": profile}, ip=ip)
+                     "profile": profile, **({"prep": paired} if paired else {})}, ip=ip)
     return Registration(device_id, tenant_id, key)
 
 

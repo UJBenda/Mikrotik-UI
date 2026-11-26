@@ -112,6 +112,22 @@ async def enroll_default(request: Request) -> Response:
     return script_response(defaults.script(role, f"{_base(st)}/enroll/{key}?role={role}", _opts(st)))
 
 
+async def enroll_prep(request: Request) -> Response:
+    """Připravená konfigurace jednoho zařízení (jednořádkový příkaz z průvodce Připravit zařízení)."""
+    from .. import prep
+
+    st = get_state(request)
+    key, pid = request.path_params["key"], request.path_params["pid"]
+    try:
+        body = await run_in_threadpool(prep.script_for_key, st.db, key, int(pid),
+                                       f"{_base(st)}/enroll/{key}?role=switch", _opts(st))
+    except NotFound:
+        return script_response(routeros.error_script("klic lokality je neplatny nebo navrh neexistuje"), 404)
+    except ServiceError as e:
+        return script_response(routeros.error_script(_ascii(str(e))), 400)
+    return script_response(body)
+
+
 async def checkin(request: Request) -> Response:
     st = get_state(request)
     dev = await run_in_threadpool(services.lookup_device_by_key, st.db, _bearer(request))
@@ -198,6 +214,7 @@ def routes() -> list[Route]:
         Route("/enroll/{key}", enroll_stage1, methods=["GET"]),
         Route("/enroll/{key}/register", enroll_register, methods=["POST"]),
         Route("/enroll/{key}/default/{role}", enroll_default, methods=["GET"]),
+        Route("/enroll/{key}/prep/{pid:int}", enroll_prep, methods=["GET"]),
         Route("/api/checkin", checkin, methods=["POST"]),
         Route("/api/checkin/ack", ack, methods=["POST"]),
         Route("/api/checkin/bootstrap", bootstrap, methods=["POST"]),

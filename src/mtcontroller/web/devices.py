@@ -2116,6 +2116,91 @@ async def site_defaults(request: Request, p: Principal, tid: str) -> Response:
     return json_response(_defaults_view(st, key))
 
 
+# --- příprava zařízení před nasazením (prep.py) ----------------------------------------------------------
+
+@endpoint(READ)
+async def site_prep(request: Request, p: Principal, tid: str) -> Response:
+    """Co průvodce potřebuje (sítě, modely, profily portů) a uložené návrhy lokality."""
+    from .. import prep
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            if not tx.fetchone("SELECT 1 FROM site WHERE id = %(s)s", {"s": sid}):
+                raise NotFound("lokalita neexistuje")
+            return {"context": prep.context(tx, sid), "plans": prep.list_plans(tx, sid)}
+
+    return json_response(await run_in_threadpool(q))
+
+
+@endpoint(MANAGE)
+async def site_prep_save(request: Request, p: Principal, tid: str) -> Response:
+    from .. import prep
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    pid = request.path_params.get("pid")
+    if request.method == "DELETE":
+        await run_in_threadpool(prep.delete, st.db, tid, sid, int(pid), p.user_id, client_ip(request))
+        return json_response({"ok": True})
+    data = await _json(request)
+    out = await run_in_threadpool(prep.save, st.db, tid, sid, data, int(pid) if pid is not None else None,
+                                  p.user_id, client_ip(request))
+    return json_response(out)
+
+
+def _prep_urls(st, key: str, pid: int):
+    from .. import routeros
+
+    base = f"https://{st.settings.web.checkin_host}"
+    return f"{base}/enroll/{key}?role=switch", f"{base}/enroll/{key}/prep/{pid}", routeros.fetch_opts(st.settings)
+
+
+@endpoint(MANAGE)
+async def site_prep_review(request: Request, p: Principal, tid: str) -> Response:
+    """Kontrola návrhu: souhrn portů, co brání, skript a jednořádkový příkaz pro zařízení."""
+    from .. import defaults, prep
+    from ..services import site_enroll_key
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    pid = int(request.path_params["pid"])
+    key = await run_in_threadpool(site_enroll_key, st.db, st.box, tid, sid, False, p.user_id, client_ip(request))
+    enroll_url, prep_url, opts = _prep_urls(st, key, pid)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return prep.review(tx, sid, pid, enroll_url, opts)
+
+    out = await run_in_threadpool(q)
+    out["one_liner"] = defaults.one_liner(prep_url, opts) if out["script"] else None
+    return json_response(out)
+
+
+@endpoint(MANAGE)
+async def site_prep_file(request: Request, p: Principal, tid: str) -> Response:
+    from .. import prep
+    from ..services import site_enroll_key
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    pid = int(request.path_params["pid"])
+    key = await run_in_threadpool(site_enroll_key, st.db, st.box, tid, sid, False, p.user_id, client_ip(request))
+    enroll_url, _u, opts = _prep_urls(st, key, pid)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return prep.review(tx, sid, pid, enroll_url, opts)
+
+    out = await run_in_threadpool(q)
+    if not out["script"]:
+        raise ServiceError("; ".join(out["blockers"]))
+    return Response(out["script"], media_type="text/plain; charset=us-ascii",
+                    headers={"Content-Disposition": f'attachment; filename="mtc-{out["plan"]["name"]}.rsc"'})
+
+
 @endpoint(MANAGE)
 async def site_default_file(request: Request, p: Principal, tid: str) -> Response:
     from .. import defaults, routeros
@@ -2237,6 +2322,11 @@ def routes() -> list[Route]:
         Route(s + "/wifi/preview", site_wifi_preview, methods=["GET"]),
         Route(s + "/wifi/plan", site_wifi_plan, methods=["POST"]),
         Route(s + "/defaults", site_defaults, methods=["GET", "POST"]),
+        Route(s + "/prep", site_prep, methods=["GET"]),
+        Route(s + "/prep", site_prep_save, methods=["POST"]),
+        Route(s + "/prep/{pid:int}", site_prep_save, methods=["PUT", "DELETE"]),
+        Route(s + "/prep/{pid:int}/review", site_prep_review, methods=["GET"]),
+        Route(s + "/prep/{pid:int}/file", site_prep_file, methods=["GET"]),
         Route(s + "/defaults/{role}.rsc", site_default_file, methods=["GET"]),
         Route(T + "/factory-passwords", factory_passwords, methods=["GET", "POST"]),
         Route(T + "/factory-passwords/import", factory_passwords_import, methods=["POST"]),

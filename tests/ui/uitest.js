@@ -310,6 +310,50 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (byId["unm-wrap"].hidden || !t.includes("Nespravované switche") || !t.includes("sw-hala ether7") || !t.includes("3 klientů + spravované zařízení") || !t.includes("Nový") || !t.includes("Výchozí stav") || !t.includes("Schválit") || !t.includes("Hlídat pingem") || !t.includes("Zatím se nehlídá žádný úsek")) errors.push("nespravované: tabulka " + t.slice(-300));
       if (!byId["unm-side"].textContent.includes("Z toho nových1")) errors.push("nespravované: počet nových");
     }
+    // Zařízení → Příprava: seznam návrhů, průvodce (výběr portů tažením/Shift, použití VLAN), kontrola a skript
+    await byId["nav-devices"].fire("click");
+    await byId["prep-btn"].fire("click");
+    await tlTick();
+    {
+      const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      const body = { attrs: {}, tagName: "", children: [byId["prep-side"], byId["prep-body"]], get textContent() { return this.children.map((x) => x.textContent).join(" "); } }, btn = (txt) => all(body, (n) => n.tagName === "BUTTON" && n.textContent.startsWith(txt))[0];
+      if (byId["prep-wrap"].hidden || !body.textContent.includes("sw-sklad-2") || !body.textContent.includes("připraveno") || !btn("Připravit zařízení")) errors.push("příprava: seznam " + body.textContent.slice(0, 200));
+      await btn("Upravit").fire("click");
+      const port = (p) => all(body, (n) => n.attrs["data-port"] === p)[0];
+      if (all(body, (n) => n.attrs["data-port"]).length !== 28) errors.push("příprava: čekáno 28 portů");
+      if (!port("ether1").className.includes("hybrid") || !port("ether24").className.includes("trunk") || !port("ether12").className.includes("unset")) errors.push("příprava: stav portů");
+      if (!body.textContent.includes("Správa bude dostupná") || !body.textContent.includes("23–24")) errors.push("příprava: dostupnost správy");
+      if (!body.textContent.includes("1–10") || !body.textContent.includes("Kancelar (5) bez tagu · Hlas (10) s tagem")) errors.push("příprava: co je nastavené");
+      // výběr: klik na 11, Shift+klik na 14 → 4 porty; nastavit VLAN Hlas bez tagu a použít
+      await port("ether11").fire("mousedown", { buttons: 1 });
+      await port("ether14").fire("mousedown", { shiftKey: true });
+      if (!body.textContent.includes("4 portů · 11–14")) errors.push("příprava: výběr rozsahu");
+      const selVlan = all(body, (n) => n.tagName === "SELECT" && n.children.some((o) => o.textContent === "Hlas (10)"))[0];
+      selVlan.value = "10"; await selVlan.fire("change");
+      await btn("Použít na 4").fire("click");
+      if (!port("ether12").className.includes("access") || !body.textContent.includes("Nastaveno 16 z 28")) errors.push("příprava: použití na výběr");
+      // bez cesty pro VLAN správy průvodce nepustí dál
+      await port("ether23").fire("mousedown", {}); await port("ether24").fire("mousedown", { ctrlKey: true });
+      await btn("Vyčistit").fire("click");
+      if (!body.textContent.includes("Správa nevede ven")) errors.push("příprava: varování bez správy");
+      await btn("Pokračovat").fire("click");
+      if (!body.textContent.includes("Co je nastavené")) errors.push("příprava: průvodce pustil dál bez správy");
+      await port("ether24").fire("mousedown", {});
+      await all(body, (n) => n.tagName === "BUTTON" && n.textContent === "Trunk")[0].fire("click");
+      await btn("Použít na 1").fire("click");
+      await btn("Pokračovat").fire("click");
+      if (!body.textContent.includes("VLAN správy") || !body.textContent.includes("DHCP")) errors.push("příprava: krok správa");
+      await btn("Pokračovat").fire("click");
+      for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+      const t = body.textContent;
+      if (!requests.some((r) => r.startsWith("PUT ") && r.endsWith("/prep/7"))) errors.push("příprava: návrh se neuložil");
+      if (!t.includes("Kopírovat příkaz") || !t.includes("/enroll/KEY/prep/7") || !t.includes("mtc-sw-sklad-2.rsc") || !t.includes("zůstanou vypnuté")) errors.push("příprava: kontrola " + t.slice(0, 300));
+      const dl = all(body, (n) => n.tagName === "A")[0];
+      if (!dl || !dl.href.endsWith("/prep/7/file")) errors.push("příprava: odkaz na soubor");
+      await btn("Hotovo").fire("click");
+      await tlTick();
+      if (!body.textContent.includes("Připravená zařízení")) errors.push("příprava: návrat na seznam");
+    }
     await byId["nav-links"].fire("click");
     await tlTick();
     {

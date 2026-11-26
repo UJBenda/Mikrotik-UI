@@ -648,6 +648,29 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20k) připravená zařízení izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO device_prep (tenant_id, site_id, name, model, data)
+SELECT s.tenant_id, s.id, 'sw-priprava', 'CRS328-24P-4S+', '{}'::jsonb FROM site s
+WHERE s.tenant_id = '00000000-0000-0000-0000-0000000000b1' LIMIT 1;
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM device_prep) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí připravená zařízení tenanta B'; END IF;
+  RAISE NOTICE 'OK 20k připravená zařízení izolovaná';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM pg_class WHERE relname = 'device_prep' AND relrowsecurity AND relforcerowsecurity) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: device_prep bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

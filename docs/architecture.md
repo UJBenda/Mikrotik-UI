@@ -1753,3 +1753,26 @@ aplikací.
 pozadí, karta, značka). Nastavení 2FA při prvním přihlášení ukazuje QR, tři kroky a klíč ke zkopírování; kód se
 po šesté číslici odešle sám. Chyby se píšou přímo do formuláře (`authErr`). Když se QR nepodaří připravit,
 je důvod vidět (dřív se chyba tiše zahodila a QR prostě chyběl); SVG s QR má pevné rozměry.
+
+## Příprava zařízení před nasazením (`prep.py`)
+
+Zařízení → Příprava: průvodce, kterým se naklikne konfigurace kusu, který ještě není v síti
+(dnes jen role switch).
+
+- **Podklad**: `prep.context()` vrací sítě lokality (z nastavení lokality, u lokality mimo řízení
+  z VLAN zjištěných na zařízeních), VLAN správy a seznam modelů – vestavěné, modely zařízení, která
+  controller zná (jména portů z inventáře), nebo ruční zadání počtu portů (`ether1…N`, `sfp-sfpplus1…M`).
+- **Návrh** (`device_prep`, migrace 0041, RLS podle tenanta): jméno, model, volitelné sériové číslo,
+  porty (`access` / `hybrid` / `trunk` / `off`, STP edge, PoE, popis), správa (VLAN, nativní na trunku,
+  DHCP nebo pevná adresa + brána + DNS), co s nenastavenými porty (vypnout / výchozí VLAN).
+  Stav `draft` (má blokující chybu) → `ready` → `deployed`.
+- **Skript**: `prep.build()` převede návrh na model pro `switchcfg.config_body()` – stejný generátor
+  jako převzetí switche do řízení, žádná druhá cesta. K němu enroll smyčka z `defaults`. Blokující chyby
+  (VLAN správy nevede ven žádným portem, pevná adresa mimo síť…) skript nevydají.
+- **Doručení**: jednořádkový příkaz do terminálu (stáhne `/enroll/{klíč}/prep/{id}` a resetuje zařízení
+  na skript), nebo soubor `.rsc` pro reset s `run-after-reset` / Netinstall.
+- **Párování**: `services.register_device()` volá `prep.pair()` – podle sériového čísla, bez něj jediný
+  připravený návrh téhož modelu na lokalitě. Návrh přejde do
+  `deployed`; schválení zůstává ruční. Párování je v auditu `device.register`.
+- **Rozhraní**: schéma portů s výběrem tažením, Ctrl+klik a Shift+klik (rozsah), klávesnicí Enter/mezerník;
+  průběžná kontrola, že VLAN správy vede ven.
