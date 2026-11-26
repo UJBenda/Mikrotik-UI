@@ -135,11 +135,6 @@ function moreButton(title, items) {
 }
 if (typeof document.addEventListener === "function") {
   document.addEventListener("click", (e) => { const m = $("ctx"); if (m && !m.hidden && !m.contains(e.target)) ctxHide(); });
-  // Esc zavře panel editoru portu (když není otevřené menu ani dotaz)
-  document.addEventListener("keydown", (e) => {
-    const pe = $("port-edit"), m = $("ctx");
-    if (e.key === "Escape" && pe && !pe.hidden && (!m || m.hidden) && !askDone) pe.hidden = true;
-  });
   document.addEventListener("keydown", (e) => {
     const m = $("ctx");
     if (!m || m.hidden) return;
@@ -8571,13 +8566,36 @@ function renderQuickInfo(body, d, r) {
   }
 }
 
+// --- jednotné zavírání překryvných vrstev ---------------------------------------------------------------
+// Esc zavře vždy jen tu nejvyšší (dialog → editor portu → panel klienta → detail zařízení), × je vpravo nahoře.
+// Klik mimo okno zavírá jen dialogy bez rozepsaných údajů (true ve třetím sloupci) – formulář by tím přišel o data.
+function layerList() {
+  return [
+    ["fault", () => { $("fault").hidden = true; }, true],
+    ["ssid-dlg", sdClose, false], ["bt-dlg", closeTarget, false], ["adopt-dlg", adoptClose, false], ["add-dlg", addClose, true],
+    ["lacp-dlg", () => { $("lacp-dlg").hidden = true; }, false],
+    ["rfopt-dlg", () => { $("rfopt-dlg").hidden = true; loadRfopt(); }, true],
+    ["maint-dlg", () => { $("maint-dlg").hidden = true; }, false],
+    ["dbv-dlg", () => { $("dbv-dlg").hidden = true; }, true],
+    ["port-edit", () => { $("port-edit").hidden = true; }, false],
+    ["cl-dlg", clClose, false], ["detail", closeDetail, false],
+  ];
+}
+function closeTopLayer() {
+  if (askDone || !$("ask").hidden) return false;   // potvrzovací dotaz má vlastní obsluhu (Esc = ne)
+  for (const [id, close] of layerList()) if ($(id) && !$(id).hidden) { close(); return true; }
+  return false;
+}
+for (const [id, close, outside] of layerList()) {
+  const box = $(id), x = $(id.replace("-dlg", "") + "-x");
+  if (x) x.addEventListener("click", close);
+  if (outside && box) box.addEventListener("click", (e) => { if (e.target === box) close(); });
+}
 if (typeof document.addEventListener === "function") {
   document.addEventListener("keydown", (e) => {
     const m = $("ctx");
-    if (e.key !== "Escape" || (m && !m.hidden) || askDone || !$("ask").hidden) return;
-    if (!$("port-edit").hidden) return;  // editor portu má vlastní zavírání
-    if (!$("cl-dlg").hidden) clClose();
-    else if (!$("detail").hidden) closeDetail();
+    if (e.key !== "Escape" || (m && !m.hidden)) return;
+    if (closeTopLayer()) e.preventDefault();
   });
 }
 
@@ -9032,7 +9050,7 @@ $("sd-save").addEventListener("click", async () => {
   } catch (e) { ul.appendChild(el("li", e.message, "sev-error")); }
 });
 if (typeof document.addEventListener === "function") {
-  document.addEventListener("keydown", (e) => { if (sd && e.key === "Escape" && $("ask").hidden) sdClose(); });
+
 }
 
 // --- tabule skupin AP ---

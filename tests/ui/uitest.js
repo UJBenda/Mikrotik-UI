@@ -72,7 +72,7 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
 
 (async () => {
   try {
-    vm.runInContext(fs.readFileSync(appPath, "utf8") + "\n;globalThis.__t = { openDetail, drawTopology, renderClients, setCapsmanHost, openAdopt, flowBanner };", ctx);
+    vm.runInContext(fs.readFileSync(appPath, "utf8") + "\n;globalThis.__t = { openDetail, drawTopology, renderClients, setCapsmanHost, openAdopt, flowBanner, closeTopLayer };", ctx);
     await new Promise((r) => setImmediate(r));
     for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
     const visible = ["login", "mfa", "app", "detail"].filter((s) => !byId[s].hidden);
@@ -310,6 +310,27 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       const t = byId["unm-main"].textContent;
       if (byId["unm-wrap"].hidden || !t.includes("Nespravované switche") || !t.includes("sw-hala ether7") || !t.includes("3 klientů + spravované zařízení") || !t.includes("Nový") || !t.includes("Výchozí stav") || !t.includes("Schválit") || !t.includes("Hlídat pingem") || !t.includes("Zatím se nehlídá žádný úsek")) errors.push("nespravované: tabulka " + t.slice(-300));
       if (!byId["unm-side"].textContent.includes("Z toho nových1")) errors.push("nespravované: počet nových");
+    }
+    // jednotné zavírání: Esc (closeTopLayer) zavře vždy jen nejvyšší vrstvu; × a klik mimo dialog
+    {
+      const t = ctx.__t, vis = (id) => !byId[id].hidden;
+      for (const id of ["maint-x", "rfopt-x", "lacp-x", "fault-x"]) if (!byId[id] || !(byId[id].listeners.click || []).length) errors.push("zavírání: chybí křížek " + id);
+      for (let i = 0; i < 20 && t.closeTopLayer(); i++);   // co zůstalo otevřené z předchozích kroků
+      byId["detail"].hidden = false; byId["cl-dlg"].hidden = false; byId["maint-dlg"].hidden = false;
+      if (!t.closeTopLayer() || vis("maint-dlg") || !vis("cl-dlg") || !vis("detail")) errors.push("zavírání: Esc má zavřít jen dialog");
+      if (!t.closeTopLayer() || vis("cl-dlg") || !vis("detail")) errors.push("zavírání: Esc má zavřít panel klienta a nechat detail");
+      if (!t.closeTopLayer() || vis("detail")) errors.push("zavírání: Esc má zavřít detail");
+      if (t.closeTopLayer()) errors.push("zavírání: není co zavřít");
+      byId["dbv-dlg"].hidden = false;
+      await byId["dbv-dlg"].fire("click", { target: byId["dbv-title"] });
+      if (!vis("dbv-dlg")) errors.push("zavírání: klik dovnitř okna nesmí zavřít");
+      await byId["dbv-dlg"].fire("click", { target: byId["dbv-dlg"] });
+      if (vis("dbv-dlg")) errors.push("zavírání: klik mimo okno má zavřít");
+      byId["lacp-dlg"].hidden = false;
+      await byId["lacp-dlg"].fire("click", { target: byId["lacp-dlg"] });
+      if (!vis("lacp-dlg")) errors.push("zavírání: formulář se klikem mimo zavřít nesmí");
+      await byId["lacp-x"].fire("click");
+      if (vis("lacp-dlg")) errors.push("zavírání: křížek");
     }
     // chyba serveru: místo „HTTP 500“ trvalá hláška s kódem (jen jedna) a dialog s podrobnostmi ke zkopírování
     {

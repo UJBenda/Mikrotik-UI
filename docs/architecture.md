@@ -1792,3 +1792,10 @@ Zařízení → Příprava: průvodce, kterým se naklikne konfigurace kusu, kte
 - `api()` v rozhraní z 5xx a z výpadku spojení udělá `fault()`: trvalou hlášku s tlačítkem Podrobnosti a dialog
   s údaji ke zkopírování. Výpadek/restart je jedna hláška a zmizí sama při první úspěšné odpovědi; vnitřní chyba
   je jedna na akci (s počítadlem opakování) a zavírá ji uživatel.
+
+## Zavírání překryvných vrstev
+
+Jedno místo (`layerList()` / `closeTopLayer()` v `app.js`): Esc zavře vždy jen nejvyšší vrstvu v pořadí
+dialog → editor portu → panel klienta → detail zařízení; každý dialog má × vpravo nahoře. Klik mimo okno zavírá
+jen dialogy bez rozepsaných údajů (verze záloh, optimalizace kanálů, přidání zařízení, chyba) – formulář by přišel
+o data. Nový dialog nebo panel se přidá do `layerList()`, vlastní obsluhu Esc nedostává.
