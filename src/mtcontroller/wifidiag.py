@@ -61,6 +61,8 @@ def iface_map(devices: list[dict], invs: dict[str, dict]) -> dict[tuple[str, str
         for r in _rows(inv, "wifi_radios"):
             b = str(r.get("bands") or "")
             bands[str(r.get("interface"))] = "5" if "5ghz" in b else "2.4" if "2ghz" in b else ""
+        # rádia vzdálených CAP na správci (mají vyplněné „cap“) nejsou jeho vlastní – i když je někdo přejmenuje
+        remote = {str(r.get("interface")) for r in _rows(inv, "wifi_radios") if r.get("cap")}
         rows = _rows(inv, "wifi")
         masters = {str(w.get("name")): str(w.get("master-interface") or "") for w in rows}
         for w in rows:
@@ -69,14 +71,41 @@ def iface_map(devices: list[dict], invs: dict[str, dict]) -> dict[tuple[str, str
             info = {"ap": names.get(did), "ap_id": did, "radio": name, "band": bands.get(root, "")}
             out[(did, name)] = info
             mac = str(w.get("mac-address") or "").upper()
-            if mac and not str(name).startswith("cap"):
+            if mac and not str(name).startswith("cap") and root not in remote:
                 by_mac[mac] = info
-    # CAPsMAN: rozhraní cap-wifiN na hostiteli → AP podle MAC
+    # CAPsMAN: rozhraní cap-wifiN na hostiteli → AP. Postupně podle MAC rozhraní, podle MAC rádia
+    # (/interface/wifi/radio na CAPsMANu: interface, radio-mac, cap) a podle jména CAP = identita AP.
+    by_name: dict[str, list[str]] = {}
+    for d in devices:
+        if d.get("identity"):
+            by_name.setdefault(str(d["identity"]).lower(), []).append(str(d["id"]))
     for did, inv in invs.items():
+        found: dict[str, dict] = {}
         for w in _rows(inv, "wifi"):
             mac = str(w.get("mac-address") or "").upper()
             if mac in by_mac and by_mac[mac]["ap_id"] != did:
-                out[(did, str(w.get("name")))] = by_mac[mac]
+                found[str(w.get("name"))] = by_mac[mac]
+        for r in _rows(inv, "wifi_radios"):
+            iface, cap = str(r.get("interface") or ""), str(r.get("cap") or "")
+            if not iface or not cap or iface in found:
+                continue
+            hit = by_mac.get(str(r.get("radio-mac") or "").upper())
+            if not hit:
+                # „AP-Velin“ i „AP-Velin@10.0.0.5“; jen když identitu má právě jedno zařízení
+                ids = by_name.get(cap.split("@")[0].strip().lower()) or []
+                if len(ids) == 1 and ids[0] != did:
+                    b = str(r.get("bands") or "")
+                    hit = {"ap": names.get(ids[0]), "ap_id": ids[0], "radio": iface,
+                           "band": "5" if "5ghz" in b else "2.4" if "2ghz" in b else ""}
+            if hit and hit["ap_id"] != did:
+                found[iface] = hit
+        # další SSID na stejném rádiu (rozhraní s master-interface) patří témuž AP
+        masters = {str(w.get("name")): str(w.get("master-interface") or "") for w in _rows(inv, "wifi")}
+        for name, master in masters.items():
+            if name not in found and master in found:
+                found[name] = found[master]
+        for name, info in found.items():
+            out[(did, name)] = info
     return out
 
 

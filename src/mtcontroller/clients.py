@@ -15,7 +15,8 @@ from typing import Any
 from .db import Database, operator_scope, tenant_scope
 
 # sekce inventury, které korelace potřebuje (worker nenačítá zbytek)
-SECTIONS = ["interfaces", "neighbors", "dhcp_leases", "arp", "bridge_hosts", "wifi_clients", "wireless_clients"]
+SECTIONS = ["interfaces", "neighbors", "dhcp_leases", "arp", "bridge_hosts", "wifi_clients", "wireless_clients",
+            "wifi", "wifi_radios"]
 RETENTION_DAYS = 90
 SESSION_STALE_MIN = 20  # relace nepotvrzená déle (worker stál, lokalita offline) končí posledním potvrzením
 
@@ -124,6 +125,10 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
                 c["ip"] = c["ip"] or a.get("address")
 
     # 2) poloha: wifi (přesně)
+    #    S CAPsMANem je tabulka připojených klientů na správci – klient ale patří AP, jehož rádio ho drží.
+    from .wifidiag import iface_map
+
+    cap_of = iface_map(devices, invs)
     wifi_seen: set[str] = set()
     for d in devices:
         did = str(d["id"])
@@ -133,6 +138,14 @@ def correlate(devices: list[dict], invs: dict[str, dict]) -> list[dict]:
             if not mac:
                 continue
             c = get(mac)
+            ap = cap_of.get((did, str(r.get("interface") or "")))
+            if ap and ap["ap_id"] != did and ap["ap_id"] in names:
+                c.update(device_id=ap["ap_id"], device=names[ap["ap_id"]], port=ap["radio"], via_capsman=did,
+                         wifi={"ssid": r.get("ssid"), "signal": r.get("signal") or r.get("signal-strength"),
+                               "tx_rate": r.get("tx-rate"), "rx_rate": r.get("rx-rate"), "uptime": r.get("uptime")})
+                c["ip"] = c["ip"] or r.get("last-ip")
+                wifi_seen.add(mac)
+                continue
             c.update(device_id=did, device=names[did], port=r.get("interface"),
                      wifi={"ssid": r.get("ssid"), "signal": r.get("signal") or r.get("signal-strength"),
                            "tx_rate": r.get("tx-rate"), "rx_rate": r.get("rx-rate"), "uptime": r.get("uptime")})

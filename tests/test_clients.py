@@ -137,3 +137,39 @@ def test_unmanaged_detect():
     assert found == {("sw", "ether2"): {"clients": 3, "shared": False}, ("sw", "ether3"): {"clients": 1, "shared": True}}
     assert unmanaged.what({"clients": 3, "shared": False}) == "3 klienti"
     assert unmanaged.what({"clients": 1, "shared": True}) == "1 klient a spravované zařízení"
+
+
+def test_capsman_clients_belong_to_their_ap():
+    """S CAPsMANem je tabulka klientů na správci; klient se má přiřadit AP, jehož rádio ho drží."""
+    devs = [{"id": "gw", "serial": "GW", "identity": "GW"}, {"id": "ap1", "serial": "A1", "identity": "AP-Velin"},
+            {"id": "ap2", "serial": "A2", "identity": "AP-Sklad"}]
+    invs = {
+        "gw": {"interfaces": [{"name": "ether1", "mac-address": "AA:00:00:00:00:01"}],
+               # cap-wifi1: MAC sedí s rádiem AP-Velin; cap-wifi2: MAC nesedí, pozná se podle jména CAP v rádiích
+               "wifi": [{"name": "cap-wifi1", "mac-address": "BB:00:00:00:00:01"},
+                        {"name": "cap-wifi1-host", "mac-address": "BE:00:00:00:00:99", "master-interface": "cap-wifi1"},
+                        {"name": "cap-wifi2", "mac-address": "02:00:00:00:00:77"},
+                        {"name": "wifi1", "mac-address": "AA:00:00:00:00:02"}],
+               "wifi_radios": [{"interface": "cap-wifi2", "radio-mac": "02:00:00:00:00:78", "bands": "5ghz-ax", "cap": "AP-Sklad@10.0.0.7"},
+                               {"interface": "wifi1", "radio-mac": "AA:00:00:00:00:02", "bands": "2ghz-ax"}],
+               "wifi_clients": [{"interface": "cap-wifi1", "mac-address": "50:00:00:00:00:01", "ssid": "Firma", "signal": "-55"},
+                                {"interface": "cap-wifi1-host", "mac-address": "50:00:00:00:00:02", "ssid": "Hoste", "signal": "-70"},
+                                {"interface": "cap-wifi2", "mac-address": "50:00:00:00:00:03", "ssid": "Firma", "signal": "-61"},
+                                {"interface": "wifi1", "mac-address": "50:00:00:00:00:04", "ssid": "Firma", "signal": "-40"}]},
+        "ap1": {"interfaces": [{"name": "ether1", "mac-address": "BB:00:00:00:00:00"}],
+                "wifi": [{"name": "wifi1", "mac-address": "BB:00:00:00:00:01"}],
+                "wifi_radios": [{"interface": "wifi1", "radio-mac": "BB:00:00:00:00:01", "bands": "5ghz-ax"}],
+                "bridge_hosts": [{"mac-address": "50:00:00:00:00:01", "on-interface": "wifi1", "vid": "20"}]},
+        "ap2": {"interfaces": [{"name": "ether1", "mac-address": "CC:00:00:00:00:00"}],
+                "wifi": [{"name": "wifi1", "mac-address": "CC:00:00:00:00:01"}]},
+    }
+    got = {c["mac"]: c for c in correlate(devs, invs)}
+    assert (got["50:00:00:00:00:01"]["device"], got["50:00:00:00:00:01"]["port"]) == ("AP-Velin", "wifi1")
+    assert got["50:00:00:00:00:01"]["vlan"] == "20" and got["50:00:00:00:00:01"]["wifi"]["signal"] == "-55"
+    assert got["50:00:00:00:00:02"]["device"] == "AP-Velin"                 # další SSID na stejném rádiu
+    assert got["50:00:00:00:00:03"]["device"] == "AP-Sklad"                 # podle jména CAP
+    assert (got["50:00:00:00:00:04"]["device"], got["50:00:00:00:00:04"]["port"]) == ("GW", "wifi1")   # vlastní rádio správce
+    # dvě zařízení se stejnou identitou: podle jména se nehádá
+    devs2 = devs + [{"id": "ap3", "serial": "A3", "identity": "AP-Sklad"}]
+    got2 = {c["mac"]: c for c in correlate(devs2, dict(invs, ap3={}))}
+    assert got2["50:00:00:00:00:03"]["device"] == "GW"

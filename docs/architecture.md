@@ -1719,3 +1719,10 @@ Vědomě ponecháno (nízké riziko, zapsáno, ať se na to nezapomene):
 - Syslog a NetFlow jsou UDP bez ověření – v lokálním režimu je může kdokoli v síti podvrhnout pod adresou brány.
 - Zámek účtu po pěti chybách jde zneužít k dočasnému zablokování cizího účtu (kdo zná e-mail a dostane se na
   přihlašovací stránku, která je jen ze sítě správy).
+
+**Wi-Fi klienti s CAPsMANem.** Tabulka připojených klientů je na správci (CAPsMAN), klient ale patří AP, jehož
+rádio ho drží. `clients.correlate` proto rozhraní správce překládá přes `wifidiag.iface_map`: podle MAC rozhraní,
+podle MAC rádia a jména CAP (`/interface/wifi/radio` na správci, pole `cap` = identita AP, jen když ji má právě
+jedno zařízení) a přes `master-interface` pro další SSID. Klient pak má `device` = AP a `port` = rádio AP;
+od toho se odvíjí mapa, Přehled (signál podle AP, počty klientů) i historie polohy. Starý CAPsMAN (`/caps-man`)
+se nepřekládá.
