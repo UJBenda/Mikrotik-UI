@@ -119,6 +119,17 @@ def test_unmanaged_record_alert_approve_and_foreign_link(monkeypatch):
         with tenant_scope(db, tid) as tx:
             found = w.alerts(tx)
             assert [a["kind"] for a in found] == ["link_down"] and "úsek přes nespravované zařízení sw-hala ↔ ap-sklad" in found[0]["message"]
+        # protistraně se změnila adresa (DHCP): úsek začne pingat na novou
+        with tenant_scope(db, tid) as tx:
+            cur = inventory.load(tx, ap, ["addresses"])
+        inventory.store(db, tid, ap, {"addresses": [{"address": "10.9.0.77/24", "interface": "bridge"}]}, [])
+        w.discover(db)
+        with tenant_scope(db, tid) as tx:
+            assert w.site_links(tx, sid)[0]["ping_ip"] == "10.9.0.77"
+        inventory.store(db, tid, ap, {"addresses": cur["addresses"]}, [])
+        w.discover(db)
+        with tenant_scope(db, tid) as tx:
+            assert w.site_links(tx, sid)[0]["ping_ip"] == "10.9.0.3"
         # dva úseky dole ke stejné protistraně = jedna příčina, jeden alert u protistrany
         with tenant_scope(db, tid) as tx:
             l2 = w.watch(tx, tid, sid, sw, "ether8", ap)

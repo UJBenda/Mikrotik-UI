@@ -492,6 +492,20 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       }
     }
     {
+      // přehled → nejvytíženější klient: otevře kartu klienta na záložce Provoz s grafem portu
+      const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
+      ctx.showView("dash"); await tlTick(); await tlTick();
+      const b = all(byId["dash-clients"], (n) => n.tagName === "BUTTON")[0];
+      if (!b) errors.push("přehled: klient není klikací");
+      else {
+        await b.fire("click"); await tlTick(); await tlTick(); await tlTick();
+        const t = byId["cl-tr"].textContent;
+        if (byId["cl-dlg"].hidden || byId["clp-tr"].hidden || !byId["clp-edit"].hidden || !t.includes("Port ether2") || !t.includes("Staženo")) errors.push("klient: provoz " + t.slice(0, 200));
+        if (all(byId["cl-tr"], (n) => n.className === "fl-col").length !== 24) errors.push("klient: graf po hodinách " + all(byId["cl-tr"], (n) => n.className === "fl-col").length);
+        byId["cl-dlg"].hidden = true;
+      }
+    }
+    {
       // aktivita → provoz: součty, klienti, služby, protistrany; klik na klienta filtruje; vypnutí sběru se ptá
       const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
       ctx.openSub("activity", "flow"); await tlTick(); await tlTick();

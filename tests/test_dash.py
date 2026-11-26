@@ -64,6 +64,19 @@ def test_dash_and_wan_probe(monkeypatch):
         assert r["top_aps"] == [{"device_id": ap, "name": "ap-sklad", "bytes": 1600000 * 450, "clients": 2}]
         assert [(x["name"], x["port"], x["bytes"]) for x in r["top_clients"]] == [("pc-vera", "ether5", 800000 * 450)]
         assert r["signal"] == [{"device_id": ap, "name": "ap-sklad", "signal": -66, "clients": 2}]
+        assert r["top_clients"][0]["device_id"] == gw and r["top_clients"][0]["mac"] == "50:00:00:00:00:01"
+        # konec rádiového spoje bez Wi-Fi klientů není AP (i když se jeho rozhraní ve spoji jmenuje jinak)
+        with operator_scope(db) as tx:
+            tx.execute(f"""INSERT INTO interface_hourly (tenant_id, device_id, hour, name, rx_bps_avg, tx_bps_avg, samples)
+                           VALUES (%(t)s, %(g)s, date_trunc('hour', now()), 'wlan60-1', 99000000, 0, 12)""", {"t": tid, "g": gw})
+            tx.execute("""INSERT INTO wlink (tenant_id, site_id, kind, a_device, a_iface, a_mac, b_device, b_iface, b_mac)
+                          VALUES (%(t)s, %(s)s, 'w60g', %(g)s, 'wlan60-station-1', '-', %(a)s, 'wlan60-9', '-')""",
+                       {"t": tid, "s": sid, "g": gw, "a": ap})
+        r2 = c.get(url + "?hours=24").json()
+        assert [x["name"] for x in r2["top_aps"]] == ["ap-sklad"]            # AP s klienty zůstává, i když je koncem spoje
+        with operator_scope(db) as tx:
+            tx.execute("DELETE FROM wlink")
+            tx.execute("DELETE FROM interface_hourly WHERE name = 'wlan60-1'")
         assert r["wifi_auth"] == {"ok": 2, "fail": 1}
         assert r["todo_total"] == 1 and r["todo"][0]["device"] == "ap-sklad" and r["todo"][0]["kind"] == "offline"
         with tenant_scope(db, tid) as tx:

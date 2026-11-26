@@ -288,6 +288,12 @@ def discover(db: Database) -> int:
                      "ai": ln["a"]["iface"][:100], "am": ln["a"]["mac"][:17], "bd": ln["b"]["device"],
                      "bi": ln["b"]["iface"][:100], "bm": ln["b"]["mac"][:17], "ip": ln["ping_ip"]})
                 n += 1
+            # ručně hlídané úseky: protistraně se mohla změnit adresa (DHCP) – pingat na tu současnou
+            for ln in tx.fetchall("""SELECT id, a_device, b_device, host(ping_ip) AS ping_ip FROM wlink
+                                     WHERE site_id = %(s)s AND kind = 'foreign'""", {"s": sid}):
+                ip = _ping_ip(invs.get(str(ln["a_device"])) or {}, invs.get(str(ln["b_device"])) or {})
+                if ip and ip != ln["ping_ip"]:
+                    tx.execute("UPDATE wlink SET ping_ip = %(ip)s WHERE id = %(l)s", {"ip": ip, "l": str(ln["id"])})
     return n
 
 

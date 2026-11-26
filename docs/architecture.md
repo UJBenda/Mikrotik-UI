@@ -1686,3 +1686,7 @@ jisté polohy (`client_move.firm` – klient na koncovém portu). Poloha odhadnu
 (uplink, bonding, VLAN rozhraní, spoj) se mezi inventurami mění sama a dávala plané kritické poplachy.
 Hlídané úseky, které jsou dole ke stejné protistraně, dávají jeden alert u protistrany místo jednoho za úsek.
 Přehled: rádio, které drží spoj mezi našimi zařízeními, se nepočítá mezi nejvytíženější AP.
+Hlídaný úsek si při každém objevování spojů (`wlink.discover`) přepočítá adresu protistrany z aktuální inventury –
+po změně adresy z DHCP se pinguje na novou. Karta klienta má záložku **Provoz** (`loadClientTraffic`): graf portu,
+na kterém klient je (`…/devices/{id}/traffic`), a pokud brána sbírá NetFlow, i služby a protistrany podle jeho IP.
+Otevírá se i klikem na klienta v Přehledu.

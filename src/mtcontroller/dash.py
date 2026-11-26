@@ -53,13 +53,18 @@ def site_dash(tx: Tx, site_id: Any, hours: int = 24) -> dict:
               AND NOT EXISTS (SELECT 1 FROM wlink l WHERE l.kind <> 'foreign'
                               AND ((l.a_device = h.device_id AND l.a_iface = h.name)
                                    OR (l.b_device = h.device_id AND l.b_iface = h.name)))
-            GROUP BY h.device_id ORDER BY 2 DESC LIMIT 5""", dict(p, re=WIFI_IFACE_RE))
+            GROUP BY h.device_id ORDER BY 2 DESC LIMIT 15""", dict(p, re=WIFI_IFACE_RE))
+    # konec rádiového spoje bez Wi-Fi klientů není AP, i když se jeho rozhraní jmenuje jinak než ve spoji
+    link_ends = {str(x) for r in tx.fetchall(
+        "SELECT a_device, b_device FROM wlink WHERE site_id = %(s)s AND kind <> 'foreign'", p)
+        for x in (r["a_device"], r["b_device"])}
     wcl = {str(r["device_id"]): r for r in tx.fetchall(
         """SELECT device_id, count(*) AS n, round(avg(substring(signal from '^-?[0-9]+')::int))::int AS signal
            FROM client WHERE site_id = %(s)s AND ssid IS NOT NULL AND device_id IS NOT NULL
              AND last_seen > now() - interval '15 minutes' GROUP BY device_id""", p)}
     top_aps = [{"device_id": str(r["device_id"]), "name": names.get(str(r["device_id"]), "?"), "bytes": int(r["bytes"] or 0),
-                "clients": int(wcl.get(str(r["device_id"]), {}).get("n") or 0)} for r in aps]
+                "clients": int(wcl.get(str(r["device_id"]), {}).get("n") or 0)} for r in aps
+               if str(r["device_id"]) not in link_ends or wcl.get(str(r["device_id"]))][:5]
     signal = [{"device_id": k, "name": names.get(k, "?"), "signal": v["signal"], "clients": int(v["n"])}
               for k, v in wcl.items() if v["signal"] is not None]
 
@@ -74,6 +79,7 @@ def site_dash(tx: Tx, site_id: Any, hours: int = 24) -> dict:
             WHERE h.hour > now() - make_interval(hours => %(h)s)
             GROUP BY c.mac, c.name, c.device_id, c.port ORDER BY 5 DESC LIMIT 6""", p)
     top_clients = [{"mac": r["mac"], "name": r["name"], "device": names.get(str(r["device_id"]), "?"), "port": r["port"],
+                    "device_id": str(r["device_id"]),
                     "bytes": int(r["bytes"] or 0)} for r in top_clients if int(r["bytes"] or 0) > 0]
 
     links = [{"id": ln["id"], "name": ln["name"], "kind": ln["kind"], "state": ln["state"], "score": ln["score"]}

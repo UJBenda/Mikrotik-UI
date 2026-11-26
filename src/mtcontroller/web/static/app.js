@@ -1483,9 +1483,69 @@ function clIcons() {
 function clClose() { $("cl-dlg").hidden = true; clEdit = null; }
 // panel klienta: nastavení / Wi-Fi časová osa
 function clTab(key) {
-  $("clp-edit").hidden = key !== "edit"; $("clp-jr").hidden = key !== "jr";
-  $("clt-edit").className = key === "edit" ? "active" : ""; $("clt-jr").className = key === "jr" ? "active" : "";
+  for (const k of ["edit", "tr", "jr"]) { $("clp-" + k).hidden = key !== k; $("clt-" + k).className = key === k ? "active" : ""; }
 }
+// --- klient → Provoz: kdy kolik přenesl (port, na kterém je sám) a kam (NetFlow z brány, je-li zapnutý) ---
+const clTr = { hours: 24, mac: null };
+const CL_TR_RANGES = [[24, __("24 hodin"), 3600], [168, __("7 dní"), 6 * 3600], [720, __("30 dní"), 86400]];
+function clTrBuckets(points, step) {
+  // vzorky v bit/s → součty bajtů po krocích (hodina / 6 hodin / den); z pohledu portu je tx směr ke klientovi
+  const m = new Map();
+  for (const pt of points) {
+    const t = Math.floor(new Date(pt.t).getTime() / (step * 1000)) * step * 1000;
+    const b = m.get(t) || { n: 0, rx: 0, tx: 0 }; b.n++; b.rx += Number(pt.rx) || 0; b.tx += Number(pt.tx) || 0; m.set(t, b);
+  }
+  return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([t, b]) => ({ hour: new Date(t).toISOString(), down: Math.round(b.tx / b.n * step / 8), up: Math.round(b.rx / b.n * step / 8) }));
+}
+async function loadClientTraffic() {
+  const c = clEdit && clEdit.c; if (!c) return;
+  clTab("tr"); clTr.mac = c.mac;
+  const box = $("cl-tr"); box.textContent = "";
+  const seg = el("div", null, "seg");
+  for (const [h, lab] of CL_TR_RANGES) { const b = el("button", lab, h === clTr.hours ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { clTr.hours = h; loadClientTraffic(); }); seg.appendChild(b); }
+  box.appendChild(seg);
+  const step = CL_TR_RANGES.find((r) => r[0] === clTr.hours)[2];
+  const wired = c.device_id && c.port && c.port !== "?" && !(c.wifi || c.ssid);
+  const [port, flow] = await Promise.all([
+    wired ? api("GET", `/tenants/${tenantId}/devices/${c.device_id}/traffic?interface=${encodeURIComponent(c.port)}&hours=${clTr.hours}`).catch(() => null) : null,
+    c.ip && siteId() ? api("GET", `/tenants/${tenantId}/sites/${siteId()}/traffic?hours=${clTr.hours}&client=${encodeURIComponent(c.ip)}`).catch(() => null) : null]);
+  if (!clEdit || clEdit.c.mac !== c.mac || clTr.mac !== c.mac) return;
+  const sumBlock = (title, series, note) => {
+    const s = el("section", null, "so-block fl-sum"), h = el("div", null, "so-h"); h.appendChild(el("b", title)); s.appendChild(h);
+    const kpi = el("div", null, "fl-kpi");
+    for (const [lab, val] of [[__("Staženo"), fmtBytes(series.reduce((a, r) => a + r.down, 0))], [__("Odesláno"), fmtBytes(series.reduce((a, r) => a + r.up, 0))]]) { const k = el("div"); k.append(el("span", lab, "muted"), el("b", val)); kpi.appendChild(k); }
+    s.appendChild(kpi);
+    if (series.length > 1) s.appendChild(flowCols(series));
+    const lg = el("div", null, "fl-legend muted"); lg.append(el("i", "", "dn"), document.createTextNode(__("staženo") + "  "), el("i", "", "up"), document.createTextNode(__("odesláno")));
+    s.append(lg, el("p", note, "muted small wl-note")); box.appendChild(s);
+  };
+  let shown = false;
+  if (port && port.points && port.points.length) {
+    const alone = !(c.port_clients > 1);
+    sumBlock(__`Port ${c.port} na ${c.device || "?"}`, clTrBuckets(port.points, step),
+      alone ? __("Provoz portu, na kterém je klient připojený sám.") : __`Pozor: port sdílí ${c.port_clients} klientů – graf je součet za všechny.`);
+    shown = true;
+  }
+  if (flow && flow.total && flow.total.flows) {
+    sumBlock(__`Přes bránu (NetFlow) · ${c.ip}`, flow.series.map((r) => ({ hour: r.hour, up: r.up, down: r.down })), __("Jen provoz, který prošel bránou – po hodinách."));
+    const tot = (r) => r.up + r.down, bar = (r, max) => { const b = el("span", null, "dz-track fl-track"), f = el("i", "", "rx"); f.style.width = Math.max(2, Math.round(tot(r) / max * 100)) + "%"; b.appendChild(f); return b; };
+    const ms = Math.max(1, ...flow.services.map(tot)), mp = Math.max(1, ...flow.peers.map(tot));
+    setBlock(box, __("Služby"), "rules", [__("Služba"), "", __("Staženo"), __("Odesláno")], flow.services.map((x) => [x.name === "ostatní" ? __("ostatní") : x.name, bar(x, ms), fmtBytes(x.down), fmtBytes(x.up)]), [], "");
+    setBlock(box, __("Kam provoz směřuje"), "globe", [__("Adresa"), __("Služba"), "", __("Staženo"), __("Odesláno")], flow.peers.map((x) => [x.ip, x.service, bar(x, mp), fmtBytes(x.down), fmtBytes(x.up)]), [], "");
+    shown = true;
+  }
+  if (!shown) box.appendChild(el("p", wired
+    ? __("Za zvolené období není u portu žádný provoz.")
+    : __("U Wi-Fi klienta a klienta s neznámým portem se provoz bere z brány (NetFlow). Sběr zapneš v Aktivita → Provoz."), "muted wl-note"));
+}
+async function openClientTraffic(mac) {
+  // z Přehledu máme jen MAC – úplný záznam klienta je v seznamu klientů lokality
+  let c = clientsCache.find((x) => x.mac === mac);
+  if (!c) { try { c = (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients`)).find((x) => x.mac === mac); } catch (e) { msg(e.message, true); return; } }
+  if (!c) { msg(__("Klient už v seznamu není."), true); return; }
+  openClient(c); loadClientTraffic();
+}
+$("clt-tr").addEventListener("click", () => loadClientTraffic());
 $("clt-edit").addEventListener("click", () => clTab("edit"));
 $("clt-jr").addEventListener("click", () => { if (clEdit) openJourney(clEdit.c.mac); });
 // pevná IP na jeden klik: rezervace aktuální adresy na DHCP serveru, který klienta obsluhuje
@@ -2590,7 +2650,7 @@ function renderDash() {
   const empty = (box, t) => { box.textContent = ""; box.appendChild(el("p", t, "muted")); };
   if (d.top_aps.length) dashBars($("dash-aps"), d.top_aps.map((a) => ({ name: a.name, value: a.bytes, text: `${fmtBytes(a.bytes)} · ${a.clients}`, title: __`${a.clients} klientů teď`, act: () => openDetail(a.device_id) })));
   else empty($("dash-aps"), __("Žádné AP s provozem."));
-  if (d.top_clients.length) dashBars($("dash-clients"), d.top_clients.map((c) => ({ name: c.name, value: c.bytes, text: fmtBytes(c.bytes), title: `${c.device} · ${c.port}` })), "tx");
+  if (d.top_clients.length) dashBars($("dash-clients"), d.top_clients.map((c) => ({ name: c.name, value: c.bytes, text: fmtBytes(c.bytes), title: `${c.device} · ${c.port}`, act: () => openClientTraffic(c.mac) })), "tx");
   else empty($("dash-clients"), __("Zatím nic – počítají se drátoví klienti, kteří jsou na portu sami."));
   const w = $("dash-watch"); w.textContent = "";
   const row = (cls, name, val, act) => { const b = el("button", null, "dz-watch"); b.type = "button"; b.append(el("i", "", "dz-dot " + cls), el("span", name, "dz-name"), el("span", val, "muted")); b.addEventListener("click", act); w.appendChild(b); };
