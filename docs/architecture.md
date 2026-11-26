@@ -1821,3 +1821,11 @@ o data. Nový dialog nebo panel se přidá do `layerList()`, vlastní obsluhu Es
   bridge VLAN, ethernet) proti modelu z návrhu – jméno, vypnuté porty, PVID, tagované VLAN. Jen ukazuje rozdíl,
   nic nevrací; pozdější změny přes controller jsou legitimní.
 - **Štítek**: tisková podoba „které porty jsou co“ (`#print-area`, `@media print`), tiskne prohlížeč.
+
+## Zobrazení na telefonu
+
+Jeden blok `@media (max-width: 760px)` na konci `style.css` (musí být poslední – starší zlomy přebíjela pozdější
+pravidla pro desktop): hlavička ve dvou řádcích (hledání, zvonek, uživatel / zákazník, Správa, lokalita), navigace
+jako pevná spodní lišta, boční panely a detail zařízení přes celou obrazovku, upozornění jako karty pod sebou,
+filtry zařízení skryté (zůstává hledání a stav), široké tabulky se posouvají do strany. Cíl jsou tři úkony
+v terénu: co hoří, stav zařízení, schválení čekajícího kusu – ne plná správa.

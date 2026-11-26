@@ -1987,3 +1987,48 @@ tr.pw-cmp td { background: var(--bg); padding: 10px 14px; white-space: normal; }
   .print-area table { border-collapse: collapse; width: 100%; margin-bottom: 10pt; }
   .print-area th, .print-area td { border: 1px solid #000; padding: 4pt 6pt; text-align: left; vertical-align: top; }
 }
+
+/* --- telefon (do 760 px): hlavička ve dvou řádcích, navigace jako spodní lišta, panely přes celou obrazovku --- */
+@media (max-width: 760px) {
+  header { flex-wrap: wrap; gap: 6px 8px; padding: 6px 10px; min-height: 0; }
+  header h1 { font-size: 0; margin: 0; flex: none; } header h1 .logo { margin: 0; }
+  .lang-pick { display: none; }
+  .gs { order: 2; flex: 1 1 0; min-width: 0; }
+  .hbell { order: 3; } #umenu { order: 4; } .hbtn.user { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hdr-tenant { order: 5; flex: 1 1 100%; margin-left: 0; flex-wrap: nowrap; gap: 6px; }
+  .hdr-tenant .hpill, .hdr-tenant .nav-site.hpill { flex: 1 1 0; min-width: 0; padding: 0 2px 0 6px; }
+  .hdr-tenant .hpill span { display: none; }
+  .hdr-tenant .hpill select, .hdr-tenant .nav-site select { width: 100%; max-width: none; min-width: 0; }
+  main, main:has(> #nav[hidden]) { display: block; min-height: 0; }
+  main:not(:has(> #nav[hidden])) { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+  .nav { position: fixed; top: auto; bottom: 0; left: 0; right: 0; height: auto; z-index: 44; flex-direction: row; overflow: visible;
+         padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line); }
+  .nav-items { flex-direction: row; gap: 0; width: 100%; }
+  .navbtn { flex: 1 1 0; min-width: 0; justify-content: center; padding: 9px 0; }
+  .navbtn.active::before, .nav-sep { display: none; }
+  .content { padding: 8px; }
+  .site-head { flex-wrap: wrap; gap: 6px; } .seg { max-width: 100%; overflow-x: auto; }
+  .dash .dz-side, .dash .dz-main { grid-row: auto; padding-left: 0; }
+  /* boční panely jsou na telefonu list přes celou obrazovku (zavírá × nebo Esc / zpět) */
+  .side-drawer, .port-edit, #detail.dev-drawer, #detail.dev-drawer.wide { top: 0; width: 100vw; z-index: 46; }
+  .modal { padding: 8px; align-items: flex-end; } .modal-box, .modal-box.wide, .modal-box.xwide { max-height: calc(100vh - 16px); overflow-y: auto; }
+  #msg { left: 8px; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); max-width: none; }
+  /* široké tabulky se posouvají do strany, stránka ne */
+  .pw-table, #audit-wrap table, #plans-wrap table, #devlist-wrap table { display: block; overflow-x: auto; max-width: 100%; }
+  /* upozornění: jen závažnost, zpráva (začíná jménem zařízení) a akce */
+  #alerts-wrap th:nth-child(2), #alerts-wrap th:nth-child(3), #alerts-wrap th:nth-child(5),
+  #alerts tr:not(.al-group) td:nth-child(2), #alerts tr:not(.al-group) td:nth-child(3), #alerts tr:not(.al-group) td:nth-child(5) { display: none; }
+  .al-acts { white-space: normal; } .al-acts button { margin: 2px 0 2px 6px; } .al-acts .muted { display: block; }
+  /* zařízení: filtry se na telefonu nevejdou vedle seznamu – zůstává hledání a stav */
+  .dev-facets { display: none; }
+  .nav { padding-right: 12px; }
+  .ux { min-height: 0; grid-template-rows: none; grid-auto-rows: auto; align-content: start; }
+  /* každé upozornění jako karta pod sebou: závažnost, zpráva, akce */
+  #alerts-wrap table, #alerts-wrap tbody { display: block; width: 100%; } #alerts-wrap thead { display: none; }
+  #alerts tr { display: block; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+  #alerts td { display: block; border: 0; padding: 1px 0; height: auto; background: transparent; }
+  #alerts tr.al-in { padding-left: 14px; } #alerts tr.al-in td:first-child { padding-left: 0; }
+  #alerts .al-acts { text-align: left; padding-top: 6px; } #alerts .al-acts button { margin: 0 6px 0 0; }
+  #alerts .al-acts .muted { display: inline; margin-right: 8px; }
+  .pw-diagram { padding: 8px; } .pw-foot { flex-wrap: wrap; }
+}
