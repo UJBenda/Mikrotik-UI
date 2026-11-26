@@ -1799,3 +1799,16 @@ Jedno místo (`layerList()` / `closeTopLayer()` v `app.js`): Esc zavře vždy je
 dialog → editor portu → panel klienta → detail zařízení; každý dialog má × vpravo nahoře. Klik mimo okno zavírá
 jen dialogy bez rozepsaných údajů (verze záloh, optimalizace kanálů, přidání zařízení, chyba) – formulář by přišel
 o data. Nový dialog nebo panel se přidá do `layerList()`, vlastní obsluhu Esc nedostává.
+
+## Upozornění: skupiny a ztlumení (`alertmute.py`)
+
+- **Zvonek a odznak Aktivity** počítají jen to, co čeká na člověka: otevřená upozornění, která nejsou potvrzená
+  ani ztlumená. Potvrzená a ztlumená zůstávají v seznamu vidět.
+- **Skupiny**: tři a víc otevřených upozornění stejného druhu a závažnosti se v seznamu sbalí do jednoho řádku
+  (počet, druh, zařízení) s „Potvrdit vše“ a „Ztlumit druh…“.
+- **Ztlumení na čas** (`alert_mute`, migrace 0042, RLS): pravidlo druh + volitelně zařízení a předmět, na 1 h až
+  30 dní. Je to pravidlo, ne příznak na alertu – platí i pro alert, který se mezitím zavře a znovu otevře.
+  Ztlumené upozornění se neposílá (`notify.deliver` ho vynechá už ve výběru, takže nezabírá frontu) a nepočítá se
+  do „K řešení“ na přehledu; když po skončení ztlumení ještě trvá, odešle se – stejně jako u servisního okna.
+- API: `POST …/alerts/{id}/mute {scope: alert|device|kind, hours}`, `DELETE …/alert-mutes/{id}`; audit
+  `alert.mute` / `alert.unmute`.

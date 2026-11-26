@@ -1514,6 +1514,7 @@ async def upgrade_cancel(request: Request, p: Principal, tid: str) -> Response:
 
 @endpoint(READ)
 async def alert_list(request: Request, p: Principal, tid: str) -> Response:
+    from .. import alertmute
     st = get_state(request)
     open_only = request.query_params.get("all") != "1"
 
@@ -1522,7 +1523,8 @@ async def alert_list(request: Request, p: Principal, tid: str) -> Response:
             return tx.fetchall(
                 f"""SELECT a.id, a.device_id, d.identity, d.serial, s.name AS site, a.kind, a.subject,
                            a.severity::text AS severity, a.message, a.opened_at, a.last_seen_at, a.resolved_at,
-                           a.acknowledged_at, u.email AS acknowledged_by
+                           a.acknowledged_at, u.email AS acknowledged_by,
+                           {alertmute.MUTED_UNTIL} AS muted_until, {alertmute.MUTE_ID} AS mute_id
                     FROM alert a JOIN device d ON d.id = a.device_id LEFT JOIN site s ON s.id = d.site_id
                     LEFT JOIN app_user u ON u.id = a.acknowledged_by
                     {"WHERE a.resolved_at IS NULL" if open_only else ""}
@@ -1545,6 +1547,39 @@ async def alert_ack(request: Request, p: Principal, tid: str) -> Response:
             if not n:
                 raise NotFound("alert neexistuje nebo je už potvrzený")
             audit(tx, "alert.ack", tenant_id=tid, user_id=p.user_id, target=f"alert:{aid}", ip=client_ip(request))
+
+    await run_in_threadpool(q)
+    return json_response({"ok": True})
+
+
+@endpoint(OPERATE)
+async def alert_mute(request: Request, p: Principal, tid: str) -> Response:
+    """Ztlumit na čas: {scope: alert|device|kind, hours: 1|8|24|168|720}."""
+    from .. import alertmute
+    st = get_state(request)
+    aid = _int(request.path_params["alert_id"], 0, 0, 2**62)
+    body = await _json(request)
+    try:
+        hours = int(body.get("hours") or 0)
+    except (TypeError, ValueError):
+        hours = 0
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            return alertmute.create(tx, tid, aid, str(body.get("scope") or "alert"), hours, user_id=p.user_id, ip=client_ip(request))
+
+    return json_response({"ok": True, **(await run_in_threadpool(q))})
+
+
+@endpoint(OPERATE)
+async def alert_unmute(request: Request, p: Principal, tid: str) -> Response:
+    from .. import alertmute
+    st = get_state(request)
+    mid = _int(request.path_params["mute_id"], 0, 0, 2**62)
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            alertmute.delete(tx, tid, mid, user_id=p.user_id, ip=client_ip(request))
 
     await run_in_threadpool(q)
     return json_response({"ok": True})
@@ -2373,6 +2408,8 @@ def routes() -> list[Route]:
         Route(T + "/clients", client_search, methods=["GET"]),
         Route(T + "/alerts", alert_list, methods=["GET"]),
         Route(T + "/alerts/{alert_id}/ack", alert_ack, methods=["POST"]),
+        Route(T + "/alerts/{alert_id}/mute", alert_mute, methods=["POST"]),
+        Route(T + "/alert-mutes/{mute_id}", alert_unmute, methods=["DELETE"]),
         Route(T + "/plans/{plan_id}/approve", plan_approve, methods=["POST"]),
         Route(T + "/plans/{plan_id}/discard", plan_discard, methods=["POST"]),
     ]

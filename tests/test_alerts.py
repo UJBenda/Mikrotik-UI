@@ -230,3 +230,60 @@ def test_email_deliver_uses_smtp_hook():
         assert sent and sent[0].startswith("[MTC] KRITICKÉ")
     finally:
         drop_db(name)
+
+
+def test_mute():
+    """Ztlumení: alert zůstává v seznamu s muted_until, neposílá se a nepočítá do „K řešení“; po zrušení se odešle."""
+    from mtcontroller import dash
+
+    db, name, settings, box, app, tid, sid = _env()
+    try:
+        a = _adopted(db, box, tid, sid, "A1", "10.200.1.1", "gw")
+        b = _adopted(db, box, tid, sid, "B1", "10.200.1.2", "sw")
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET state = 'offline' WHERE id IN (%(a)s, %(b)s)", {"a": a, "b": b})
+        alerts.reconcile(db)
+        c = _login(app)
+        base = f"/api/admin/tenants/{tid}"
+        lst = c.get(base + "/alerts").json()
+        off = {x["device_id"]: x for x in lst if x["kind"] == "offline"}
+        assert len(off) == 2 and all(x["muted_until"] is None for x in lst)
+        assert c.post(f"{base}/alerts/{off[a]['id']}/mute", json_body={"scope": "alert", "hours": 5}).status_code == 400
+        assert c.post(f"{base}/alerts/{off[a]['id']}/mute", json_body={"scope": "x", "hours": 24}).status_code == 400
+        assert c.post(f"{base}/alerts/{off[a]['id']}/mute", json_body={"scope": "device", "hours": 24}).status_code == 200
+        lst = {x["device_id"]: x for x in c.get(base + "/alerts").json() if x["kind"] == "offline"}
+        assert lst[a]["muted_until"] and lst[a]["mute_id"] and lst[b]["muted_until"] is None
+        with tenant_scope(db, tid) as tx:
+            d = dash.site_dash(tx, sid, 24)
+        assert all(t["device_id"] != a for t in d["todo"]) and any(t["device_id"] == b for t in d["todo"])
+        assert d["todo_total"] == len(c.get(base + "/alerts").json()) - 1
+        # notifikace: ztlumený se neposílá, druhý ano
+        st = Settings.model_validate({**settings.model_dump(), "notify": [_talk_target(Path(tempfile.mkdtemp())).model_dump()]})
+        sent = []
+        notify.deliver(db, st, post=lambda u, bd, h: sent.append(json.loads(bd)["message"]))
+        assert len(sent) == 1
+        # ztlumení platí i pro alert, který se zavře a znovu otevře
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET state = 'adopted' WHERE id = %(a)s", {"a": a})
+        alerts.reconcile(db)
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET state = 'offline' WHERE id = %(a)s", {"a": a})
+        alerts.reconcile(db)
+        again = [x for x in c.get(base + "/alerts").json() if x["kind"] == "offline" and x["device_id"] == a][0]
+        assert again["id"] != off[a]["id"] and again["muted_until"]
+        # zrušení ztlumení → trvající alert se odešle; audit obojího
+        assert c.request("DELETE", f"{base}/alert-mutes/{again['mute_id']}").status_code == 200
+        assert c.request("DELETE", f"{base}/alert-mutes/{again['mute_id']}").status_code == 404
+        n = len(sent)
+        notify.deliver(db, st, post=lambda u, bd, h: sent.append(json.loads(bd)["message"]))
+        assert len(sent) == n + 1
+        with operator_scope(db) as tx:
+            acts = {r["action"] for r in tx.fetchall("SELECT action FROM audit_log WHERE action LIKE 'alert.%%'")}
+        assert {"alert.mute", "alert.unmute"} <= acts
+        # druh všude: ztlumí offline na obou zařízeních; cizí tenant na alert nedosáhne
+        assert c.post(f"{base}/alerts/{again['id']}/mute", json_body={"scope": "kind", "hours": 1}).status_code == 200
+        assert all(x["muted_until"] for x in c.get(base + "/alerts").json() if x["kind"] == "offline")
+        other = services.create_tenant(db, settings, "Jiná firma")
+        assert c.post(f"/api/admin/tenants/{other['id']}/alerts/{again['id']}/mute", json_body={"scope": "alert", "hours": 1}).status_code == 404
+    finally:
+        drop_db(name)

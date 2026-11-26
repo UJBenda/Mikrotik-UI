@@ -112,10 +112,13 @@ def _targets_for(settings: Settings, alert: dict) -> list[NotifyTarget]:
 
 
 def deliver(db: Database, settings: Settings, post=_post, smtp=_smtp_send) -> int:
-    """Pošle čekající notifikace (otevření i uzavření). Vrací počet odeslaných."""
+    """Pošle čekající notifikace (otevření i uzavření). Vrací počet odeslaných.
+
+    Ztlumené upozornění (alertmute) se neposílá a nezabírá místo ve frontě; když po skončení ztlumení
+    ještě trvá, odešle se."""
     if not settings.notify:
         return 0
-    from . import maintenance
+    from . import alertmute, maintenance
 
     with operator_scope(db) as tx:
         quiet = maintenance.quiet_sites(tx)
@@ -124,7 +127,7 @@ def deliver(db: Database, settings: Settings, post=_post, smtp=_smtp_send) -> in
                        a.message, a.opened_at, a.resolved_at, a.notified_open, a.notified_close, d.site_id
                 FROM alert a LEFT JOIN device d ON d.id = a.device_id
                 WHERE a.notify_attempts < {MAX_ATTEMPTS}
-                  AND ((NOT a.notified_open AND a.resolved_at IS NULL)
+                  AND ((NOT a.notified_open AND a.resolved_at IS NULL AND NOT {alertmute.IS_MUTED})
                        OR (a.notified_open AND NOT a.notified_close AND a.resolved_at IS NOT NULL))
                 ORDER BY a.id LIMIT 50""")
     sent = 0

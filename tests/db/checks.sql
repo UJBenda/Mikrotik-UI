@@ -671,6 +671,27 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 
+-- 20l) ztlumení upozornění izolovaná mezi tenanty
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+INSERT INTO alert_mute (tenant_id, kind, until) VALUES ('00000000-0000-0000-0000-0000000000b1', 'offline', now() + interval '1 hour');
+COMMIT;
+BEGIN;
+SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-0000000000a1', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM alert_mute) <> 0 THEN
+    RAISE EXCEPTION 'FAIL: tenant A vidí ztlumení tenanta B'; END IF;
+  RAISE NOTICE 'OK 20l ztlumení upozornění izolovaná';
+END $$;
+COMMIT;
+BEGIN;
+SELECT set_config('app.operator', 'on', true);
+DO $$ BEGIN
+  IF (SELECT count(*) FROM pg_class WHERE relname = 'alert_mute' AND relrowsecurity AND relforcerowsecurity) <> 1 THEN
+    RAISE EXCEPTION 'FAIL: alert_mute bez FORCE RLS'; END IF;
+END $$;
+COMMIT;
+
 -- 21) výjimky zařízení (řízený režim) izolované mezi tenanty
 BEGIN;
 SELECT set_config('app.operator', 'on', true);

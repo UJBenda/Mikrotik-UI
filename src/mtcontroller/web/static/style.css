@@ -1966,3 +1966,9 @@ span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center;
 .fault-x { border: 0; background: transparent; color: var(--text); font-size: 18px; line-height: 1; padding: 2px 6px; cursor: pointer; }
 .fault-h { margin: 0 0 8px; font-size: 16px; }
 .fault-pre { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); font-size: 12px; white-space: pre-wrap; word-break: break-all; user-select: all; }
+
+/* upozornění: skupiny stejného druhu, ztlumené */
+.al-acts { white-space: nowrap; text-align: right; } .al-acts button { width: auto; margin-left: 6px; } .al-acts .muted { margin-right: 4px; }
+tr.al-group td { background: var(--bg); } tr.al-in td:first-child { padding-left: 22px; }
+.al-toggle { border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 0; text-align: left; width: auto; }
+tr.al-muted td { color: var(--muted); } tr.al-muted-h .al-toggle { color: var(--muted); font-weight: 500; }

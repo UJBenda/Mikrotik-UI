@@ -1207,30 +1207,88 @@ function drawTopology(t) {
 
 const SEV_LABEL = { critical: __("kritické"), warning: __("varování"), info: "info" };
 
+// druhy upozornění lidsky (hlavička skupiny, nabídka ztlumení)
+const ALERT_KIND = {
+  offline: __("Zařízení offline"), tunnel_down: __("Tunel nespojen"), rest_unreachable: __("REST nedostupné"), rest_pin_mismatch: __("Nesouhlasí certifikát REST"),
+  wifi_package: __("Wi-Fi ovladač"), package_version: __("Verze balíčků"), cpu_high: __("Vytížení CPU"), memory_high: __("Obsazená paměť"),
+  backup_stale: __("Stará záloha"), ros_issue: __("Známá chyba RouterOS"), port_flapping: __("Kmitající port"), port_errors: __("Chyby na portu"),
+  port_half_duplex: __("Poloviční duplex"), port_loop: __("Smyčka na portu"), cert_changed: __("Změna certifikátu"), config_drift: __("Změna konfigurace mimo controller"),
+  change_rolled_back: __("Změna vrácena"), change_unconfirmed: __("Nepotvrzená změna"), dhcp_pool_full: __("Plný DHCP rozsah"), security_exposed: __("Bezpečnostní nález"),
+  ntp_unsynced: __("Čas není synchronizován"), rogue_dhcp: __("Cizí DHCP server"), rogue_ap: __("Cizí AP"), upgrade_failed: __("Aktualizace selhala"), anomaly: __("Neobvyklé hodnoty"),
+};
+const alertKind = (k) => ALERT_KIND[k] || String(k).replace(/_/g, " ");
+const MUTE_LEN = [[1, __("1 hodinu")], [24, __("1 den")], [168, __("1 týden")], [720, __("30 dní")]];
+const alertsUi = { open: new Set(), muted: false };
+const alertMuted = (a) => !!a.muted_until && new Date(a.muted_until).getTime() > Date.now();
+
 async function loadAlerts() {
-  const list = await api("GET", `/tenants/${tenantId}/alerts`);
-  alertsCache = list;
-  const tb = $("alerts");
-  tb.textContent = "";
-  const crit = list.filter((a) => a.severity === "critical").length;
-  $("alerts-count").textContent = list.length ? `${list.length}${crit ? __` (${crit} kritických)` : ""}` : __("žádné");
-  alertsOpen = [list.length, crit]; activityBadge();
+  alertsCache = await api("GET", `/tenants/${tenantId}/alerts`);
+  renderAlerts();
   loadMaint();
-  for (const a of list) {
-    const tr = el("tr");
-    tr.append(el("td", SEV_LABEL[a.severity] || a.severity, "sev-" + (a.severity === "critical" ? "error" : a.severity)),
-              el("td", a.identity || a.serial), el("td", a.site || "–"), el("td", a.message, "wrap"), el("td", fmtTime(a.opened_at)));
-    const act = el("td");
-    if (a.acknowledged_at) act.appendChild(el("span", __`potvrdil ${a.acknowledged_by || ""}`, "muted"));
-    else {
-      const b = el("button", __("Potvrdit"), "small secondary");
-      b.onclick = async () => { try { await api("POST", `/tenants/${tenantId}/alerts/${a.id}/ack`); loadAlerts(); } catch (e) { msg(e.message, true); } };
-      act.appendChild(b);
-    }
-    tr.appendChild(act);
-    tb.appendChild(tr);
-  }
   if (ovDrill) renderOverview();
+}
+async function alertDo(method, path, body, done) {
+  try { await api(method, `/tenants/${tenantId}${path}`, body); if (done) msg(done); await loadAlerts(); } catch (e) { msg(e.message, true); }
+}
+function alertMuteMenu(ev, a, kindOnly) {
+  const k = alertKind(a.kind), mute = (scope, h) => () => alertDo("POST", `/alerts/${a.id}/mute`, { scope, hours: h }, __("Ztlumeno"));
+  const pick = (scope, lens) => MUTE_LEN.filter(([h]) => lens.includes(h)).map(([h, lab]) => ({ label: __`na ${lab}`, act: mute(scope, h) }));
+  ctxMenu(ev, __("Ztlumit"), [
+    ...(kindOnly ? [] : [{ head: __("Jen tohle upozornění") }, ...pick("alert", [1, 24, 168]),
+      { head: __`${k} na zařízení ${a.identity || a.serial}` }, ...pick("device", [24, 168])]),
+    { head: __`${k} na všech zařízeních` }, ...pick("kind", [24, 168, 720]),
+  ]);
+}
+function alertRow(a, cls) {
+  const tr = el("tr", null, cls || "");
+  tr.append(el("td", SEV_LABEL[a.severity] || a.severity, "sev-" + (a.severity === "critical" ? "error" : a.severity)),
+            el("td", a.identity || a.serial), el("td", a.site || "–"), el("td", a.message, "wrap"), el("td", fmtTime(a.opened_at)));
+  const act = el("td", null, "al-acts");
+  if (alertMuted(a)) {
+    act.appendChild(el("span", __`ztlumeno do ${maintTime(a.muted_until)}`, "muted"));
+    if (canOperate() && a.mute_id) act.appendChild(actBtn(__("Zrušit ztlumení"), () => alertDo("DELETE", `/alert-mutes/${a.mute_id}`, undefined, __("Ztlumení zrušeno")), "small secondary"));
+  } else {
+    if (a.acknowledged_at) act.appendChild(el("span", __`potvrdil ${a.acknowledged_by || ""}`, "muted"));
+    else act.appendChild(actBtn(__("Potvrdit"), () => alertDo("POST", `/alerts/${a.id}/ack`), "small secondary"));
+    if (canOperate()) { const m = actBtn(__("Ztlumit…"), () => {}, "small secondary"); m.addEventListener("click", (ev) => alertMuteMenu(ev, a, false)); act.appendChild(m); }
+  }
+  tr.appendChild(act);
+  return tr;
+}
+function renderAlerts() {
+  const tb = $("alerts"); tb.textContent = "";
+  const live = alertsCache.filter((a) => !alertMuted(a)), muted = alertsCache.filter(alertMuted);
+  // zvonek počítá jen to, co čeká na člověka: neztlumené a nepotvrzené
+  const todo = live.filter((a) => !a.acknowledged_at), crit = todo.filter((a) => a.severity === "critical").length;
+  $("alerts-count").textContent = [todo.length ? __`${todo.length} k řešení` + (crit ? __` (${crit} kritických)` : "") : __("nic k řešení"),
+    live.length - todo.length ? __`${live.length - todo.length} potvrzených` : "", muted.length ? __`${muted.length} ztlumených` : ""].filter(Boolean).join(" · ");
+  alertsOpen = [todo.length, crit]; activityBadge();
+  const head = (key, title, n, acts) => {
+    const tr = el("tr", null, "al-group" + (key === "muted" ? " al-muted-h" : "")), td = el("td"), open = key === "muted" ? alertsUi.muted : alertsUi.open.has(key);
+    td.colSpan = 5;
+    const b = el("button", (open ? "▾ " : "▸ ") + title, "al-toggle"); b.type = "button"; b.setAttribute("aria-expanded", String(open));
+    b.addEventListener("click", () => { if (key === "muted") alertsUi.muted = !open; else if (open) alertsUi.open.delete(key); else alertsUi.open.add(key); renderAlerts(); });
+    td.appendChild(b);
+    const ac = el("td", null, "al-acts"); for (const x of acts) ac.appendChild(x);
+    tr.append(td, ac); tb.appendChild(tr);
+    return open;
+  };
+  // tři a víc upozornění stejného druhu a závažnosti = jedna skupina (rozbalí se klikem)
+  const groups = new Map();
+  for (const a of live) { const k = a.kind + "|" + a.severity; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+  for (const [key, arr] of groups) {
+    if (arr.length < 3) { for (const a of arr) tb.appendChild(alertRow(a)); continue; }
+    const devs = new Set(arr.map((a) => a.device_id)).size, pend = arr.filter((a) => !a.acknowledged_at), acts = [];
+    if (pend.length) acts.push(actBtn(__`Potvrdit vše (${pend.length})`, async () => {
+      try { for (const a of pend) await api("POST", `/tenants/${tenantId}/alerts/${a.id}/ack`); } catch (e) { msg(e.message, true); }
+      loadAlerts();
+    }, "small secondary"));
+    if (canOperate()) { const m = actBtn(__("Ztlumit druh…"), () => {}, "small secondary"); m.addEventListener("click", (ev) => alertMuteMenu(ev, arr[0], true)); acts.push(m); }
+    const title = `${arr.length}× ${alertKind(arr[0].kind)} · ${SEV_LABEL[arr[0].severity] || arr[0].severity} · ` + (devs === 1 ? (arr[0].identity || arr[0].serial) : __`${devs} zařízení`);
+    if (head(key, title, arr.length, acts)) for (const a of arr) tb.appendChild(alertRow(a, "al-in"));
+  }
+  if (muted.length && head("muted", __`Ztlumené (${muted.length}) – nepočítají se a neposílají`, muted.length, [])) for (const a of muted) tb.appendChild(alertRow(a, "al-in al-muted"));
+  if (!alertsCache.length) { const tr = el("tr"), td = el("td", __("Žádné otevřené upozornění."), "muted"); td.colSpan = 6; tr.appendChild(td); tb.appendChild(tr); }
 }
 $("alerts-refresh").addEventListener("click", () => loadAlerts());
 

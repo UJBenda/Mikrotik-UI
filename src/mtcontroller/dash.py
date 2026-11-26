@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import alertmute
 from .db import Tx
 
 WIFI_IFACE_RE = r"^(wifi|wlan|cap)"
@@ -98,10 +99,11 @@ def site_dash(tx: Tx, site_id: Any, hours: int = 24) -> dict:
         """SELECT a.id, a.kind, a.severity::text AS severity, a.subject, a.message, a.opened_at, a.device_id,
                   coalesce(nullif(d.identity, ''), d.serial) AS device
            FROM alert a JOIN device d ON d.id = a.device_id
-           WHERE d.site_id = %(s)s AND a.resolved_at IS NULL ORDER BY a.severity DESC, a.opened_at DESC LIMIT 6""", p)
+           WHERE d.site_id = %(s)s AND a.resolved_at IS NULL AND NOT {MUTED}
+           ORDER BY a.severity DESC, a.opened_at DESC LIMIT 6""".replace("{MUTED}", alertmute.IS_MUTED), p)
     todo_n = int(tx.fetchone(
         """SELECT count(*) AS n FROM alert a JOIN device d ON d.id = a.device_id
-           WHERE d.site_id = %(s)s AND a.resolved_at IS NULL""", p)["n"])
+           WHERE d.site_id = %(s)s AND a.resolved_at IS NULL AND NOT {MUTED}""".replace("{MUTED}", alertmute.IS_MUTED), p)["n"])
     return {"hours": int(hours), "gateway": gateway, "counts": counts, "probe": wanprobe.series(tx, site_id, hours),
             "top_aps": top_aps, "top_clients": top_clients, "links": links[:6], "ports": ports[:6], "signal": signal,
             "wifi_auth": {"ok": int(wf["ok"] or 0), "fail": int(wf["fail"] or 0)},

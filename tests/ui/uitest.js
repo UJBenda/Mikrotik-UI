@@ -185,7 +185,8 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     if (byId["view-dash"].hidden || !byId["view-activity"].hidden) errors.push("navigace: výchozí pohled");
     await byId["nav-activity"].fire("click");
     if (byId["view-activity"].hidden || !byId["view-dash"].hidden || byId["nav-activity"].className !== "navbtn active") errors.push("navigace: přepnutí na aktivitu");
-    if (byId["nav-activity"].children[1].textContent !== "6") errors.push("navigace: odznak aktivity " + byId["nav-activity"].children[1].textContent);
+    // 2 plány + 7 upozornění k řešení (ztlumené se nepočítá)
+    if (byId["nav-activity"].children[1].textContent !== "9") errors.push("navigace: odznak aktivity " + byId["nav-activity"].children[1].textContent);
     // výchozí podzáložka aktivity je časová osa: graf, dny, řádky; hledání a přechod na alerty
     const tlTick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
     await tlTick();
@@ -297,6 +298,28 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!byId["ov-drill"].hidden) errors.push("přehled: druhý klik má proklik zavřít");
     }
     const alertRows = byId["alerts"].children.length;
+    // upozornění: skupina stejného druhu, ztlumené zvlášť, počítadlo jen toho, co čeká na člověka
+    {
+      const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
+      const tb = byId["alerts"], txt = () => tb.textContent, btn = (t) => { const out = []; const walk = (n) => { if (n.tagName === "BUTTON" && n.textContent.includes(t)) out.push(n); for (const x of n.children || []) if (x instanceof El) walk(x); }; walk(tb); return out[0]; };
+      if (!byId["alerts-count"].textContent.includes("7 k řešení") || !byId["alerts-count"].textContent.includes("1 ztlumených")) errors.push("upozornění: počty " + byId["alerts-count"].textContent);
+      if (!txt().includes("3× Kmitající port") || txt().includes("ether5") || txt().includes("starší než 7 dní")) errors.push("upozornění: skupina má být sbalená a ztlumené skryté");
+      await btn("3× Kmitající port").fire("click");
+      if (!byId["alerts"].textContent.includes("ether5") || byId["alerts"].children.length !== 9) errors.push("upozornění: rozbalení skupiny " + byId["alerts"].children.length);
+      const n0 = requests.length;
+      await btn("Potvrdit vše (3)").fire("click"); await tick();
+      if (requests.slice(n0).filter((r) => r.startsWith("POST ") && r.endsWith("/ack")).length !== 3) errors.push("upozornění: potvrdit vše");
+      await btn("Ztlumené (1)").fire("click");
+      if (!byId["alerts"].textContent.includes("starší než 7 dní") || !byId["alerts"].textContent.includes("ztlumeno do")) errors.push("upozornění: ztlumené");
+      const n1 = requests.length;
+      await btn("Zrušit ztlumení").fire("click"); await tick();
+      if (!requests.slice(n1).some((r) => r === "DELETE /api/admin/tenants/061b0f18-cf0a-4a0a-83f8-f5e9d813870c/alert-mutes/5")) errors.push("upozornění: zrušení ztlumení " + requests.slice(n1));
+      await btn("Ztlumit druh").fire("click", { clientX: 10, clientY: 10 });
+      const item = byId["ctx"].children.filter((n) => n.tagName === "BUTTON" && n.textContent.includes("na 1 týden"))[0];
+      const n2 = requests.length;
+      if (!item) errors.push("upozornění: nabídka ztlumení " + byId["ctx"].textContent); else { await item.fire("click"); await tick(); }
+      if (!requests.slice(n2).some((r) => r.startsWith("POST ") && r.endsWith("/mute"))) errors.push("upozornění: ztlumení druhu");
+    }
     const plansN = byId["plans"].children.length;
     // lokalita: topologie a klienti
     await byId["topo-btn"].fire("click");
