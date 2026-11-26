@@ -389,23 +389,88 @@ def summary(plan: dict, model: dict) -> list[dict]:
 # --- uložení -----------------------------------------------------------------------------------------
 
 def _row(r: dict) -> dict:
+    # fáze nasazení: návrh → hotový → skript stažen → zařízení se ohlásilo → schváleno
+    if r["status"] == "draft":
+        stage = "draft"
+    elif r["device_id"]:
+        stage = "adopted" if r.get("device_state") in ("adopted", "offline") else "checked_in"
+    else:
+        stage = "fetched" if r.get("fetched_at") else "ready"
     return {"id": r["id"], "name": r["name"], "model": r["model"], "serial": r["serial"], "status": r["status"],
-            "device_id": str(r["device_id"]) if r["device_id"] else None, "data": r["data"],
-            "created_at": r["created_at"], "updated_at": r["updated_at"]}
+            "device_id": str(r["device_id"]) if r["device_id"] else None, "data": r["data"], "stage": stage,
+            "fetched_at": r.get("fetched_at"), "created_at": r["created_at"], "updated_at": r["updated_at"]}
+
+
+_PLAN_SQL = """SELECT p.id, p.name, p.model, p.serial, p.status, p.device_id, p.data, p.created_at, p.updated_at, p.fetched_at,
+                      d.state::text AS device_state
+               FROM device_prep p LEFT JOIN device d ON d.id = p.device_id WHERE p.site_id = %(s)s"""
 
 
 def list_plans(tx: Tx, site_id: Any) -> list[dict]:
-    return [_row(r) for r in tx.fetchall(
-        """SELECT id, name, model, serial, status, device_id, data, created_at, updated_at FROM device_prep
-           WHERE site_id = %(s)s ORDER BY (status = 'deployed'), name""", {"s": str(site_id)})]
+    return [_row(r) for r in tx.fetchall(_PLAN_SQL + " ORDER BY (p.status = 'deployed'), p.name", {"s": str(site_id)})]
 
 
 def get_plan(tx: Tx, site_id: Any, pid: Any) -> dict:
-    r = tx.fetchone("""SELECT id, name, model, serial, status, device_id, data, created_at, updated_at FROM device_prep
-                       WHERE site_id = %(s)s AND id = %(p)s""", {"s": str(site_id), "p": int(pid)})
+    r = tx.fetchone(_PLAN_SQL + " AND p.id = %(p)s", {"s": str(site_id), "p": int(pid)})
     if not r:
         raise NotFound("připravené zařízení neexistuje")
     return _row(r)
+
+
+def mark_fetched(tx: Tx, site_id: Any, pid: Any) -> None:
+    """Skript opustil controller (soubor stažen nebo vyzvednut zařízením) – jen informace pro přehled fází."""
+    tx.execute("UPDATE device_prep SET fetched_at = now() WHERE site_id = %(s)s AND id = %(p)s AND device_id IS NULL",
+               {"s": str(site_id), "p": int(pid)})
+
+
+def compare(plan: dict, ctx: dict, inv: dict, identity: str | None = None) -> dict:
+    """Návrh × skutečnost po adopci (z inventury): jméno, vypnuté porty, PVID a tagované VLAN portů.
+    Vrací rozdíly; prázdný seznam = zařízení odpovídá návrhu. Bez inventury bridge portů nejde porovnat."""
+    model = build(plan, ctx)
+    bports = {str(b.get("interface")): b for b in _rows(inv, "bridge_ports") if str(b.get("disabled")).lower() != "true"}
+    if not bports:
+        return {"known": False, "diffs": [], "checked": 0}
+    eth = {str(e.get("default-name") or e.get("name")): e for e in _rows(inv, "ethernet")}
+    have_tag: dict[str, set[int]] = {}
+    for v in _rows(inv, "bridge_vlans"):
+        if str(v.get("disabled")).lower() == "true" or str(v.get("dynamic")).lower() == "true":
+            continue
+        for port in [x.strip() for x in str(v.get("tagged") or "").split(",") if x.strip()]:
+            have_tag.setdefault(port, set()).update(dhcpguard._vids(v.get("vlan-ids")))
+    want_tag: dict[str, set[int]] = {}
+    for v in model["vlans"]:
+        for port in v["tagged"]:
+            want_tag.setdefault(port, set()).add(int(v["vid"]))
+    diffs: list[dict] = []
+
+    def diff(port: str, what: str, want: Any, have: Any) -> None:
+        diffs.append({"port": port, "what": what, "want": want, "have": have})
+
+    if identity and identity != plan["name"]:
+        diff("", "identity", plan["name"], identity)
+    for it in model["ports"]:
+        port = it["port"]
+        e = eth.get(port) or {}
+        name = str(e.get("name") or port)          # port mohl být po adopci přejmenován
+        off = str(e.get("disabled")).lower() == "true"
+        if it["mode"] == "off":
+            if e and not off:
+                diff(port, "disabled", True, False)
+            continue
+        if off:
+            diff(port, "disabled", False, True)
+            continue
+        bp = bports.get(name)
+        if not bp:
+            diff(port, "bridge", True, False)
+            continue
+        native = model["mgmt"]["native"]
+        if (it["mode"] != "trunk" or native) and str(bp.get("pvid") or "1") != str(it["pvid"]):
+            diff(port, "pvid", it["pvid"], int(bp["pvid"]) if str(bp.get("pvid") or "").isdigit() else None)
+        want, have = want_tag.get(port, set()), have_tag.get(name, set())
+        if want != have:
+            diff(port, "tagged", sorted(want), sorted(have))
+    return {"known": True, "diffs": diffs, "checked": len(model["ports"])}
 
 
 def save(db: Database, tenant_id: Any, site_id: Any, data: dict, pid: int | None = None, user_id: Any = None,
@@ -477,7 +542,9 @@ def script_for_key(db: Database, key: str, pid: int, enroll_url: str, opts: Fetc
     with tenant_scope(db, s["tenant_id"]) as tx:
         p = get_plan(tx, s["site_id"], pid)
         ctx = context(tx, s["site_id"])
-    return script(validate(p["data"]), ctx, enroll_url, opts)
+        out = script(validate(p["data"]), ctx, enroll_url, opts)
+        mark_fetched(tx, s["site_id"], pid)
+    return out
 
 
 def pair(tx: Tx, site_id: Any, device_id: Any, serial: str | None, model: str | None) -> dict | None:

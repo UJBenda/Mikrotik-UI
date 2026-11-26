@@ -1972,3 +1972,18 @@ span.pm-lab.top { display: flex; align-items: flex-end; justify-content: center;
 tr.al-group td { background: var(--bg); } tr.al-in td:first-child { padding-left: 22px; }
 .al-toggle { border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 0; text-align: left; width: auto; }
 tr.al-muted td { color: var(--muted); } tr.al-muted-h .al-toggle { color: var(--muted); font-weight: 500; }
+
+/* příprava: fáze nasazení, porovnání s návrhem, štítek k tisku */
+.pw-table .pw-acts { white-space: normal; } .pw-table .pw-acts button { margin: 2px 0 2px 6px; } .pw-dots { display: inline-flex; gap: 4px; margin-right: 10px; vertical-align: middle; }
+.pw-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); } .pw-dots i.on { background: var(--ok); }
+tr.pw-cmp td { background: var(--bg); padding: 10px 14px; white-space: normal; } tr.pw-cmp ul { margin: 4px 0 8px; }
+.pw-cmp-ok { color: var(--ok); font-weight: 600; margin: 0; } .pw-cmp-bad { color: var(--warn); font-weight: 600; margin: 0 0 4px; }
+.print-area { display: none; }
+@media print {
+  body > *:not(main), main > *:not(.print-area) { display: none !important; }
+  main { display: block !important; margin: 0 !important; padding: 0 !important; }
+  main > .print-area { display: block !important; color: #000; font: 12pt/1.4 sans-serif; padding: 0; }
+  .print-area h1 { font-size: 20pt; margin: 0 0 2pt; } .print-area p { margin: 0 0 10pt; }
+  .print-area table { border-collapse: collapse; width: 100%; margin-bottom: 10pt; }
+  .print-area th, .print-area td { border: 1px solid #000; padding: 4pt 6pt; text-align: left; vertical-align: top; }
+}

@@ -177,7 +177,10 @@ def test_api_and_pairing():
         assert rv["script"].startswith("# MikroTik controller - pripravena konfigurace sw-sklad-2")
         assert f"/enroll/" in rv["one_liner"] and f"/prep/{pid}" in rv["one_liner"] and "reset-configuration" in rv["one_liner"]
         assert rv["vlan_names"]["10"] and rv["carriers"] == ["ether23", "ether24"] and len(rv["summary"]) >= 4
+        stage = lambda: {x["id"]: x for x in c.get(base).json()["plans"]}[pid]["stage"]
+        assert stage() == "ready" and c.get(f"{base}/{pid}/compare").status_code == 400   # ještě není s čím porovnat
         f = c.get(f"{base}/{pid}/file")
+        assert stage() == "fetched"
         assert f.status_code == 200 and "mtc-sw-sklad-2.rsc" in f.headers["content-disposition"] and "vlan-filtering=yes" in f.text
         # jednořádkový příkaz si skript stahuje klíčem lokality – jen návrh z té lokality
         key = re.search(r"/enroll/([^/?\"]+)/prep/", rv["one_liner"]).group(1)
@@ -196,6 +199,29 @@ def test_api_and_pairing():
         got = {p["id"]: p for p in c.get(base).json()["plans"]}[pid]
         assert got["status"] == "deployed" and got["device_id"] == str(reg.device_id) != str(other.device_id)
         assert c.put(f"{base}/{pid}", json_body=plan()).status_code == 400      # nasazený návrh už se nemění
+        # fáze: ohlásilo se → po schválení „adopted“; porovnání návrhu se skutečností z inventury
+        assert got["stage"] == "checked_in"
+        assert c.get(f"{base}/{pid}/compare").json() == {"known": False, "diffs": [], "checked": 0}   # bez inventury
+        pl = plan(serial="HGB09ABC12")
+        bp = [{"bridge": "bridge", "interface": f"ether{i}", "pvid": "10"} for i in range(1, 11)]
+        bp += [{"bridge": "bridge", "interface": "ether11", "pvid": "5"}, {"bridge": "bridge", "interface": "ether23", "pvid": "93"},
+               {"bridge": "bridge", "interface": "ether24", "pvid": "1"}]
+        vl = [{"bridge": "bridge", "vlan-ids": "5", "tagged": ",".join(f"ether{i}" for i in range(1, 11)) + ",ether24"},
+              {"bridge": "bridge", "vlan-ids": "10", "tagged": "ether24"}, {"bridge": "bridge", "vlan-ids": "93", "tagged": "ether24"}]
+        eth = [{"name": x, "default-name": x, "disabled": "false" if x in pl["ports"] else "true"} for x in PORTS]
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET identity = 'sw-sklad-2' WHERE id = %(d)s", {"d": str(reg.device_id)})
+        inventory.store(db, tid, reg.device_id, {"bridge_ports": bp, "bridge_vlans": vl, "ethernet": eth}, [])
+        cmp_ = c.get(f"{base}/{pid}/compare").json()
+        assert cmp_["known"] and cmp_["checked"] == 28 and cmp_["diffs"] == [], cmp_
+        # někdo port přehodí do jiné VLAN, další zapne a přejmenuje zařízení → tři rozdíly
+        bp[0]["pvid"] = "5"; eth[14]["disabled"] = "false"
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE device SET identity = 'jinak' WHERE id = %(d)s", {"d": str(reg.device_id)})
+        inventory.store(db, tid, reg.device_id, {"bridge_ports": bp, "bridge_vlans": vl, "ethernet": eth}, [])
+        d = {(x["port"], x["what"]): x for x in c.get(f"{base}/{pid}/compare").json()["diffs"]}
+        assert d[("ether1", "pvid")]["want"] == 10 and d[("ether1", "pvid")]["have"] == 5
+        assert d[("ether15", "disabled")]["want"] is True and d[("", "identity")]["have"] == "jinak" and len(d) == 3, d
         with operator_scope(db) as tx:
             a = tx.fetchone("""SELECT after FROM audit_log WHERE action = 'device.register' AND target = %(t)s""",
                             {"t": f"device:{reg.device_id}"})["after"]

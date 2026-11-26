@@ -2947,6 +2947,9 @@ async function loadPrep() {
 function pwNets() { return [...pw.ctx.networks.map((n) => ({ vid: n.vid, name: n.name })), ...((pw.cur && pw.cur.extra_vlans) || [])].sort((a, b) => a.vid - b.vid); }
 function pwColor(vid) { const i = pwNets().findIndex((n) => n.vid === vid); return i < 0 ? "#9aa3b2" : PW_COLORS[i % PW_COLORS.length]; }
 function pwVlanName(vid) { const n = pwNets().find((x) => x.vid === vid); return n ? `${n.name} (${vid})` : `VLAN ${vid}`; }
+const PW_STAGE = { draft: __("rozpracováno – něco brání vygenerování"), ready: __("připraveno – skript zatím nikdo nestáhl"), fetched: __("skript stažen – čeká se, až se zařízení ohlásí"),
+  checked_in: __("zařízení se ohlásilo – čeká na schválení"), adopted: __("ve správě") };
+const PW_STAGES = ["ready", "fetched", "checked_in", "adopted"];
 function pwRange(ports) {
   // „ether1–ether10, ether23“ → „1–10, 23“; SFP porty jako S1–S4
   const short = (p) => (/^ether\d+$/.test(p) ? p.slice(5) : /^sfp-sfpplus\d+$/.test(p) ? "S" + p.slice(11) : p);
@@ -2963,20 +2966,67 @@ function pwList() {
   if (canManage()) side.appendChild(actBtn(__("Připravit zařízení"), () => pwNew(null), "pw-new"));
   if (!pw.plans.length) { box.appendChild(el("p", __("Zatím nic připraveného."), "muted wl-note")); return; }
   const t = el("table", null, "so-t pw-table"), hr = el("tr");
-  for (const c of [__("Jméno"), __("Model"), __("Sériové číslo"), __("Stav"), ""]) hr.appendChild(el("th", c));
+  for (const c of [__("Jméno"), __("Model"), __("Sériové číslo"), __("Kde to je"), ""]) hr.appendChild(el("th", c));
   t.appendChild(hr);
   for (const p of pw.plans) {
-    const tr = el("tr"), acts = el("td", null, "pw-acts");
-    tr.append(el("td", p.name), el("td", p.model), el("td", p.serial || "–"), el("td", PW_STATUS[p.status] || p.status, "pw-st " + p.status));
-    if (p.status === "deployed" && p.device_id) acts.appendChild(actBtn(__("Zařízení"), () => openDetail(p.device_id), "small secondary"));
+    const tr = el("tr"), acts = el("td", null, "pw-acts"), cmp = el("tr", null, "pw-cmp"), cmpTd = el("td");
+    cmpTd.colSpan = 5; cmp.appendChild(cmpTd); cmp.hidden = true;   // sem se vypíše porovnání s návrhem
+    // fáze nasazení: čtyři tečky (připraveno → staženo → ohlásilo se → ve správě) + slovy, kde to právě je
+    const stage = p.stage || (p.status === "deployed" ? "adopted" : p.status), std = el("td", null, "pw-stage"), dots = el("span", null, "pw-dots"), at = PW_STAGES.indexOf(stage);
+    for (let i = 0; i < PW_STAGES.length; i++) dots.appendChild(el("i", "", i <= at ? "on" : ""));
+    std.append(dots, el("span", PW_STAGE[stage] || PW_STATUS[p.status] || p.status, stage === "draft" ? "pw-st draft" : ""));
+    tr.append(el("td", p.name), el("td", p.model), el("td", p.serial || "–"), std);
+    if (p.device_id) {
+      acts.appendChild(actBtn(__("Zařízení"), () => openDetail(p.device_id), "small secondary"));
+      acts.appendChild(actBtn(__("Porovnat s návrhem"), () => pwCompare(p, cmp), "small"));
+    }
+    if (p.status !== "draft") acts.appendChild(actBtn(__("Štítek"), () => pwPrint(p), "small secondary"));
     if (canManage()) {
       if (p.status !== "deployed") acts.appendChild(actBtn(__("Upravit"), () => pwEdit(p), "small"));
       acts.appendChild(actBtn(__("Kopie"), () => pwNew(p), "small secondary"));
       acts.appendChild(actBtn(__("Smazat"), async () => { if (!(await ask(__`Smazat připravené zařízení ${p.name}?`, __("Smazat")))) return; try { await api("DELETE", `/tenants/${tenantId}/sites/${siteId()}/prep/${p.id}`); loadPrep(); } catch (e) { msg(e.message, true); } }, "small secondary"));
     }
-    tr.appendChild(acts); t.appendChild(tr);
+    tr.appendChild(acts); t.append(tr, cmp);
   }
   box.appendChild(t);
+}
+// návrh × skutečnost: řádek pod návrhem s rozdíly (nebo s potvrzením, že sedí)
+async function pwCompare(p, row) {
+  let r;
+  try { r = await api("GET", `/tenants/${tenantId}/sites/${siteId()}/prep/${p.id}/compare`); } catch (e) { msg(e.message, true); return; }
+  const keep = pw.cur; pw.cur = pwFrom(p);
+  const td = row.children[0]; td.textContent = ""; row.hidden = false;
+  const vl = (a) => (a && a.length ? a.join(", ") : __("žádné"));
+  const say = (d) => d.what === "identity" ? __`Jméno zařízení: v návrhu ${d.want}, na zařízení ${d.have}`
+    : d.what === "disabled" ? (d.want ? __("má být vypnutý, je zapnutý") : __("má být zapnutý, je vypnutý"))
+    : d.what === "bridge" ? __("není v bridgi")
+    : d.what === "pvid" ? __`VLAN bez tagu: v návrhu ${d.want}, na zařízení ${d.have == null ? "?" : d.have}`
+    : __`tagované VLAN: v návrhu ${vl(d.want)}, na zařízení ${vl(d.have)}`;
+  if (!r.known) td.appendChild(el("p", __("Zatím není s čím porovnat – controller ještě nemá inventuru zařízení. Zkus to po schválení a první inventuře."), "muted"));
+  else if (!r.diffs.length) td.appendChild(el("p", "✓ " + __`Zařízení odpovídá návrhu (zkontrolováno ${r.checked} portů: vypnutí, VLAN bez tagu, tagované VLAN).`, "pw-cmp-ok"));
+  else {
+    td.appendChild(el("p", __`Na zařízení je ${r.diffs.length} věcí jinak než v návrhu:`, "pw-cmp-bad"));
+    const ul = el("ul");
+    for (const d of r.diffs) { const li = el("li"); if (d.port) li.appendChild(el("b", pwRange([d.port]) + " – ")); li.appendChild(document.createTextNode(say(d))); ul.appendChild(li); }
+    td.append(ul, el("p", __("Controller nic nevrací ani nepřepisuje – jen ukazuje rozdíl. Návrh je záznam toho, co bylo připraveno; pozdější změny přes controller jsou v pořádku."), "muted small"));
+  }
+  pw.cur = keep;
+}
+// štítek k tisku: co je na kterém portu – pro montáž a do racku
+function pwPrint(p) {
+  const keep = pw.cur, c = pwFrom(p), box = $("print-area"); pw.cur = c; box.textContent = "";
+  box.append(el("h1", c.name), el("p", [c.model, c.serial, new Date().toLocaleDateString(LOCALE)].filter(Boolean).join(" · ")));
+  const groups = new Map();
+  for (const port of c.port_names) { const x = c.ports[port]; const k = x ? JSON.stringify([x.mode, x.vlan, x.tagged, x.comment || ""]) : "unset"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(port); }
+  const t = el("table"), hr = el("tr"); for (const h of [__("Porty"), __("Nastavení"), __("Popis")]) hr.appendChild(el("th", h)); t.appendChild(hr);
+  for (const [k, ports] of groups) {
+    const x = k === "unset" ? null : c.ports[ports[0]], tr = el("tr");
+    tr.append(el("td", pwRange(ports)), el("td", x ? pwDescribe(x) : (c.unset === "off" ? __("vypnutý") : pwVlanName(c.unset_vlan) + " " + __("bez tagu"))), el("td", (x && x.comment) || ""));
+    t.appendChild(tr);
+  }
+  box.append(t, el("p", __`Správa: ${pwVlanName(Number(c.mgmt.vid))}, ${c.mgmt.mode === "static" ? c.mgmt.address : "DHCP"} · STP: ${c.stp.mode.toUpperCase()}${c.stp.mode === "mstp" && c.stp.region ? " " + c.stp.region : ""}`));
+  pw.cur = keep;
+  if (typeof window.print === "function") window.print();
 }
 function pwBlank() {
   const m = pw.ctx.models[0] || { model: "", ports: [], poe: [] };

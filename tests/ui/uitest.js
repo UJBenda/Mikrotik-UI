@@ -381,7 +381,15 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
     {
       const all = (n, pred, out = []) => { if (pred(n)) out.push(n); for (const x of n.children || []) if (x instanceof El) all(x, pred, out); return out; };
       const body = { attrs: {}, tagName: "", children: [byId["prep-side"], byId["prep-body"]], get textContent() { return this.children.map((x) => x.textContent).join(" "); } }, btn = (txt) => all(body, (n) => n.tagName === "BUTTON" && n.textContent.startsWith(txt))[0];
-      if (byId["prep-wrap"].hidden || !body.textContent.includes("sw-sklad-2") || !body.textContent.includes("připraveno") || !btn("Připravit zařízení")) errors.push("příprava: seznam " + body.textContent.slice(0, 200));
+      if (byId["prep-wrap"].hidden || !body.textContent.includes("sw-sklad-2") || !body.textContent.includes("skript stažen") || !btn("Připravit zařízení")) errors.push("příprava: seznam " + body.textContent.slice(0, 200));
+      // fáze nasazení, porovnání nasazeného návrhu se skutečností, štítek
+      if (!body.textContent.includes("skript stažen – čeká se") || !body.textContent.includes("ve správě")) errors.push("příprava: fáze nasazení");
+      await btn("Porovnat s návrhem").fire("click"); await tlTick();
+      const ct = body.textContent;
+      if (!ct.includes("3 věcí jinak") || !ct.includes("VLAN bez tagu: v návrhu 5, na zařízení 90") || !ct.includes("má být vypnutý, je zapnutý") || !ct.includes("v návrhu 5, 10, na zařízení 5")) errors.push("příprava: porovnání " + ct.slice(-400));
+      await btn("Štítek").fire("click");
+      const pa = byId["print-area"].textContent;
+      if (!pa.includes("sw-sklad-2") || !pa.includes("1–10") || !pa.includes("Kancelar (5) bez tagu") || !pa.includes("Správa: Sprava (93), DHCP")) errors.push("příprava: štítek " + pa);
       await btn("Upravit").fire("click");
       const port = (p) => all(body, (n) => n.attrs["data-port"] === p)[0];
       if (all(body, (n) => n.attrs["data-port"]).length !== 28) errors.push("příprava: čekáno 28 portů");

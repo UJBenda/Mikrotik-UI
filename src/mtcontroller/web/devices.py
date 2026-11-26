@@ -2232,8 +2232,35 @@ async def site_prep_file(request: Request, p: Principal, tid: str) -> Response:
     out = await run_in_threadpool(q)
     if not out["script"]:
         raise ServiceError("; ".join(out["blockers"]))
+
+    def mark():
+        with tenant_scope(st.db, tid) as tx:
+            prep.mark_fetched(tx, sid, pid)
+
+    await run_in_threadpool(mark)
     return Response(out["script"], media_type="text/plain; charset=us-ascii",
                     headers={"Content-Disposition": f'attachment; filename="mtc-{out["plan"]["name"]}.rsc"'})
+
+
+@endpoint(READ)
+async def site_prep_compare(request: Request, p: Principal, tid: str) -> Response:
+    """Návrh × skutečnost po adopci: co je na zařízení jinak, než bylo připraveno."""
+    from .. import prep
+
+    st = get_state(request)
+    sid = _uuid(request.path_params["site_id"])
+    pid = int(request.path_params["pid"])
+
+    def q():
+        with tenant_scope(st.db, tid) as tx:
+            pl = prep.get_plan(tx, sid, pid)
+            if not pl["device_id"]:
+                raise ServiceError("zařízení se s tímhle návrhem ještě nespárovalo")
+            d = tx.fetchone("SELECT identity FROM device WHERE id = %(d)s", {"d": pl["device_id"]})
+            inv = inventory.load(tx, pl["device_id"], ["bridge_ports", "bridge_vlans", "ethernet"])
+            return prep.compare(prep.validate(pl["data"]), prep.context(tx, sid), inv, (d or {}).get("identity"))
+
+    return json_response(await run_in_threadpool(q))
 
 
 @endpoint(MANAGE)
@@ -2362,6 +2389,7 @@ def routes() -> list[Route]:
         Route(s + "/prep/{pid:int}", site_prep_save, methods=["PUT", "DELETE"]),
         Route(s + "/prep/{pid:int}/review", site_prep_review, methods=["GET"]),
         Route(s + "/prep/{pid:int}/file", site_prep_file, methods=["GET"]),
+        Route(s + "/prep/{pid:int}/compare", site_prep_compare, methods=["GET"]),
         Route(s + "/defaults/{role}.rsc", site_default_file, methods=["GET"]),
         Route(T + "/factory-passwords", factory_passwords, methods=["GET", "POST"]),
         Route(T + "/factory-passwords/import", factory_passwords_import, methods=["POST"]),

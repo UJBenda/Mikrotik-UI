@@ -1812,3 +1812,12 @@ o data. Nový dialog nebo panel se přidá do `layerList()`, vlastní obsluhu Es
   do „K řešení“ na přehledu; když po skončení ztlumení ještě trvá, odešle se – stejně jako u servisního okna.
 - API: `POST …/alerts/{id}/mute {scope: alert|device|kind, hours}`, `DELETE …/alert-mutes/{id}`; audit
   `alert.mute` / `alert.unmute`.
+
+### Příprava: fáze nasazení, porovnání, štítek
+
+- **Fáze** (`stage` ve výpisu návrhů): `draft` → `ready` → `fetched` (skript stažen souborem nebo vyzvednut
+  zařízením; `device_prep.fetched_at`, migrace 0043) → `checked_in` (zařízení se ohlásilo a spárovalo) → `adopted`.
+- **Porovnání s návrhem** (`prep.compare`, `GET …/prep/{id}/compare`): z inventury zařízení (bridge porty,
+  bridge VLAN, ethernet) proti modelu z návrhu – jméno, vypnuté porty, PVID, tagované VLAN. Jen ukazuje rozdíl,
+  nic nevrací; pozdější změny přes controller jsou legitimní.
+- **Štítek**: tisková podoba „které porty jsou co“ (`#print-area`, `@media print`), tiskne prohlížeč.
