@@ -1347,7 +1347,7 @@ UniFi Ports. Jen čtení; hromadná úprava portů a MLAG zůstávají v Zaříz
 - **Levý panel:** výběr zařízení (nebo všechny porty), přepínače Schéma portů / Připojená zařízení / VLAN /
   Provoz (ukládají se do `prefs.pm`) a skupiny filtrů (`PM_FACETS`: stav, rychlost linky, PoE, co je připojeno,
   nativní VLAN, STP, profil).
-- **Schéma:** dlaždice portů ve dvou řadách (liché nahoře), SFP zvlášť; barva podle rychlosti linky, značky
+- **Schéma:** dlaždice portů ve dvou řadách (jako na čelním panelu MikroTiku: sudé nahoře, liché dole), SFP zvlášť; barva podle rychlosti linky, značky
   PoE / uplink (STP root port) / bond, nad a pod dlaždicí jméno toho, co je na portu. Porty mimo filtr zešednou,
   klik port vybere (tabulka i graf se zúží na něj).
 - **VLAN:** nativní VLAN každého portu a pro každou síť mřížka tagovaná / nativní / není na portu.

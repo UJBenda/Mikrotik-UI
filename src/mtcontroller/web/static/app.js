@@ -2999,15 +2999,16 @@ function pwStepPorts(body) {
   const quick = el("span", null, "pw-quick");
   for (const [lab, fn] of [[__("Vybrat vše"), () => new Set(c.port_names)], [__("Jen nenastavené"), () => new Set(c.port_names.filter((p) => !c.ports[p]))], [__("Zrušit výběr"), () => new Set()]]) quick.appendChild(actBtn(lab, () => { pw.sel = fn(); pwRender(); }, "small secondary"));
   h.appendChild(quick); card.appendChild(h);
+  // čelní panel MikroTiku: sudé porty nahoře, liché dole (port 1 vlevo dole)
   const dia = el("div", null, "pw-diagram"), eth = c.port_names.filter((p) => /^(ether|combo)/.test(p)), rest = c.port_names.filter((p) => !/^(ether|combo)/.test(p));
   const grp = (title, ports, two) => {
     const g = el("div", null, "pw-grp"); g.appendChild(el("small", title));
-    if (two) { const a = el("div", null, "pw-prow"), b2 = el("div", null, "pw-prow"); ports.forEach((p, i) => (i % 2 ? b2 : a).appendChild(pwPortEl(p))); g.append(a, b2); }
+    if (two) { const a = el("div", null, "pw-prow"), b2 = el("div", null, "pw-prow"); ports.forEach((p, i) => (i % 2 ? a : b2).appendChild(pwPortEl(p))); g.append(a, b2); }
     else { const a = el("div", null, "pw-prow"); ports.forEach((p) => a.appendChild(pwPortEl(p))); g.appendChild(a); }
     return g;
   };
   if (eth.length) dia.appendChild(grp(`1–${eth.length}` + (c.poe_ports.length ? " · PoE" : ""), eth, eth.length > 8));
-  if (rest.length) dia.appendChild(grp("SFP", rest, false));
+  if (rest.length) dia.appendChild(grp("SFP", rest, eth.length > 8 && rest.length > 1));
   card.appendChild(dia);
   const lg = el("div", null, "pw-legend");
   for (const n of pwNets()) { const s = el("span"), i = el("i"); i.style.background = pwColor(n.vid); s.append(i, document.createTextNode(`${n.name} (${n.vid})`)); lg.appendChild(s); }
@@ -4157,13 +4158,13 @@ function vlanMember(i, vid) {
 }
 
 function portGroup(ports, tileFn, withLabels, twoRowPanel = false) {
-  // víc než 8 portů: liché nahoře, sudé dole (jako na switchi); jinak jedna řada.
-  // SFP vedle dvouřadého panelu jdou taky do dvou řad (25 nahoře, 26 dole).
+  // víc než 8 portů: jako na čelním panelu MikroTiku – sudé nahoře, liché dole (port 1 je vlevo dole);
+  // jinak jedna řada. SFP vedle dvouřadého panelu jdou taky do dvou řad (26 nahoře, 25 dole).
   const twoRows = ports.length > 8 || (twoRowPanel && ports.length > 1);
-  const top = twoRows ? ports.filter((_, k) => k % 2 === 0) : ports;
-  const bottom = twoRows ? ports.filter((_, k) => k % 2 === 1) : [];
+  const top = twoRows ? ports.filter((_, k) => k % 2 === 1) : ports;
+  const bottom = twoRows ? ports.filter((_, k) => k % 2 === 0) : [];
   const g = el("div", null, "port-group" + (withLabels ? "" : " compact"));
-  g.style.gridTemplateColumns = `repeat(${top.length}, 52px)`;
+  g.style.gridTemplateColumns = `repeat(${Math.max(top.length, bottom.length)}, 52px)`;
   const place = (node, row, col) => { node.style.gridRow = String(row); node.style.gridColumn = String(col); g.appendChild(node); };
   const off = withLabels ? 1 : 0;
   top.forEach((i, k) => { if (withLabels) place(portLabel(i, "above"), 1, k + 1); place(tileWrap(i, tileFn), 1 + off, k + 1); });
@@ -6160,7 +6161,7 @@ function pmItems() {
   return out;
 }
 
-// mřížka portů jednoho zařízení: liché nahoře, sudé dole (jako na čelním panelu); SFP zvlášť
+// mřížka portů jednoho zařízení: sudé nahoře, liché dole (jako na čelním panelu MikroTiku); SFP zvlášť
 function pmGrid(d, cell, labels) {
   const face = el("div", null, "pm-face");
   const groups = [d.ports.filter((p) => !p.sfp), d.ports.filter((p) => p.sfp)];
@@ -6168,10 +6169,13 @@ function pmGrid(d, cell, labels) {
     if (!g.length) continue;
     const grp = el("div", null, "pm-grp"), two = g.length > 8;
     for (let i = 0; i < g.length; i += two ? 2 : 1) {
-      const col = el("div", null, "pm-col"), a = g[i], b = two ? g[i + 1] : null;
-      if (labels) col.appendChild(labels(a, "top"));
-      col.appendChild(cell(a));
-      if (two) { col.appendChild(b ? cell(b) : el("span", "", "pm-gap")); if (labels) col.appendChild(b ? labels(b, "bot") : el("span", "", "pm-lab")); }
+      const col = el("div", null, "pm-col"), lo = g[i], hi = two ? g[i + 1] : null;
+      if (!two) { if (labels) col.appendChild(labels(lo, "top")); col.appendChild(cell(lo)); }
+      else {
+        if (labels) col.appendChild(hi ? labels(hi, "top") : el("span", "", "pm-lab"));
+        col.appendChild(hi ? cell(hi) : el("span", "", "pm-gap"));
+        col.appendChild(cell(lo)); if (labels) col.appendChild(labels(lo, "bot"));
+      }
       grp.appendChild(col);
     }
     face.appendChild(grp);
