@@ -2,7 +2,8 @@
 
 Postup: heslo → relace s mfa_ok=false → (první přihlášení) nastavení TOTP →
 ověření kódu → mfa_ok=true. Do API se smí jen s mfa_ok. Po 5 chybných
-pokusech se účet na 15 minut zamkne. TOTP kód nejde použít dvakrát.
+pokusech (heslo i kód MFA dohromady; nuluje je až dokončené přihlášení) se účet
+na 15 minut zamkne. TOTP kód nejde použít dvakrát.
 """
 
 from __future__ import annotations
@@ -96,8 +97,8 @@ def login(db: Database, email: str, password: str, session_hours: int,
             failed = True
         else:
             token = new_token()
-            tx.execute("UPDATE app_user SET failed_logins = 0, locked_until = NULL WHERE id = %(id)s",
-                       {"id": str(user["id"])})
+            # počítadlo chybných pokusů se nuluje až po dokončení MFA – jinak by šlo kód hádat donekonečna
+            # (správné heslo → pár pokusů o kód → znovu heslo → …)
             tx.execute(
                 """INSERT INTO app_session (token_hash, user_id, csrf_token, expires_at, source_ip)
                    VALUES (%(h)s, %(u)s, %(c)s, now() + make_interval(hours => %(hr)s), %(ip)s)""",
@@ -168,7 +169,8 @@ def mfa_verify(db: Database, box: SecretBox, p: Principal, code: str, ip: str | 
     failed = False
     with db.transaction() as tx:
         u = tx.fetchone(
-            """SELECT totp_wrapped_key, totp_ciphertext, totp_confirmed, totp_last_step
+            """SELECT totp_wrapped_key, totp_ciphertext, totp_confirmed, totp_last_step,
+                      locked_until IS NOT NULL AND locked_until > now() AS locked
                FROM app_user WHERE id = %(id)s FOR UPDATE""",
             {"id": p.user_id},
         )
@@ -177,11 +179,26 @@ def mfa_verify(db: Database, box: SecretBox, p: Principal, code: str, ip: str | 
         secret = box.open(SealedSecret(bytes(u["totp_wrapped_key"]), bytes(u["totp_ciphertext"]), 1),
                           _ctx(p.user_id)).decode()
         step = totp.verify(secret, code or "")
-        if step is None or (u["totp_last_step"] is not None and step <= u["totp_last_step"]):
-            audit(tx, "auth.mfa_failed", user_id=p.user_id, target=f"user:{p.user_id}", ip=ip)
+        if u["locked"]:
+            # zamčený účet: nezkoušet ani správný kód (jinak by zámek hádání nezastavil)
+            audit(tx, "auth.login_blocked", user_id=p.user_id, target=f"user:{p.user_id}", ip=ip)
+            failed = True
+        elif step is None or (u["totp_last_step"] is not None and step <= u["totp_last_step"]):
+            # chybný kód se počítá stejně jako chybné heslo: po MAX_FAILED zámek účtu a konec rozdělaných relací
+            n = tx.fetchone(
+                """UPDATE app_user SET failed_logins = failed_logins + 1,
+                       locked_until = CASE WHEN failed_logins + 1 >= %(m)s
+                                           THEN now() + make_interval(mins => %(l)s) ELSE locked_until END
+                   WHERE id = %(id)s RETURNING failed_logins""",
+                {"m": MAX_FAILED, "l": LOCK_MINUTES, "id": p.user_id})["failed_logins"]
+            if n >= MAX_FAILED:
+                tx.execute("DELETE FROM app_session WHERE user_id = %(id)s AND NOT mfa_ok", {"id": p.user_id})
+            audit(tx, "auth.mfa_failed", user_id=p.user_id, target=f"user:{p.user_id}",
+                  after={"locked": n >= MAX_FAILED}, ip=ip)
             failed = True
         else:
-            tx.execute("UPDATE app_user SET totp_confirmed = true, totp_last_step = %(s)s WHERE id = %(id)s",
+            tx.execute("""UPDATE app_user SET totp_confirmed = true, totp_last_step = %(s)s, failed_logins = 0,
+                              locked_until = NULL WHERE id = %(id)s""",
                        {"s": step, "id": p.user_id})
             tx.execute("UPDATE app_session SET mfa_ok = true WHERE id = %(id)s", {"id": p.session_id})
             audit(tx, "auth.login", user_id=p.user_id, target=f"user:{p.user_id}",

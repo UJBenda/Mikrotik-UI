@@ -196,7 +196,7 @@ def plan(radios: list[dict], max_width: int = 80, dfs: bool = True) -> dict:
                         "auto": str(r.get("frequency") or "auto") == "auto"},
                 "new": {"freq": f_new, "channel": chan(f_new), "width": w_new, "dfs": f_new in DFS},
                 "change": bool(change), "reasons": reasons if change else [],
-                "command": (f"/interface wifi set [find name=\"{r['interface']}\"] channel.frequency={f_new} "
+                "command": (f"/interface wifi set [find name={_q(r['interface'])}] channel.frequency={f_new} "
                             f"channel.width={_width_arg(w_new)}") if r.get("driver") == "wifi" else None,
             })
         if band == "5" and any(i["new"]["dfs"] for i in items if i["band"] == "5"):
@@ -212,3 +212,13 @@ def plan(radios: list[dict], max_width: int = 80, dfs: bool = True) -> dict:
 
 def _width_arg(w: int) -> str:
     return {20: "20mhz", 40: "20/40mhz", 80: "20/40/80mhz"}[w]
+
+
+def _q(name: Any) -> str:
+    """Jméno rozhraní pochází ze zařízení – do příkazu jen přes routeros.q()."""
+    from .routeros import q
+
+    try:
+        return q(str(name))
+    except ValueError:
+        return '"?"'

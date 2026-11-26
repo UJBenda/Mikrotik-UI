@@ -293,7 +293,57 @@ def test_login_lockout_and_totp_replay():
         assert c3.post("/api/admin/mfa/verify", json_body={"code": code}).status_code == 401
         # bez dokončeného MFA nejsou data
         assert c3.get("/api/admin/tenants").status_code == 401
+
+        # hádání kódu MFA: chybné kódy se počítají jako chybná hesla a správné heslo počítadlo nenuluje
+        from mtcontroller.web import admin as web_admin
+
+        def half_login(ip):
+            cx = AsgiClient(app, "admin.test", client_ip=ip)
+            r = cx.post("/api/admin/login", json_body={"email": "admin@example.cz", "password": PASSWORD})
+            assert r.status_code == 200, r.text
+            cx.csrf = r.json()["csrf"]
+            return cx
+
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE app_user SET locked_until = NULL, failed_logins = 0")
+        web_admin._attempts.clear()
+        a = half_login("192.0.2.60")
+        for _ in range(2):
+            assert a.post("/api/admin/mfa/verify", json_body={"code": "000000"}).status_code == 401
+        b = half_login("192.0.2.61")                                        # nové heslo OK počítadlo nevynuluje
+        with operator_scope(db) as tx:
+            assert tx.fetchone("SELECT failed_logins AS n FROM app_user")["n"] == 2
+        for _ in range(3):
+            assert b.post("/api/admin/mfa/verify", json_body={"code": "000000"}).status_code == 401
+        with operator_scope(db) as tx:
+            u = tx.fetchone("SELECT failed_logins AS n, locked_until > now() AS locked FROM app_user")
+            assert u["n"] == 5 and u["locked"]
+            # rozdělané relace (bez MFA) skončily, dokončené zůstávají
+            assert tx.fetchone("SELECT count(*) AS n FROM app_session WHERE NOT mfa_ok")["n"] == 0
+            assert tx.fetchone("SELECT count(*) AS n FROM app_session WHERE mfa_ok")["n"] >= 1
+            assert tx.fetchone("SELECT count(*) AS n FROM audit_log WHERE action = 'auth.mfa_failed'")["n"] >= 5
+        assert b.post("/api/admin/mfa/verify", json_body={"code": "000000"}).status_code == 401   # relace je pryč
+        assert c.post("/api/admin/login", json_body={"email": "admin@example.cz", "password": PASSWORD}).status_code == 401
+        assert c2.get("/api/admin/tenants").status_code == 200              # přihlášený správce pracuje dál
+        # zamčený účet nepustí ani správný kód na relaci založené před zámkem
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE app_user SET locked_until = NULL")
+        d = half_login("192.0.2.62")
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE app_user SET locked_until = now() + interval '5 minutes', totp_last_step = NULL")
+        assert d.post("/api/admin/mfa/verify", json_body={"code": totp.totp(c2.totp_secret)}).status_code == 401
+        with operator_scope(db) as tx:
+            tx.execute("UPDATE app_user SET locked_until = NULL")
+        assert d.post("/api/admin/mfa/verify", json_body={"code": totp.totp(c2.totp_secret)}).status_code == 200
+        with operator_scope(db) as tx:
+            assert tx.fetchone("SELECT failed_logins AS n FROM app_user")["n"] == 0   # dokončené přihlášení nuluje
+        # omezení rychlosti: víc než 10 pokusů o kód za minutu
+        web_admin._attempts.clear()
+        e = half_login("192.0.2.63")
+        codes = [e.post("/api/admin/mfa/verify", json_body={"code": "000000"}).status_code for _ in range(12)]
+        assert 429 in codes or codes.count(401) == 12 and codes[-1] == 401  # po zámku relace mizí dřív než limit
     finally:
+        web_admin._attempts.clear() if "web_admin" in dir() else None
         drop_db(name)
 
 

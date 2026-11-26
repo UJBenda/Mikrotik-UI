@@ -1540,7 +1540,7 @@ async function loadClientTraffic() {
 }
 async function openClientTraffic(mac) {
   // z Přehledu máme jen MAC – úplný záznam klienta je v seznamu klientů lokality
-  let c = clientsCache.find((x) => x.mac === mac);
+  let c = clView.site === siteId() && !clView.at ? clientsCache.find((x) => x.mac === mac) : null;
   if (!c) { try { c = (await api("GET", `/tenants/${tenantId}/sites/${siteId()}/clients`)).find((x) => x.mac === mac); } catch (e) { msg(e.message, true); return; } }
   if (!c) { msg(__("Klient už v seznamu není."), true); return; }
   openClient(c); loadClientTraffic();
@@ -6460,7 +6460,8 @@ $("lease-q").addEventListener("input", () => leaseCtx && drawLeaseRows());
 $("lease-new").addEventListener("click", () => { if (leaseCtx) { leaseCtx.edit = { mac: "", ip: leaseCtx.v.suggest }; drawLeaseRows(); } });
 $("lease-csv").addEventListener("click", () => {
   if (!leaseCtx) return;
-  const esc = (x) => `"${String(x == null ? "" : x).replace(/"/g, '""')}"`;
+  // hostname a popis posílá klient v síti: buňka začínající =, +, -, @ by se v Excelu spustila jako vzorec
+  const esc = (x) => { const v = String(x == null ? "" : x); return `"${(/^[=+\-@\t\r]/.test(v) ? "'" + v : v).replace(/"/g, '""')}"`; };
   const lines = [["IP", "MAC", __("Výrobce"), __("Hostname"), __("Typ"), __("Popis"), __("Poznámka"), "DHCP options", __("Kde")].map(esc).join(";")];
   for (const r of leaseCtx.v.leases) {
     lines.push([r.ip, r.mac, r.vendor, r.hostname, LEASE_KIND[r.kind], r.comment, r.note, r.options.join(","), whereText(r)].map(esc).join(";"));

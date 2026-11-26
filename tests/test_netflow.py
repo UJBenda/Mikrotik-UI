@@ -182,3 +182,32 @@ def test_collector_and_api():
         assert flow.retention(db, 30) > 0
     finally:
         drop_db(name)
+
+
+def test_access_log_redacts_tokens():
+    import logging
+
+    from mtcontroller.web.app import RedactTokens, redact_path
+
+    assert redact_path("/adopt/AbC-123_x/register") == "/adopt/***/register"
+    assert redact_path("/enroll/KEY?role=ap") == "/enroll/***?role=ap"
+    assert redact_path("/enroll/KEY/default/switch") == "/enroll/***/default/switch"
+    assert redact_path("/api/checkin") == "/api/checkin" and redact_path("/api/admin/x/adopt/y") == "/api/admin/x/adopt/y"
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                            ("1.2.3.4:5", "GET", "/enroll/tajny-klic?role=ap", "1.1", 200), None)
+    assert RedactTokens().filter(rec) and "tajny-klic" not in rec.getMessage() and "/enroll/***?role=ap" in rec.getMessage()
+
+
+def test_collector_memory_cap(monkeypatch):
+    class S:
+        class flow:
+            max_packets_per_minute = 10**9
+    col = flow.Collector.__new__(flow.Collector)
+    col.parser, col.devices, col.agg, col.dropped, col.settings = flow.Parser(), {"10.0.0.1": {"id": "d", "tenant": "t", "site": "s"}}, {}, 0, S
+    from collections import defaultdict
+    col.rate = defaultdict(lambda: [0, 0])
+    monkeypatch.setattr(flow, "MAX_KEYS", 3)
+    recs = [record(f"192.168.{i}.1", "1.1.1.1", 1000, 443, 6, 100, 1) for i in range(40)]
+    assert col.receive(v9(recs), "10.0.0.1", 1_700_000_000.0) == 40
+    assert len(col.agg) == 4                                              # 3 klíče + jediný „ostatní“ na bránu
+    assert sum(v[0] for v in col.agg.values()) == 4000                    # nic se neztratilo

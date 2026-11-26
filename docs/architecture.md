@@ -1690,3 +1690,32 @@ Hlídaný úsek si při každém objevování spojů (`wlink.discover`) přepoč
 po změně adresy z DHCP se pinguje na novou. Karta klienta má záložku **Provoz** (`loadClientTraffic`): graf portu,
 na kterém klient je (`…/devices/{id}/traffic`), a pokud brána sbírá NetFlow, i služby a protistrany podle jeho IP.
 Otevírá se i klikem na klienta v Přehledu.
+
+## Bezpečnostní revize (listopad 2026)
+
+Prošlo se přihlášení a relace, oprávnění koncových bodů, izolace zákazníků (RLS), skládání SQL, skripty RouterOS,
+ohlašování zařízení, tajemství, nahrávání souborů, vkládání do stránky a spouštění procesů. Opraveno:
+
+- **Hádání kódu MFA.** Ověření kódu nemělo limit a správné heslo nulovalo počítadlo chybných pokusů – kdo znal
+  heslo, mohl šestimístný kód zkoušet donekonečna. Chybný kód se teď počítá jako chybné heslo, počítadlo nuluje až
+  dokončené přihlášení, po pěti chybách se účet na 15 minut zamkne a rozdělané relace (bez MFA) skončí. Zamčený
+  účet nepustí ani správný kód. K tomu limit 10 pokusů za minutu na uživatele.
+- **Tokeny v přístupovém logu.** Adopční token a klíč lokality jsou v cestě URL (RouterOS fetch to jinak neumí).
+  Uvicorn je do logu píše jako `***` (`web.app.RedactTokens`), šablony nginx takové požadavky nelogují
+  (`map $request_uri $mtc_loggable`). U už nainstalovaného nginx je potřeba šablonu přenést ručně.
+- **Paměť příjmu NetFlow.** Strop klíčů v paměti platí i pro řádky „ostatní“ – adresy klientů si odesílatel může
+  vymýšlet.
+- **Export zápůjček do CSV.** Buňka začínající `= + - @` (hostname posílá klient v síti) se uvozuje apostrofem,
+  aby ji tabulkový procesor nespustil jako vzorec.
+- Drobnosti: úklid slovníku limitu přihlášení, jméno rozhraní v doporučeném příkazu plánu kanálů přes `q()`,
+  karta klienta z Přehledu nebere seznam klientů jiné lokality.
+
+Vědomě ponecháno (nízké riziko, zapsáno, ať se na to nezapomene):
+
+- Přidání uživatele prozradí správci zákazníka, zda e-mail už v controlleru má účet (jiného zákazníka).
+- `role_binding` a `app_user` nejsou pod RLS (potřebuje je přihlášení); dotazy je filtrují podle zákazníka v kódu.
+- Sériové číslo si zařízení při ohlášení hlásí samo – kdo má klíč lokality s automatickou adopcí, zařízení přidá.
+  Klíč lokality je proto tajemství; jde otočit.
+- Syslog a NetFlow jsou UDP bez ověření – v lokálním režimu je může kdokoli v síti podvrhnout pod adresou brány.
+- Zámek účtu po pěti chybách jde zneužít k dočasnému zablokování cizího účtu (kdo zná e-mail a dostane se na
+  přihlašovací stránku, která je jen ze sítě správy).

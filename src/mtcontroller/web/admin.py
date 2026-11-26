@@ -41,6 +41,10 @@ LOGIN_PER_MINUTE = 10
 
 def _rate_limited(key: str) -> bool:
     now = time.monotonic()
+    if len(_attempts) > 5000:
+        # mnoho různých adres: staré klíče zahodit, ať slovník neroste bez omezení
+        for k in [k for k, v in _attempts.items() if not v or now - v[-1] > 60]:
+            del _attempts[k]
     q = _attempts[key]
     while q and now - q[0] > 60:
         q.popleft()
@@ -137,6 +141,8 @@ async def mfa_setup(request: Request, p: Principal, _t) -> Response:
 @endpoint(None, mfa=False)
 async def mfa_verify(request: Request, p: Principal, _t) -> Response:
     st = get_state(request)
+    if _rate_limited(f"mfa:{p.user_id}"):
+        return _err(429, "příliš mnoho pokusů, zkus to za minutu")
     data = await _json(request)
     try:
         await run_in_threadpool(auth.mfa_verify, st.db, st.box, p, str(data.get("code", "")),

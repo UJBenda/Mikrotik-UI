@@ -337,7 +337,8 @@ class Collector:
             a = self.agg.get(key)
             if a is None:
                 if len(self.agg) >= MAX_KEYS:
-                    key = (d["id"], hour, client, *OTHER)
+                    # nad stropem už ani po klientech (adresy klientů si odesílatel může vymýšlet)
+                    key = (d["id"], hour, "0.0.0.0", *OTHER)
                 a = self.agg.setdefault(key, [0, 0, 0, 0])
             a[0] += up
             a[1] += down

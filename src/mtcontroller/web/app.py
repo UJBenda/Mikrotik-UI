@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,6 +48,24 @@ def json_response(data: Any, status: int = 200, headers: dict | None = None) -> 
 
 def script_response(script: str, status: int = 200) -> Response:
     return Response(script, status_code=status, media_type="text/plain; charset=us-ascii")
+
+
+_TOKEN_PATH = re.compile(r"^(/(?:adopt|enroll)/)[^/?\s]+")
+
+
+def redact_path(path: str) -> str:
+    """Adopční token a klíč lokality jsou v cestě (RouterOS fetch jinak neumí) – do logu nepatří."""
+    return _TOKEN_PATH.sub(r"\1***", path)
+
+
+class RedactTokens(logging.Filter):
+    """Filtr přístupového logu uvicornu: args = (klient, metoda, cesta, verze HTTP, stav)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        a = record.args
+        if isinstance(a, tuple) and len(a) >= 3 and isinstance(a[2], str):
+            record.args = (*a[:2], redact_path(a[2]), *a[3:])
+        return True
 
 
 def client_ip(request: Request) -> str | None:
