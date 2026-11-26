@@ -119,6 +119,15 @@ def test_unmanaged_record_alert_approve_and_foreign_link(monkeypatch):
         with tenant_scope(db, tid) as tx:
             found = w.alerts(tx)
             assert [a["kind"] for a in found] == ["link_down"] and "úsek přes nespravované zařízení sw-hala ↔ ap-sklad" in found[0]["message"]
+        # dva úseky dole ke stejné protistraně = jedna příčina, jeden alert u protistrany
+        with tenant_scope(db, tid) as tx:
+            l2 = w.watch(tx, tid, sid, sw, "ether8", ap)
+        assert w.sample(db, box, force=True) == 2
+        with tenant_scope(db, tid) as tx:
+            found = w.alerts(tx)
+            assert len(found) == 1 and found[0]["kind"] == "link_down" and str(found[0]["device_id"]) == ap
+            assert "ap-sklad (10.9.0.3) neodpovídá na ping na 2 hlídaných úsecích (z sw-hala)" in found[0]["message"]
+            assert w.unwatch(tx, tid, l2)
         # mapa: uzel nespravovaného switche zůstává (není to bezdrátový spoj mezi našimi)
         tree = c.get(f"/api/admin/tenants/{tid}/sites/{sid}/infra").json()
         assert any(n.get("kind") == "hub" and n.get("guess") for n in tree["nodes"])

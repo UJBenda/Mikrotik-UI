@@ -82,6 +82,15 @@ def test_time_travel_and_mac_flap(monkeypatch):
             # klient, který se jen jednou přestěhoval, nepřeskakuje; Wi-Fi roaming se nepočítá vůbec
             tx.execute("DELETE FROM client_move WHERE at > now() - interval '50 minutes' AND port = 'ether2'")
             assert tm.alerts(tx) == []
+            # poloha odhadnutá na páteřních portech (uplink, bonding, spoj) se mění sama – smyčka to není
+            for i, port in enumerate(("bonding1", "ether8", "bonding1", "ether8", "bonding1")):
+                tx.execute("""INSERT INTO client_move (tenant_id, site_id, mac, device_id, port, firm, at)
+                              VALUES (%(t)s, %(s)s, '50:00:00:00:00:09', %(d)s, %(p)s, false, now() - make_interval(mins => %(m)s))""",
+                           {"t": tid, "s": sid, "d": sw, "p": port, "m": 40 - i})
+            assert tm.alerts(tx) == []
+            tx.execute("UPDATE client_move SET firm = true WHERE mac = '50:00:00:00:00:09'")
+            assert [a["kind"] for a in tm.alerts(tx)] == ["mac_flap"]
+            tx.execute("DELETE FROM client_move WHERE mac = '50:00:00:00:00:09'")
         alerts.reconcile(db)
     finally:
         drop_db(name)

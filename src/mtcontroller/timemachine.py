@@ -91,14 +91,14 @@ def snapshot(db: Database, force: bool = False) -> int:
 
 def record_moves(tx: Tx, tenant_id: Any, site_id: Any, rows: list[dict]) -> int:
     """Po inventuře klientů zapíše, kdo je jinde než minule (nové zařízení nebo port; u Wi-Fi jiné AP)."""
-    rows = [{"mac": r["mac"], "device_id": str(r["device_id"]), "port": r.get("port"), "ssid": r.get("ssid")}
-            for r in rows if r.get("device_id")]
+    rows = [{"mac": r["mac"], "device_id": str(r["device_id"]), "port": r.get("port"), "ssid": r.get("ssid"),
+             "firm": bool(r.get("firm", True))} for r in rows if r.get("device_id")]
     if not rows:
         return 0
     return tx.execute(
-        """INSERT INTO client_move (tenant_id, site_id, mac, device_id, port, ssid)
-           SELECT %(t)s, %(s)s, x.mac, x.device_id::uuid, x.port, x.ssid
-           FROM jsonb_to_recordset(%(rows)s) AS x(mac text, device_id text, port text, ssid text)
+        """INSERT INTO client_move (tenant_id, site_id, mac, device_id, port, ssid, firm)
+           SELECT %(t)s, %(s)s, x.mac, x.device_id::uuid, x.port, x.ssid, coalesce(x.firm, true)
+           FROM jsonb_to_recordset(%(rows)s) AS x(mac text, device_id text, port text, ssid text, firm boolean)
            LEFT JOIN LATERAL (SELECT device_id, port FROM client_move m WHERE m.site_id = %(s)s AND m.mac = x.mac
                               ORDER BY m.at DESC, m.id DESC LIMIT 1) l ON true
            WHERE l.device_id IS NULL OR l.device_id <> x.device_id::uuid OR l.port IS DISTINCT FROM x.port""",
@@ -156,7 +156,8 @@ def at(tx: Tx, site_id: Any, when: Any) -> dict | None:
 
 def alerts(tx: Tx) -> list[dict]:
     """Přeskakování MAC: drátový klient s aspoň FLAP_MOVES přesuny za hodinu, který se vrací na stejná místa.
-    Víc takových klientů najednou v jedné lokalitě = podezření na smyčku."""
+    Víc takových klientů najednou v jedné lokalitě = podezření na smyčku.
+    Počítají se jen jisté polohy (koncový port). Odhad polohy na páteřním portu se mezi inventurami mění sám."""
     rows = tx.fetchall(
         """SELECT m.tenant_id, m.site_id, m.mac, count(*) AS moves,
                   count(DISTINCT (m.device_id, m.port)) AS places,
@@ -165,7 +166,7 @@ def alerts(tx: Tx) -> list[dict]:
                   coalesce(nullif(max(c.hostname), ''), m.mac) AS name
            FROM client_move m JOIN device d ON d.id = m.device_id
            LEFT JOIN client c ON c.site_id = m.site_id AND c.mac = m.mac
-           WHERE m.at > now() - make_interval(mins => %(w)s) AND m.ssid IS NULL AND coalesce(m.port, '?') <> '?'
+           WHERE m.at > now() - make_interval(mins => %(w)s) AND m.ssid IS NULL AND m.firm AND coalesce(m.port, '?') <> '?'
            GROUP BY m.tenant_id, m.site_id, m.mac
            HAVING count(*) >= %(n)s AND count(DISTINCT (m.device_id, m.port)) BETWEEN 2 AND count(*) - 1""",
         {"w": FLAP_WINDOW_MIN, "n": FLAP_MOVES})

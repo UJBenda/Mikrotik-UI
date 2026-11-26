@@ -232,7 +232,9 @@ def _row(c: dict) -> dict:
     w = c.get("wifi") or {}
     return {"mac": c["mac"], "ip": t(c.get("ip"), 45), "hostname": t(c.get("hostname"), 255),
             "device_id": c.get("device_id"), "device": t(c.get("device"), 200), "port": t(c.get("port"), 100),
-            "vlan": t(c.get("vlan"), 20), "ssid": t(w.get("ssid"), 64), "signal": t(w.get("signal"), 20)}
+            "vlan": t(c.get("vlan"), 20), "ssid": t(w.get("ssid"), 64), "signal": t(w.get("signal"), 20),
+            # jistá poloha = koncový port; odhad na sdíleném / páteřním portu se do přeskakování MAC nepočítá
+            "firm": not (c.get("shared") or c.get("uncertain") or c.get("via_link"))}
 
 
 def record(db: Database) -> int:

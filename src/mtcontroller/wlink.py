@@ -588,9 +588,10 @@ def why_text(why: list[dict]) -> str:
 def alerts(tx: Tx) -> list[dict]:
     """[{tenant_id, device_id (strana A), kind link_down|link_degraded, subject, severity, message}]."""
     out = []
+    seg_down: dict[str, list[dict]] = {}
     for ln in tx.fetchall(
             """SELECT l.id, l.tenant_id, l.kind, l.a_device, l.a_iface, coalesce(nullif(a.identity, ''), a.serial) AS a_name,
-                      coalesce(nullif(b.identity, ''), b.serial) AS b_name
+                      l.b_device, host(l.ping_ip) AS ping_ip, coalesce(nullif(b.identity, ''), b.serial) AS b_name
                FROM wlink l JOIN device a ON a.id = l.a_device JOIN device b ON b.id = l.b_device
                WHERE NOT l.muted AND a.state = 'adopted' AND l.sampled_at > now() - interval '30 minutes'"""):
         a = assess(tx, ln["id"])
@@ -598,9 +599,7 @@ def alerts(tx: Tx) -> list[dict]:
         if ln["kind"] == "foreign":
             what = f"úsek přes nespravované zařízení {name}"
             if a["state"] == "down":
-                out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_down",
-                            "subject": ln["b_name"], "severity": "critical",
-                            "message": f"{what} je dole (protistrana neodpovídá na ping)"})
+                seg_down.setdefault(str(ln["b_device"]), []).append(ln)
             elif a["state"] in ("bad", "degraded") and a["why"]:
                 out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_degraded",
                             "subject": ln["b_name"], "severity": "critical" if a["state"] == "bad" else "warning",
@@ -613,6 +612,20 @@ def alerts(tx: Tx) -> list[dict]:
             out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_degraded",
                         "subject": ln["b_name"], "severity": "critical" if a["state"] == "bad" else "warning",
                         "message": f"bezdrátový spoj {name}: {why_text(a['why'])}"})
+    for lns in seg_down.values():
+        ln = lns[0]
+        if len(lns) == 1:
+            out.append({"tenant_id": ln["tenant_id"], "device_id": ln["a_device"], "kind": "link_down",
+                        "subject": ln["b_name"], "severity": "critical",
+                        "message": f"úsek přes nespravované zařízení {ln['a_name']} ↔ {ln['b_name']} je dole "
+                                   f"(protistrana neodpovídá na ping)"})
+            continue
+        # stejná protistrana neodpovídá více zařízením: jedna příčina, jeden alert (u protistrany)
+        names = sorted({x["a_name"] for x in lns})
+        out.append({"tenant_id": ln["tenant_id"], "device_id": ln["b_device"], "kind": "link_down", "subject": "ping",
+                    "severity": "critical",
+                    "message": f"{ln['b_name']} ({ln['ping_ip']}) neodpovídá na ping na {len(lns)} hlídaných úsecích "
+                               f"(z {', '.join(names[:6])}{'…' if len(names) > 6 else ''})"})
     return out
 
 

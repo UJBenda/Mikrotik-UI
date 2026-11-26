@@ -1680,3 +1680,9 @@ controller z toků skládá hodinové součty. Obsah provozu se nevidí – jen 
 - **Omezení:** brána vidí jen provoz přes své CPU (ne provoz přepínaný čipem uvnitř VLAN). Jména protistran se
   nepřekládají, služba je odhad z portu. Na skutečném RouterOS zatím neověřeno – hlavně jaká pole šablona nese
   (adresa po NATu) a zda FastTrack toky nezkresluje.
+
+**Oprava po nasazení na skutečné síti (migrace 0039):** přeskakování MAC a podezření na smyčku počítají jen
+jisté polohy (`client_move.firm` – klient na koncovém portu). Poloha odhadnutá na sdíleném nebo páteřním portu
+(uplink, bonding, VLAN rozhraní, spoj) se mezi inventurami mění sama a dávala plané kritické poplachy.
+Hlídané úseky, které jsou dole ke stejné protistraně, dávají jeden alert u protistrany místo jednoho za úsek.
+Přehled: rádio, které drží spoj mezi našimi zařízeními, se nepočítá mezi nejvytíženější AP.

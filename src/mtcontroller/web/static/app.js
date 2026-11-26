@@ -2594,7 +2594,7 @@ function renderDash() {
   else empty($("dash-clients"), __("Zatím nic – počítají se drátoví klienti, kteří jsou na portu sami."));
   const w = $("dash-watch"); w.textContent = "";
   const row = (cls, name, val, act) => { const b = el("button", null, "dz-watch"); b.type = "button"; b.append(el("i", "", "dz-dot " + cls), el("span", name, "dz-name"), el("span", val, "muted")); b.addEventListener("click", act); w.appendChild(b); };
-  for (const p of d.ports) row(p.level === "critical" ? "bad" : "warn", `${p.device} · ${p.port}`, __`${p.errors_24h} chyb / 24 h`, () => openSub("ports", "ports"));
+  for (const p of d.ports) row(p.level === "critical" ? "bad" : "warn", `${p.device} · ${p.port}`, p.errors_24h || !(p.why || []).length ? __`${p.errors_24h} chyb / 24 h` : p.why.includes("flap") ? __("linka padá") : p.why.includes("sfp") ? __("SFP mimo meze") : __("ke kontrole"), () => openSub("ports", "ports"));
   for (const l of d.links) row(l.state === "ok" ? "ok" : l.state === "unknown" ? "" : l.state === "degraded" ? "warn" : "bad", l.name + (wlForeign(l) ? " · " + __("hlídaný úsek") : ""), l.score != null ? `${l.score} / 100` : (WL_STATE[l.state] || [l.state])[0], () => openLink(l.id));
   if (!d.ports.length && !d.links.length) w.appendChild(el("p", __("Žádný bezdrátový spoj ani port s chybami."), "muted"));
   const au = $("dash-auth"), a = d.wifi_auth, tot = a.ok + a.fail; au.textContent = "";

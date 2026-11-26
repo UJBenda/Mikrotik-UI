@@ -49,6 +49,10 @@ def site_dash(tx: Tx, site_id: Any, hours: int = 24) -> dict:
     aps = tx.fetchall(
         f"""SELECT h.device_id, {_BYTES} AS bytes FROM interface_hourly h JOIN device d ON d.id = h.device_id
             WHERE d.site_id = %(s)s AND h.hour > now() - make_interval(hours => %(h)s) AND h.name ~ %(re)s
+              -- rádio, které drží spoj mezi dvěma našimi zařízeními, není AP pro klienty (patří do Spojů)
+              AND NOT EXISTS (SELECT 1 FROM wlink l WHERE l.kind <> 'foreign'
+                              AND ((l.a_device = h.device_id AND l.a_iface = h.name)
+                                   OR (l.b_device = h.device_id AND l.b_iface = h.name)))
             GROUP BY h.device_id ORDER BY 2 DESC LIMIT 5""", dict(p, re=WIFI_IFACE_RE))
     wcl = {str(r["device_id"]): r for r in tx.fetchall(
         """SELECT device_id, count(*) AS n, round(avg(substring(signal from '^-?[0-9]+')::int))::int AS signal
