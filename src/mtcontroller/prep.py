@@ -221,6 +221,33 @@ def validate(data: dict) -> dict:
             if cm:
                 item["comment"] = cm
         ports[port] = item
+    # LACP bondy: 2–8 portů, port nejvýš v jednom; členové mají společné nastavení (bere se z prvního)
+    bonds: list[dict] = []
+    used: set[str] = set()
+    for b in data.get("bonds") or []:
+        if not isinstance(b, dict):
+            raise ServiceError("LACP: čekám seznam bondů")
+        members = list({str(x) for x in b.get("ports") or []})
+        if any(x not in names for x in members):
+            raise ServiceError("LACP: bond obsahuje port, který zařízení nemá")
+        members.sort(key=names.index)
+        if not 2 <= len(members) <= 8:
+            raise ServiceError("LACP: bond musí mít 2 až 8 portů")
+        if used & set(members):
+            raise ServiceError("LACP: port může být jen v jednom bondu")
+        used |= set(members)
+        cfg = ports.get(members[0])
+        if not cfg or cfg["mode"] == "off":
+            raise ServiceError("LACP: portům bondu nastav VLAN nebo trunk (vypnutý nebo nenastavený port v bondu být nemůže)")
+        for x in members:
+            keep_poe = (ports.get(x) or {}).get("poe")
+            ports[x] = {k: v for k, v in cfg.items() if k != "poe"}
+            if keep_poe:
+                ports[x]["poe"] = keep_poe
+        bonds.append({"name": f"bond{len(bonds) + 1}", "ports": members,
+                      "lacp_rate": "1sec" if b.get("lacp_rate") == "1sec" else "30secs"})
+    if len(bonds) > 16:
+        raise ServiceError("LACP: nejvýš 16 bondů")
     m = data.get("mgmt") or {}
     mgmt: dict[str, Any] = {"vid": _vid(m.get("vid"), "VLAN správy"), "native": bool(m.get("native", True)),
                             "mode": "static" if m.get("mode") == "static" else "dhcp"}
@@ -253,7 +280,7 @@ def validate(data: dict) -> dict:
         stp.update(region=region, revision=revision)
     unset = "default" if data.get("unset") == "default" else "off"
     out = {"name": name, "model": model, "serial": serial, "port_names": names, "poe_ports": poe_ports, "ports": ports,
-           "mgmt": mgmt, "unset": unset, "extra_vlans": extra, "stp": stp}
+           "mgmt": mgmt, "unset": unset, "extra_vlans": extra, "stp": stp, "bonds": bonds}
     if unset == "default":
         out["unset_vlan"] = _vid(data.get("unset_vlan"), "VLAN pro nenastavené porty")
     return out
@@ -270,12 +297,24 @@ def build(plan: dict, ctx: dict) -> dict:
         blockers.append(f"VLAN správy {mg} není mezi sítěmi lokality")
     items: list[dict] = []
     extra_lines: list[str] = []
+    # LACP: členy nahradí v bridgi jeden port – bond (na místě svého prvního člena), nastavení mají společné
+    bond_of = {x: b for b in plan.get("bonds") or [] for x in b["ports"]}
     for port in plan["port_names"]:
         c = plan["ports"].get(port)
+        b = bond_of.get(port)
+        if b and port != b["ports"][0]:
+            if c and c.get("poe") and c["poe"] != "auto-on":
+                extra_lines.append(f":do {{ /interface ethernet poe set [find default-name={q(port)}] poe-out={c['poe']} }} on-error={{}}")
+            continue
+        phys = port
+        if b:
+            port = b["name"]
         if c is None:
             c = {"mode": "access", "vlan": plan["unset_vlan"], "edge": True} if plan["unset"] == "default" else {"mode": "off"}
         mode = c["mode"]
         it: dict[str, Any] = {"port": port, "name": port, "mode": mode, "comment": c.get("comment"), "trusted": mode == "trunk"}
+        if b:
+            it["bond"] = {"slaves": b["ports"], "lacp_rate": b["lacp_rate"], "hash": "layer-2-and-3"}
         if mode == "off":
             it.update(pvid=None, frame_types=None, loop=False)
         elif mode == "trunk":
@@ -284,7 +323,7 @@ def build(plan: dict, ctx: dict) -> dict:
             for vid in [c["vlan"], *c.get("tagged", [])]:
                 if vid not in names:
                     blockers.append(f"port {port}: VLAN {vid} není mezi sítěmi lokality (přidej ji v kroku Porty)")
-            it.update(pvid=c["vlan"], tagged=c.get("tagged", []), loop=True,
+            it.update(pvid=c["vlan"], tagged=c.get("tagged", []), loop=not b,
                       frame_types=switchcfg.FT_ACCESS if mode == "access" else switchcfg.FT_ALL)
         items.append(it)
         if mode != "off":
@@ -293,7 +332,10 @@ def build(plan: dict, ctx: dict) -> dict:
             if want != ("yes" if mode == "access" else "auto"):
                 extra_lines.append(f"/interface bridge port set [find bridge={switchcfg.BRIDGE} interface={q(port)}] edge={want}")
             if c.get("poe") and c["poe"] != "auto-on":
-                extra_lines.append(f":do {{ /interface ethernet poe set [find default-name={q(port)}] poe-out={c['poe']} }} on-error={{}}")
+                extra_lines.append(f":do {{ /interface ethernet poe set [find default-name={q(phys)}] poe-out={c['poe']} }} on-error={{}}")
+    for b in plan.get("bonds") or []:
+        warnings.append(f"LACP {b['name']} ({', '.join(b['ports'])}): protistrana musí mít LACP (802.3ad) taky, jinak linka nepojede; "
+                        "pro Hyper-V SET bond nepoužívej (SET LACP neumí)")
     vlans = []
     for vid in sorted(names):
         tagged, untagged = [], []
@@ -370,15 +412,17 @@ def summary(plan: dict, model: dict) -> list[dict]:
     """Skupiny portů se stejným nastavením (pro kontrolu a štítek): [{ports: [...], text}]."""
     groups: dict[tuple, list[str]] = {}
     for it in model["ports"]:
-        c = plan["ports"].get(it["port"]) or {}
+        members = it["bond"]["slaves"] if it.get("bond") else [it["port"]]
+        bond = it["port"] if it.get("bond") else None
+        c = plan["ports"].get(members[0]) or {}
         if it["mode"] == "off":
-            key: tuple = ("off",)
+            key: tuple = ("off", None, None, None, None, None, None)
         elif it["mode"] == "trunk":
-            key = ("trunk", bool(c.get("edge")), c.get("poe"), c.get("comment"))
+            key = ("trunk", bool(c.get("edge")), c.get("poe"), c.get("comment"), None, None, bond)
         else:
-            key = (it["mode"], it["pvid"], tuple(it.get("tagged") or []), bool(c.get("edge", True)), c.get("poe"), c.get("comment"))
-        groups.setdefault(key, []).append(it["port"])
-    return [{"ports": ports, "mode": key[0], "vlan": key[1] if key[0] in ("access", "hybrid") else None,
+            key = (it["mode"], it["pvid"], tuple(it.get("tagged") or []), bool(c.get("edge", True)), c.get("poe"), c.get("comment"), bond)
+        groups.setdefault(key, []).extend(members)
+    return [{"ports": ports, "mode": key[0], "bond": key[6], "vlan": key[1] if key[0] in ("access", "hybrid") else None,
              "tagged": list(key[2]) if key[0] in ("access", "hybrid") else [],
              "edge": key[3] if key[0] in ("access", "hybrid") else (key[1] if key[0] == "trunk" else False),
              "poe": key[4] if key[0] in ("access", "hybrid") else (key[2] if key[0] == "trunk" else None),
@@ -448,8 +492,12 @@ def compare(plan: dict, ctx: dict, inv: dict, identity: str | None = None) -> di
 
     if identity and identity != plan["name"]:
         diff("", "identity", plan["name"], identity)
+    inv_bonds = {str(b.get("name")): sorted(x.strip() for x in str(b.get("slaves") or "").split(",") if x.strip()) for b in _rows(inv, "bonds")}
     for it in model["ports"]:
         port = it["port"]
+        if it.get("bond") and inv_bonds.get(port) != sorted(it["bond"]["slaves"]):
+            diff(port, "bond", it["bond"]["slaves"], inv_bonds.get(port) or [])
+            continue
         e = eth.get(port) or {}
         name = str(e.get("name") or port)          # port mohl být po adopci přejmenován
         off = str(e.get("disabled")).lower() == "true"

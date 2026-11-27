@@ -404,6 +404,25 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       selVlan.value = "10"; await selVlan.fire("change");
       await btn("Použít na 4").fire("click");
       if (!port("ether12").className.includes("access") || !body.textContent.includes("Nastaveno 16 z 28")) errors.push("příprava: použití na výběr");
+      // LACP: dva porty spojit do bondu; klik na jednoho člena pak vybere oba a nastavují se společně
+      await port("ether11").fire("mousedown", { buttons: 1 }); await port("ether12").fire("mousedown", { ctrlKey: true });
+      const lacp = all(body, (n) => n.tagName === "LABEL" && n.textContent.includes("Spojit do LACP"))[0];
+      if (!lacp) errors.push("příprava: chybí volba LACP");
+      else {
+        lacp.children[0].checked = true; await lacp.children[0].fire("change");
+        await btn("Použít na 2").fire("click");
+        if (!port("ether11").className.includes("bond") || !port("ether12").className.includes("bond") || port("ether13").className.includes("bond")) errors.push("příprava: označení členů bondu");
+        if (!body.textContent.includes("LACP bond1")) errors.push("příprava: bond v přehledu");
+        await port("ether12").fire("mousedown", { buttons: 1 });
+        if (!body.textContent.includes("2 portů · 11–12") || !body.textContent.includes("porty se nastavují společně")) errors.push("příprava: klik na člena má vybrat celý bond");
+        if (!port("ether11").className.includes("sel")) errors.push("příprava: zvýraznění celého bondu");
+        // Shift přes bond ho vezme celý; Vyčistit bond zruší
+        await port("ether13").fire("mousedown", { buttons: 1 }); await port("ether12").fire("mousedown", { shiftKey: true });
+        if (!body.textContent.includes("3 portů · 11–13")) errors.push("příprava: rozsah přes bond");
+        await port("ether11").fire("mousedown", { buttons: 1 });
+        const l2 = all(body, (n) => n.tagName === "LABEL" && n.textContent.includes("Spojit do LACP"))[0];
+        if (!l2.children[0].checked) errors.push("příprava: u vybraného bondu má být LACP zaškrtnuté");
+      }
       // bez cesty pro VLAN správy průvodce nepustí dál
       await port("ether23").fire("mousedown", {}); await port("ether24").fire("mousedown", { ctrlKey: true });
       await btn("Vyčistit").fire("click");

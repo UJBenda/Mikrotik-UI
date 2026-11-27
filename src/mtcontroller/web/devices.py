@@ -2257,7 +2257,7 @@ async def site_prep_compare(request: Request, p: Principal, tid: str) -> Respons
             if not pl["device_id"]:
                 raise ServiceError("zařízení se s tímhle návrhem ještě nespárovalo")
             d = tx.fetchone("SELECT identity FROM device WHERE id = %(d)s", {"d": pl["device_id"]})
-            inv = inventory.load(tx, pl["device_id"], ["bridge_ports", "bridge_vlans", "ethernet"])
+            inv = inventory.load(tx, pl["device_id"], ["bridge_ports", "bridge_vlans", "ethernet", "bonds"])
             return prep.compare(prep.validate(pl["data"]), prep.context(tx, sid), inv, (d or {}).get("identity"))
 
     return json_response(await run_in_threadpool(q))

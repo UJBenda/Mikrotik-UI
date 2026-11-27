@@ -265,3 +265,44 @@ def test_mstp_and_mgmt_guess():
     g = prep._guess_mgmt(obs, {"gw": gw, "s1": sw("192.168.93.40/24"), "s2": sw("192.168.93.41/24")})
     assert g["vid"] == 93 and g["native"] is False
     assert prep._guess_mgmt(obs, {"gw": gw}) is None
+
+
+def test_lacp_bond():
+    """LACP: členy nahradí v bridgi bond se společným nastavením; chyby v návrhu se odmítnou."""
+    ports = [f"ether{i}" for i in range(1, 9)] + ["sfp-sfpplus1", "sfp-sfpplus2"]
+    ctx = {"networks": [{"vid": v, "name": f"N{v}", "purpose": "lan", "subnet": None, "gateway": None, "dns": []} for v in (10, 20, 93)],
+           "mgmt_vlan": 93, "mgmt_native": True, "managed": False, "models": [], "profiles": []}
+    base = {"name": "T", "model": "X", "port_names": ports, "poe_ports": ports[:8], "unset": "off",
+            "mgmt": {"vid": 93, "native": True, "mode": "dhcp"},
+            "ports": {"ether1": {"mode": "hybrid", "vlan": 10, "tagged": [20], "edge": False, "comment": "NAS"},
+                      "ether2": {"mode": "access", "vlan": 20, "poe": "off"},      # člen bondu převezme nastavení prvního, PoE si nechá
+                      "ether5": {"mode": "access", "vlan": 10},
+                      "sfp-sfpplus1": {"mode": "trunk"}, "sfp-sfpplus2": {"mode": "trunk"}}}
+    plan = prep.validate({**base, "bonds": [{"ports": ["ether2", "ether1"]}, {"ports": ["sfp-sfpplus1", "sfp-sfpplus2"], "lacp_rate": "1sec"}]})
+    assert plan["bonds"] == [{"name": "bond1", "ports": ["ether1", "ether2"], "lacp_rate": "30secs"},
+                             {"name": "bond2", "ports": ["sfp-sfpplus1", "sfp-sfpplus2"], "lacp_rate": "1sec"}]
+    assert plan["ports"]["ether2"] == {"mode": "hybrid", "vlan": 10, "tagged": [20], "edge": False, "comment": "NAS", "poe": "off"}
+    m = prep.build(plan, ctx)
+    assert [it["port"] for it in m["ports"] if it["mode"] != "off"] == ["bond1", "ether5", "bond2"] and not m["blockers"]
+    assert m["carriers"] == ["bond2"] and any("LACP bond1" in w and "Hyper-V" in w for w in m["warnings"])
+    s = prep.script(plan, ctx, "https://c.example/enroll/KEY", OPTS)
+    assert _balanced(s) and s.isascii()
+    i1 = s.index('/interface bonding add name="bond1" slaves="ether1,ether2" mode=802.3ad lacp-rate=30secs')
+    i2 = s.index('/interface bridge port add bridge=bridge interface="bond1" pvid=10 frame-types=admit-all')
+    assert i1 < i2 and 'slaves="sfp-sfpplus1,sfp-sfpplus2" mode=802.3ad lacp-rate=1sec' in s
+    assert 'interface="ether1"' not in s and 'interface="ether2"' not in s            # členové sami v bridgi nejsou
+    assert 'vlan-ids=20 tagged="bond1,bond2"' in s and 'vlan-ids=10 tagged="bond2" untagged="bond1,ether5"' in s
+    assert '[find default-name="ether2"] poe-out=off' in s
+    sm = {tuple(g["ports"]): g for g in prep.summary(plan, m)}
+    assert sm[("ether1", "ether2")]["bond"] == "bond1" and sm[("ether5",)]["bond"] is None
+    # porovnání po adopci: bond s jinými členy je rozdíl
+    inv = {"bridge_ports": [{"interface": "bond1", "pvid": "10"}, {"interface": "ether5", "pvid": "10"}, {"interface": "bond2", "pvid": "93"}],
+           "bridge_vlans": [{"vlan-ids": "20", "tagged": "bond1,bond2"}, {"vlan-ids": "10", "tagged": "bond2"}],
+           "ethernet": [{"name": x, "default-name": x, "disabled": "true" if x in ("ether3", "ether4", "ether6", "ether7", "ether8") else "false"} for x in ports],
+           "bonds": [{"name": "bond1", "slaves": "ether1,ether2"}, {"name": "bond2", "slaves": "sfp-sfpplus1"}]}
+    d = prep.compare(plan, ctx, inv)["diffs"]
+    assert [(x["port"], x["what"]) for x in d] == [("bond2", "bond")], d
+    for bad in ([{"ports": ["ether1"]}], [{"ports": ["ether1", "ether9"]}], [{"ports": ["ether1", "ether2"]}, {"ports": ["ether2", "ether5"]}],
+                [{"ports": ["ether3", "ether4"]}]):
+        with pytest.raises(Exception):
+            prep.validate({**base, "bonds": bad})

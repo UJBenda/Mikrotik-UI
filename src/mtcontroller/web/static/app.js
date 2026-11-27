@@ -3000,6 +3000,7 @@ async function pwCompare(p, row) {
   const say = (d) => d.what === "identity" ? __`Jméno zařízení: v návrhu ${d.want}, na zařízení ${d.have}`
     : d.what === "disabled" ? (d.want ? __("má být vypnutý, je zapnutý") : __("má být zapnutý, je vypnutý"))
     : d.what === "bridge" ? __("není v bridgi")
+    : d.what === "bond" ? __`LACP bond: v návrhu porty ${vl(d.want)}, na zařízení ${vl(d.have)}`
     : d.what === "pvid" ? __`VLAN bez tagu: v návrhu ${d.want}, na zařízení ${d.have == null ? "?" : d.have}`
     : __`tagované VLAN: v návrhu ${vl(d.want)}, na zařízení ${vl(d.have)}`;
   if (!r.known) td.appendChild(el("p", __("Zatím není s čím porovnat – controller ještě nemá inventuru zařízení. Zkus to po schválení a první inventuře."), "muted"));
@@ -3007,7 +3008,7 @@ async function pwCompare(p, row) {
   else {
     td.appendChild(el("p", __`Na zařízení je ${r.diffs.length} věcí jinak než v návrhu:`, "pw-cmp-bad"));
     const ul = el("ul");
-    for (const d of r.diffs) { const li = el("li"); if (d.port) li.appendChild(el("b", pwRange([d.port]) + " – ")); li.appendChild(document.createTextNode(say(d))); ul.appendChild(li); }
+    for (const d of r.diffs) { const li = el("li"); if (d.port) li.appendChild(el("b", (pw.cur.port_names.includes(d.port) ? pwRange([d.port]) : d.port) + " – ")); li.appendChild(document.createTextNode(say(d))); ul.appendChild(li); }
     td.append(ul, el("p", __("Controller nic nevrací ani nepřepisuje – jen ukazuje rozdíl. Návrh je záznam toho, co bylo připraveno; pozdější změny přes controller jsou v pořádku."), "muted small"));
   }
   pw.cur = keep;
@@ -3017,11 +3018,11 @@ function pwPrint(p) {
   const keep = pw.cur, c = pwFrom(p), box = $("print-area"); pw.cur = c; box.textContent = "";
   box.append(el("h1", c.name), el("p", [c.model, c.serial, new Date().toLocaleDateString(LOCALE)].filter(Boolean).join(" · ")));
   const groups = new Map();
-  for (const port of c.port_names) { const x = c.ports[port]; const k = x ? JSON.stringify([x.mode, x.vlan, x.tagged, x.comment || ""]) : "unset"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(port); }
+  for (const port of c.port_names) { const x = c.ports[port], bd = pwBondOf(port); const k = x ? JSON.stringify([x.mode, x.vlan, x.tagged, x.comment || "", bd ? c.bonds.indexOf(bd) : -1]) : "unset"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(port); }
   const t = el("table"), hr = el("tr"); for (const h of [__("Porty"), __("Nastavení"), __("Popis")]) hr.appendChild(el("th", h)); t.appendChild(hr);
   for (const [k, ports] of groups) {
     const x = k === "unset" ? null : c.ports[ports[0]], tr = el("tr");
-    tr.append(el("td", pwRange(ports)), el("td", x ? pwDescribe(x) : (c.unset === "off" ? __("vypnutý") : pwVlanName(c.unset_vlan) + " " + __("bez tagu"))), el("td", (x && x.comment) || ""));
+    tr.append(el("td", pwRange(ports)), el("td", (pwBondOf(ports[0]) ? "LACP " + pwBondName(pwBondOf(ports[0])) + " · " : "") + (x ? pwDescribe(x) : (c.unset === "off" ? __("vypnutý") : pwVlanName(c.unset_vlan) + " " + __("bez tagu")))), el("td", (x && x.comment) || ""));
     t.appendChild(tr);
   }
   box.append(t, el("p", __`Správa: ${pwVlanName(Number(c.mgmt.vid))}, ${c.mgmt.mode === "static" ? c.mgmt.address : "DHCP"} · STP: ${c.stp.mode.toUpperCase()}${c.stp.mode === "mstp" && c.stp.region ? " " + c.stp.region : ""}`));
@@ -3032,12 +3033,13 @@ function pwBlank() {
   const m = pw.ctx.models[0] || { model: "", ports: [], poe: [] };
   const st = pw.ctx.stp || { mode: "rstp", region: "", revision: 0 };
   return { id: null, name: "", model: m.model, serial: "", port_names: m.ports.slice(), poe_ports: m.poe.slice(), ports: {}, extra_vlans: [], unset: "off", unset_vlan: null,
-    stp: { mode: st.mode, region: st.region || "", revision: st.revision || 0 },
+    stp: { mode: st.mode, region: st.region || "", revision: st.revision || 0 }, bonds: [],
     mgmt: { vid: pw.ctx.mgmt_vlan || (pw.ctx.networks[0] || {}).vid || 1, native: pw.ctx.mgmt_native, mode: "dhcp", address: "", gateway: "", dns: "" } };
 }
 function pwFrom(p) {
   const d = JSON.parse(JSON.stringify(p.data)), m = d.mgmt || {}, st = d.stp || {};
-  return { stp: { mode: st.mode === "mstp" ? "mstp" : "rstp", region: st.region || "", revision: st.revision || 0 }, id: p.id, name: d.name, model: d.model, serial: d.serial || "", port_names: d.port_names, poe_ports: d.poe_ports || [], ports: d.ports || {}, extra_vlans: d.extra_vlans || [],
+  return { bonds: (d.bonds || []).map((b) => ({ ports: b.ports.slice(), lacp_rate: b.lacp_rate || "30secs" })),
+    stp: { mode: st.mode === "mstp" ? "mstp" : "rstp", region: st.region || "", revision: st.revision || 0 }, id: p.id, name: d.name, model: d.model, serial: d.serial || "", port_names: d.port_names, poe_ports: d.poe_ports || [], ports: d.ports || {}, extra_vlans: d.extra_vlans || [],
     unset: d.unset || "off", unset_vlan: d.unset_vlan || null, mgmt: { vid: m.vid, native: m.native !== false, mode: m.mode || "dhcp", address: m.address || "", gateway: m.gateway || "", dns: (m.dns || []).join(", ") } };
 }
 function pwNew(copy) { pw.cur = copy ? { ...pwFrom(copy), id: null, name: "", serial: "" } : pwBlank(); pw.step = 0; pw.sel = new Set(); pw.review = null; pwRender(); }
@@ -3047,6 +3049,7 @@ function pwPayload() {
   return { name: c.name.trim(), model: c.model, serial: c.serial.trim() || null, port_names: c.port_names, poe_ports: c.poe_ports, ports: c.ports, extra_vlans: c.extra_vlans,
     unset: c.unset, unset_vlan: c.unset === "default" ? Number(c.unset_vlan) : undefined,
     stp: { mode: c.stp.mode, region: c.stp.region.trim(), revision: Number(c.stp.revision) || 0 },
+    bonds: c.bonds.map((b) => ({ ports: b.ports, lacp_rate: b.lacp_rate })),
     mgmt: { vid: Number(m.vid), native: !!m.native, mode: m.mode, address: m.address.trim(), gateway: m.gateway.trim(), dns: m.dns.split(/[\s,;]+/).filter(Boolean) } };
 }
 function pwCarriers() {
@@ -3126,23 +3129,30 @@ function pwStepDevice(body) {
   card.appendChild(el("p", pw.ctx.managed ? __("Role switch. Sítě a VLAN se berou z nastavení lokality.") : __("Role switch. Lokalita ještě není v řízení – sítě a VLAN jsou ty, které controller zjistil na zařízeních."), "muted small"));
   body.appendChild(card);
 }
+// LACP bond v návrhu: členové se vybírají a nastavují vždy společně
+const pwBondOf = (p) => pw.cur.bonds.find((b) => b.ports.includes(p));
+const pwBondName = (b) => "bond" + (pw.cur.bonds.indexOf(b) + 1);
+const pwGroup = (p) => { const b = pwBondOf(p); return b ? b.ports : [p]; };
+function pwSelWhole() { for (const b of pw.cur.bonds) if (b.ports.some((x) => pw.sel.has(x))) for (const x of b.ports) pw.sel.add(x); }
 function pwPortEl(p) {
-  const c = pw.cur, x = c.ports[p], b = el("button", /^ether\d+$/.test(p) ? p.slice(5) : /^sfp-sfpplus\d+$/.test(p) ? "S" + p.slice(11) : p, "pw-port" + (pw.sel.has(p) ? " sel" : "") + (x ? " " + x.mode : " unset"));
+  const c = pw.cur, x = c.ports[p], bond = pwBondOf(p), b = el("button", /^ether\d+$/.test(p) ? p.slice(5) : /^sfp-sfpplus\d+$/.test(p) ? "S" + p.slice(11) : p, "pw-port" + (pw.sel.has(p) ? " sel" : "") + (x ? " " + x.mode : " unset"));
   b.type = "button"; b.title = p + (x ? " · " + pwDescribe(x) : " · " + __("nenastaveno")); b.setAttribute("data-port", p);
   if (x && (x.mode === "access" || x.mode === "hybrid")) b.style.background = pwColor(x.vlan);
   const tags = x && x.mode === "trunk" ? pwNets().map((n) => n.vid) : (x && x.tagged) || [];
   if (tags.length) { const st = el("span", null, "pw-tags"); for (const v of tags.slice(0, 5)) { const i = el("i"); i.style.background = pwColor(v); st.appendChild(i); } b.appendChild(st); }
   if (x && x.edge && x.mode !== "off") b.appendChild(el("em", "E"));
+  if (bond) { b.className += " bond"; b.appendChild(el("u", "L" + (c.bonds.indexOf(bond) + 1))); b.title += " · LACP " + pwBondName(bond) + " (" + pwRange(bond.ports) + ")"; }
+  const toggle = () => { const g = pwGroup(p); if (pw.sel.has(p)) g.forEach((x) => pw.sel.delete(x)); else g.forEach((x) => pw.sel.add(x)); };
   b.addEventListener("mousedown", (ev) => {
     ev.preventDefault();
-    if (ev.shiftKey && pw.last) { const a = c.port_names.indexOf(pw.last), z = c.port_names.indexOf(p); for (let i = Math.min(a, z); i <= Math.max(a, z); i++) pw.sel.add(c.port_names[i]); }
-    else if (ev.ctrlKey || ev.metaKey) { if (pw.sel.has(p)) pw.sel.delete(p); else pw.sel.add(p); }
-    else { pw.sel = new Set([p]); pw.drag = true; }
+    if (ev.shiftKey && pw.last) { const a = c.port_names.indexOf(pw.last), z = c.port_names.indexOf(p); for (let i = Math.min(a, z); i <= Math.max(a, z); i++) pw.sel.add(c.port_names[i]); pwSelWhole(); }
+    else if (ev.ctrlKey || ev.metaKey) toggle();
+    else { pw.sel = new Set(pwGroup(p)); pw.drag = true; }   // klik na člena bondu vybere celý bond
     pw.last = p; pwRender();
   });
-  b.addEventListener("mouseenter", (ev) => { if (ev.buttons !== 1) pw.drag = false; if (pw.drag && !pw.sel.has(p)) { pw.sel.add(p); pw.last = p; pwRender(); } });
-  // klávesnice a dotyk: Enter / mezerník / klepnutí přidá nebo odebere port z výběru
-  b.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); if (pw.sel.has(p)) pw.sel.delete(p); else pw.sel.add(p); pw.last = p; pwRender(); } });
+  b.addEventListener("mouseenter", (ev) => { if (ev.buttons !== 1) pw.drag = false; if (pw.drag && !pw.sel.has(p)) { pw.sel.add(p); pwSelWhole(); pw.last = p; pwRender(); } });
+  // klávesnice a dotyk: Enter / mezerník / klepnutí přidá nebo odebere port (bond celý) z výběru
+  b.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); pw.last = p; pwRender(); } });
   return b;
 }
 function pwDescribe(x) {
@@ -3169,18 +3179,19 @@ function pwStepPorts(body) {
   card.appendChild(dia);
   const lg = el("div", null, "pw-legend");
   for (const n of pwNets()) { const s = el("span"), i = el("i"); i.style.background = pwColor(n.vid); s.append(i, document.createTextNode(`${n.name} (${n.vid})`)); lg.appendChild(s); }
-  lg.appendChild(el("span", __("barva = VLAN bez tagu · proužky = tagované VLAN · E = STP edge"), "muted"));
+  lg.appendChild(el("span", __("barva = VLAN bez tagu · proužky = tagované VLAN · E = STP edge · L1 = LACP bond"), "muted"));
   card.appendChild(lg); body.appendChild(card);
   // co je nastavené: skupiny portů se stejným nastavením
   const groups = new Map();
-  for (const p of c.port_names) { const x = c.ports[p]; const k = x ? JSON.stringify([x.mode, x.vlan, x.tagged, !!x.edge, x.poe || "", x.comment || ""]) : "unset"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); }
+  for (const p of c.port_names) { const x = c.ports[p], bd = pwBondOf(p); const k = x ? JSON.stringify([x.mode, x.vlan, x.tagged, !!x.edge, bd ? "" : x.poe || "", x.comment || "", bd ? c.bonds.indexOf(bd) : -1]) : "unset"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); }
   const t = el("section", null, "pw-card"); t.appendChild(el("h3", __("Co je nastavené")));
   const tb = el("table", null, "so-t");
   for (const [k, ports] of groups) {
     const x = k === "unset" ? null : c.ports[ports[0]], tr = el("tr"), sw = el("i", "", "pw-sw");
     sw.style.background = x && (x.mode === "access" || x.mode === "hybrid") ? pwColor(x.vlan) : x && x.mode === "trunk" ? "#1d2433" : "#d5dae3";
     const first = el("td", null, "pw-gp"); first.append(sw, document.createTextNode(pwRange(ports)));
-    const extra = x ? [x.edge && x.mode !== "off" ? "STP edge" : "", x.poe ? "PoE " + x.poe : "", x.comment || ""].filter(Boolean).join(" · ") : (c.unset === "off" ? __("port zůstane vypnutý") : __`zapnutý ve VLAN ${c.unset_vlan || "?"}`);
+    const gb = pwBondOf(ports[0]);
+    const extra = x ? [gb ? "LACP " + pwBondName(gb) : "", x.edge && x.mode !== "off" ? "STP edge" : "", x.poe && !gb ? "PoE " + x.poe : "", x.comment || ""].filter(Boolean).join(" · ") : (c.unset === "off" ? __("port zůstane vypnutý") : __`zapnutý ve VLAN ${c.unset_vlan || "?"}`);
     const pick = el("button", __("Vybrat"), "ux-link"); pick.type = "button"; pick.addEventListener("click", () => { pw.sel = new Set(ports); pwRender(); });
     const last = el("td", null, "pw-acts"); last.appendChild(pick);
     tr.append(first, el("td", x ? pwDescribe(x) : __("nenastaveno")), el("td", extra, "muted"), last); tb.appendChild(tr);
@@ -3201,7 +3212,11 @@ function pwPortPanel() {
   if (!sel.length) { side.appendChild(el("p", __("Vyber porty ve schématu – tažením, s Ctrl nebo Shift."), "muted")); pwAddVlan(side); return side; }
   // rozpracované nastavení výběru: vychází z prvního vybraného portu
   const f = pw.form && pw.formKey === sel.join() ? pw.form : (pw.form = { mode: "access", vlan: (pwNets().find((n) => n.vid !== Number(c.mgmt.vid)) || pwNets()[0] || {}).vid, tagged: [], edge: true, poe: "", comment: "", ...(c.ports[sel[0]] ? JSON.parse(JSON.stringify(c.ports[sel[0]])) : {}) });
+  // výběr, který je právě jeden celý bond, se upravuje jako bond; jinak se LACP nabízí zaškrtnutím
+  const selBond = c.bonds.find((b) => b.ports.length === sel.length && b.ports.every((x) => sel.includes(x)));
+  if (pw.formKey !== sel.join()) f.bond = !!selBond;
   pw.formKey = sel.join(); if (f.mode === "hybrid") f.mode = "access"; f.tagged = f.tagged || [];
+  if (selBond) side.appendChild(el("div", "LACP " + pwBondName(selBond) + " · " + __("porty se nastavují společně"), "pw-bondh"));
   if (pw.ctx.profiles.length) side.appendChild(pwField(__("Profil portu"), pwSelect([["", __("— vlastní nastavení —")], ...pw.ctx.profiles.map((p) => [p.id, p.name])], "", (v) => {
     const p = pw.ctx.profiles.find((x) => String(x.id) === v); if (!p) return;
     Object.assign(f, p.trunk ? { mode: "trunk", tagged: [], edge: p.edge === "yes", poe: p.poe || "" }
@@ -3224,6 +3239,11 @@ function pwPortPanel() {
     const l = el("label", null, "pw-check"); l.append(cb, el("span", __("STP edge – koncové zařízení, port naskočí hned"))); side.appendChild(l);
     if (sel.some((p) => c.poe_ports.includes(p))) side.appendChild(pwField("PoE", pwSelect([["", "auto"], ["off", __("vypnuto")], ["forced-on", __("vždy zapnuto")]], f.poe === "auto-on" ? "" : f.poe || "", (v) => { f.poe = v; })));
     side.appendChild(pwField(__("Popis"), pwInput(f.comment || "", (v) => { f.comment = v; }, { maxlength: "40", placeholder: __("Kancelář 1. patro") })));
+    if (sel.length >= 2) {
+      const bc = el("input"); bc.type = "checkbox"; bc.checked = !!f.bond && sel.length <= 8; bc.disabled = sel.length > 8; bc.addEventListener("change", () => { f.bond = bc.checked; });
+      const bl = el("label", null, "pw-check"); bl.append(bc, el("span", __`Spojit do LACP bondu (802.3ad) – ${sel.length} portů jako jedna linka`)); side.appendChild(bl);
+      side.appendChild(el("p", sel.length > 8 ? __("Bond může mít nejvýš 8 portů.") : __("Protistrana musí mít LACP taky, jinak linka nepojede. Pro Hyper-V SET bond nepoužívej – tam stačí dva samostatné porty se stejnými VLAN."), "muted small"));
+    }
   }
   const row = el("div", null, "pw-row");
   row.append(actBtn(__`Použít na ${sel.length} portů`, () => {
@@ -3233,8 +3253,11 @@ function pwPortPanel() {
       if (f.mode !== "off") { if (f.poe && c.poe_ports.includes(p)) x.poe = f.poe; if ((f.comment || "").trim()) x.comment = f.comment.trim(); }
       c.ports[p] = x;
     }
-    pw.form = null; pwRender();
-  }, "pw-apply"), actBtn(__("Vyčistit"), () => { for (const p of sel) delete c.ports[p]; pw.form = null; pwRender(); }, "secondary"));
+    // výběr vždy obsahuje celé bondy → staré, kterých se dotýká, nahradí (nebo zruší) nové nastavení
+    c.bonds = c.bonds.filter((b) => !b.ports.some((x) => sel.includes(x)));
+    if (f.bond && f.mode !== "off" && sel.length >= 2 && sel.length <= 8) c.bonds.push({ ports: c.port_names.filter((x) => sel.includes(x)), lacp_rate: "30secs" });
+    pw.form = null; pw.formKey = null; pwRender();
+  }, "pw-apply"), actBtn(__("Vyčistit"), () => { for (const p of sel) delete c.ports[p]; c.bonds = c.bonds.filter((b) => !b.ports.some((x) => sel.includes(x))); pw.form = null; pw.formKey = null; pwRender(); }, "secondary"));
   side.appendChild(row);
   pwAddVlan(side);
   return side;
@@ -3295,7 +3318,7 @@ function pwStepReview(body) {
   const t = el("table", null, "so-t");
   for (const g of r.summary) {
     const tr = el("tr"), what = g.mode === "off" ? __("vypnutý") : g.mode === "trunk" ? __("trunk – všechny VLAN lokality") : `${r.vlan_names[g.vlan] || "VLAN"} (${g.vlan}) ${__("bez tagu")}` + (g.tagged.length ? " · " + g.tagged.map((v) => `${r.vlan_names[v] || "VLAN"} (${v})`).join(", ") + " " + __("s tagem") : "");
-    tr.append(el("td", pwRange(g.ports), "pw-gp"), el("td", what), el("td", [g.edge ? "STP edge" : "", g.poe ? "PoE " + g.poe : "", g.comment || ""].filter(Boolean).join(" · "), "muted")); t.appendChild(tr);
+    tr.append(el("td", pwRange(g.ports), "pw-gp"), el("td", what), el("td", [g.bond ? "LACP " + g.bond : "", g.edge ? "STP edge" : "", g.poe ? "PoE " + g.poe : "", g.comment || ""].filter(Boolean).join(" · "), "muted")); t.appendChild(tr);
   }
   card.appendChild(t); body.appendChild(card);
   if (!r.script) return;
@@ -4362,7 +4385,7 @@ function tileWrap(i, tileFn) {
     if (ev.ctrlKey || ev.metaKey || ev.shiftKey || portMulti) { togglePortPick(i.name); return; }
     selectPortTraffic(i.name);
   });
-  if (trafficState.iface === i.name) t.className += " selected";
+  if (trafficState.iface === i.name || (portCtx && portCtx.bondOf && portCtx.bondOf[i.name] && trafficState.iface === portCtx.bondOf[i.name])) t.className += " selected";
   if (portPick.has(i.name)) t.className += " picked";
   return t;
 }
@@ -4599,7 +4622,7 @@ function drawPortTable() {
   const tb = $("d-ptable-b"); tb.textContent = "";
   for (const i of rows) {
     const p = i.port || {}, n = i.connected, a = i.anomaly;
-    const tr = el("tr", null, trafficState.iface === i.name ? "selected" : "");
+    const tr = el("tr", null, trafficState.iface === i.name || (portCtx && portCtx.bondOf && portCtx.bondOf[i.name] && trafficState.iface === portCtx.bondOf[i.name]) ? "selected" : "");
     const pc = el("td", null, "pt-port");
     const sq = el("span", String(portNum(i.name)), "pt-sq " + linkClass(i));
     pc.append(sq, el("span", i.name, "muted"));
@@ -4654,7 +4677,10 @@ function fmtVal(v) {
   return v == null ? "–" : `${Math.round(v)}`;
 }
 
-function selectPortTraffic(name) {
+function selectPortTraffic(name, member) {
+  // klik na člena LACP bondu vybere bond: zvýrazní se všechny jeho porty a VLAN se nastavují společně.
+  // Samotný port (popis, PoE) se otevře z pravého tlačítka → Upravit port.
+  if (!member && portCtx && portCtx.bondOf && portCtx.bondOf[name]) name = portCtx.bondOf[name];
   trafficState.lastPort = name;
   showTraffic(detailId, name);
   loadPortEditor(name);
@@ -4756,7 +4782,7 @@ function portMenu(i) {
   return [
     ...issues.map(([l, t]) => ({ label: (l === "bad" ? "⛔ " : "⚠ ") + t, disabled: true })),
     issues.length ? { sep: true } : null,
-    { label: __("Upravit port…"), key: "Enter", act: () => selectPortTraffic(i.name) },
+    { label: __("Upravit port…"), key: "Enter", act: () => selectPortTraffic(i.name, true) },
     { label: __("Graf provozu"), act: () => { showTraffic(detailId, i.name); const t = $("d-traffic"); if (t && t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" }); } },
     profs.length ? { head: __("Profil") } : null,
     ...profs.slice(0, 8).map((pf) => ({ label: pf.name, checked: i.profile === pf.name, disabled: !can,

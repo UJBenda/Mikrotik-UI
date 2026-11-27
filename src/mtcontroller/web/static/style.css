@@ -2032,3 +2032,9 @@ tr.pw-cmp td { background: var(--bg); padding: 10px 14px; white-space: normal; }
   #alerts .al-acts .muted { display: inline; margin-right: 8px; }
   .pw-diagram { padding: 8px; } .pw-foot { flex-wrap: wrap; }
 }
+
+/* příprava: LACP bond – členové mají přerušovaný rámeček a značku L1, L2… */
+.pw-port.bond { outline: 2px dashed var(--text); outline-offset: 1px; }
+.pw-port u { position: absolute; top: -7px; left: -5px; z-index: 2; padding: 2px 3px; border-radius: 5px; background: var(--text); color: var(--card); font: 700 8px/1 inherit; text-decoration: none; }
+.pw-prow { padding-top: 2px; }
+.pw-bondh { padding: 6px 10px; border-radius: 8px; background: var(--accent-weak); font-size: 12px; font-weight: 600; }

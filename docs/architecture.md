@@ -1829,3 +1829,15 @@ pravidla pro desktop): hlavička ve dvou řádcích (hledání, zvonek, uživate
 jako pevná spodní lišta, boční panely a detail zařízení přes celou obrazovku, upozornění jako karty pod sebou,
 filtry zařízení skryté (zůstává hledání a stav), široké tabulky se posouvají do strany. Cíl jsou tři úkony
 v terénu: co hoří, stav zařízení, schválení čekajícího kusu – ne plná správa.
+
+### Příprava: LACP bondy
+
+- Návrh nese `bonds: [{name, ports, lacp_rate}]` (2–8 portů, port nejvýš v jednom bondu). Členové mají společné
+  nastavení – `validate` ho bere z prvního člena (PoE zůstává po portech). `build` nahradí členy jedním portem
+  modelu s `bond` (stejný tvar jako u převzetí switche), takže `switchcfg.config_body` vytvoří
+  `/interface bonding … mode=802.3ad` a do bridge a VLAN tabulky dá bond, ne členy.
+- Průvodce: 2+ vybrané porty → „Spojit do LACP bondu“. Klik na člena vybere celý bond (i přes Ctrl/Shift/tažení),
+  takže se VLAN vždy nastavují společně; ve schématu mají členové přerušovaný rámeček a značku L1, L2…
+- Správa (detail zařízení → Porty): klik na člena bondu vybere bond – zvýrazní se všechny jeho porty a otevře se
+  nastavení bondu. Samotný port (popis, PoE) je v nabídce pravého tlačítka → Upravit port.
+- Porovnání s návrhem hlásí bond s jinými členy jako rozdíl.
