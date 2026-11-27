@@ -514,14 +514,25 @@ def _bond_line(name: str, bond: dict, slaves: list[str]) -> str:
             f"lacp-rate={bond['lacp_rate']} transmit-hash-policy={bond['hash']} comment=\"mtc\"")
 
 
+def mgmt_iface(vid: int) -> str:
+    """Jméno VLAN rozhraní správy nad bridgem (styl "vlan")."""
+    return f"vlan{int(vid)}-mgmt"
+
+
 def config_body(model: dict, secrets: dict | None = None) -> str:
     """Bridge, porty, VLAN tabulka, management, systém. Předpokládá čistou konfiguraci.
     `secrets` = tajemství, která model nenese (heslo PPPoE brány); bez nich maska (náhled)."""
     m = model["mgmt"]
+    # Správa switche dvěma způsoby (oba jsou v dokumentaci MikroTiku):
+    #  "bridge" – bridge má pvid = VLAN správy a je v ní netagovaný, adresa je přímo na bridgi (převzetí do řízení)
+    #  "vlan"   – bridge je v VLAN správy tagovaný a adresa je na /interface vlan nad ním (Basic VLAN switching;
+    #             tak to dělá Příprava – stejně jako ručně nastavené switche)
+    vlan_style = m.get("style") == "vlan" and not model.get("gw")
+    mif = mgmt_iface(int(m["vid"])) if vlan_style else BRIDGE
     lines = [
         # brána má nad bridgem rozhraní vlan<id> (tagované rámce z CPU portu) → bridge musí pustit i tagované
-        f"/interface bridge add name={BRIDGE} vlan-filtering=no protocol-mode=rstp pvid={int(m['vid'])} "
-        f"frame-types={FT_ALL if model.get('gw') else FT_ACCESS} ingress-filtering=yes igmp-snooping=no comment=\"mtc\"",
+        f"/interface bridge add name={BRIDGE} vlan-filtering=no protocol-mode=rstp pvid={1 if vlan_style else int(m['vid'])} "
+        f"frame-types={FT_TRUNK_TAGGED if vlan_style else FT_ALL if model.get('gw') else FT_ACCESS} ingress-filtering=yes igmp-snooping=no comment=\"mtc\"",
     ]
     for it in model["ports"]:
         if it["mode"] == "off":
@@ -541,6 +552,8 @@ def config_body(model: dict, secrets: dict | None = None) -> str:
                      f"comment={q('mtc:v' + str(v['vid']))}")
     if model.get("snooping"):
         lines.append(f":do {{ /interface bridge set {BRIDGE} dhcp-snooping=yes }} on-error={{}}")
+    if vlan_style:
+        lines.append(f"/interface vlan add name={q(mif)} interface={BRIDGE} vlan-id={int(m['vid'])} comment=\"mtc\"")
     # filtrování zapnout až s hotovou VLAN tabulkou
     lines.append(f"/interface bridge set {BRIDGE} vlan-filtering=yes")
     dns = model.get("dns_servers")
@@ -550,13 +563,13 @@ def config_body(model: dict, secrets: dict | None = None) -> str:
 
         lines += gwcfg.config_lines(model, secrets)
     elif m["mode"] == "static":
-        lines.append(f"/ip address add address={q(m['address'])} interface={BRIDGE} comment=\"mtc\"")
+        lines.append(f"/ip address add address={q(m['address'])} interface={q(mif) if vlan_style else BRIDGE} comment=\"mtc\"")
         lines.append(f"/ip route add dst-address=0.0.0.0/0 gateway={q(m['gateway'])} comment=\"mtc mgmt\"")
         if dns or m.get("dns"):
             lines.append(f"/ip dns set servers={q(','.join(dns or m['dns']))}")
     else:
         # DNS z administrace má přednost před DNS z DHCP
-        lines.append(f"/ip dhcp-client add interface={BRIDGE} use-peer-dns={'no' if dns else 'yes'} use-peer-ntp=no "
+        lines.append(f"/ip dhcp-client add interface={q(mif) if vlan_style else BRIDGE} use-peer-dns={'no' if dns else 'yes'} use-peer-ntp=no "
                      f"add-default-route=yes comment=\"mtc\" disabled=no")
         if dns:
             lines.append(f"/ip dns set servers={q(','.join(dns))}")

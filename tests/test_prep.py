@@ -59,7 +59,7 @@ def test_build_and_script():
     v = {x["vid"]: x for x in m["vlans"]}
     assert v[10]["untagged"] == [f"ether{i}" for i in range(1, 11)] and v[10]["tagged"] == ["ether24"]
     assert v[5]["tagged"] == [f"ether{i}" for i in range(1, 11)] + ["ether24"] and v[5]["untagged"] == ["ether11"]
-    assert v[93]["untagged"] == ["bridge", "ether23"] and v[93]["tagged"] == ["ether24"]
+    assert v[93]["untagged"] == ["ether23"] and v[93]["tagged"] == ["bridge", "ether24"]      # správa: bridge v VLAN tagovaný
     assert any("vypnutých" in w for w in m["warnings"]) and any("DHCP" in w for w in m["warnings"])
 
     s = prep.script(p, CTX, "https://c.example/enroll/KEY?role=switch", OPTS)
@@ -75,7 +75,11 @@ def test_build_and_script():
     assert '[find bridge=bridge interface="ether24"] edge' not in s                   # trunk: výchozí auto
     assert 'poe set [find default-name="ether11"] poe-out=off' in s
     assert 'comment="mtc Kamera vjezd"' in s and '/system identity set name="sw-sklad-2"' in s
-    assert "/ip dhcp-client add interface=bridge" in s and 'comment="mtc-default:switch"' in s
+    # správa na VLAN rozhraní nad bridgem (návod MikroTiku „Basic VLAN switching“): bridge jen tagovaný, pvid 1
+    assert '/interface bridge add name=bridge vlan-filtering=no protocol-mode=rstp pvid=1 frame-types=admit-only-vlan-tagged' in s
+    assert s.index('/interface vlan add name="vlan93-mgmt" interface=bridge vlan-id=93') < s.index("/interface bridge set bridge vlan-filtering=yes")
+    assert '/ip dhcp-client add interface="vlan93-mgmt"' in s and "dhcp-client add interface=bridge" not in s
+    assert 'comment="mtc-default:switch"' in s
     assert 'name="mtc-enroll"' in s and "c.example/enroll/KEY" in s
 
     # nativní trunk: VLAN správy jde trunkem bez tagu; pevná adresa
@@ -84,9 +88,10 @@ def test_build_and_script():
     mn = prep.build(n, CTX)
     t = {it["port"]: it for it in mn["ports"]}["ether24"]
     assert t["pvid"] == 93 and t["frame_types"] == "admit-all"
-    assert {x["vid"]: x for x in mn["vlans"]}[93]["untagged"] == ["bridge", "ether23", "ether24"]
+    assert {x["vid"]: x for x in mn["vlans"]}[93]["untagged"] == ["ether23", "ether24"]
+    assert {x["vid"]: x for x in mn["vlans"]}[93]["tagged"] == ["bridge"]
     sn = prep.script(n, CTX, "https://c.example/enroll/KEY?role=switch", OPTS)
-    assert '/ip address add address="10.9.3.20/24" interface=bridge' in sn and 'gateway="10.9.3.1"' in sn
+    assert '/ip address add address="10.9.3.20/24" interface="vlan93-mgmt"' in sn and 'gateway="10.9.3.1"' in sn
     assert '/ip dns set servers="10.9.3.1,1.1.1.1"' in sn and "dhcp-client" not in sn
 
     # nenastavené porty do výchozí VLAN místo vypnutí

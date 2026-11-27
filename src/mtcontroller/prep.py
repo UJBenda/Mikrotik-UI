@@ -340,7 +340,8 @@ def build(plan: dict, ctx: dict) -> dict:
     for vid in sorted(names):
         tagged, untagged = [], []
         if vid == mg:
-            untagged.append(switchcfg.BRIDGE)
+            # správa je na VLAN rozhraní nad bridgem → bridge (CPU port) je v té VLAN tagovaný
+            tagged.append(switchcfg.BRIDGE)
         for it in items:
             if it["mode"] == "trunk":
                 (untagged if native and vid == mg else tagged).append(it["port"])
@@ -372,7 +373,7 @@ def build(plan: dict, ctx: dict) -> dict:
     if plan["mgmt"]["mode"] == "dhcp":
         warnings.append("správa přes DHCP – ve VLAN správy musí běžet DHCP server; doporučuji rezervaci adresy")
     m = plan["mgmt"]
-    mgmt = {"vid": mg, "native": native, "mode": m["mode"]}
+    mgmt = {"vid": mg, "native": native, "mode": m["mode"], "style": "vlan"}
     if m["mode"] == "static":
         mgmt.update(address=m["address"], gateway=m["gateway"], dns=m["dns"])
     return {"bridge": switchcfg.BRIDGE, "ports": items, "vlans": vlans, "mgmt": mgmt, "snooping": False,

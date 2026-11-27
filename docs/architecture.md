@@ -1841,3 +1841,11 @@ v terénu: co hoří, stav zařízení, schválení čekajícího kusu – ne pl
 - Správa (detail zařízení → Porty): klik na člena bondu vybere bond – zvýrazní se všechny jeho porty a otevře se
   nastavení bondu. Samotný port (popis, PoE) je v nabídce pravého tlačítka → Upravit port.
 - Porovnání s návrhem hlásí bond s jinými členy jako rozdíl.
+
+### Příprava: správa na VLAN rozhraní
+
+Skript z Přípravy dělá správu podle návodu MikroTiku „Basic VLAN switching“ (`mgmt.style = "vlan"` v modelu pro
+`switchcfg.config_body`): bridge má `pvid=1`, `frame-types=admit-only-vlan-tagged` a je v VLAN správy **tagovaný**,
+nad ním je `/interface vlan` `vlan<id>-mgmt` a na něm DHCP klient nebo pevná adresa. Převzetí do řízení zůstává
+u stylu „bridge“ (bridge má `pvid` = VLAN správy, adresa přímo na bridgi). Až půjde lokalita s připravenými switchi
+do řízení, je potřeba styly sjednotit, jinak sladění navrhne správu předělat – zatím nevyřešeno.
