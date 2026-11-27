@@ -3025,7 +3025,7 @@ function pwPrint(p) {
     tr.append(el("td", pwRange(ports)), el("td", (pwBondOf(ports[0]) ? "LACP " + pwBondName(pwBondOf(ports[0])) + " · " : "") + (x ? pwDescribe(x) : (c.unset === "off" ? __("vypnutý") : pwVlanName(c.unset_vlan) + " " + __("bez tagu")))), el("td", (x && x.comment) || ""));
     t.appendChild(tr);
   }
-  box.append(t, el("p", __`Správa: ${pwVlanName(Number(c.mgmt.vid))}, ${c.mgmt.mode === "static" ? c.mgmt.address : "DHCP"} · STP: ${c.stp.mode.toUpperCase()}${c.stp.mode === "mstp" && c.stp.region ? " " + c.stp.region : ""}`));
+  box.append(t, el("p", __`Správa: ${pwVlanName(Number(c.mgmt.vid))}, ${c.mgmt.mode === "static" ? c.mgmt.address : "DHCP"} · STP: ${c.stp.mode.toUpperCase()}${c.stp.mode === "mstp" && c.stp.region ? " " + c.stp.region : ""}` + " · IPv6: " + (c.ipv6.mode === "static" ? c.ipv6.address : c.ipv6.mode === "auto" ? __("automaticky") : __("vypnuto"))));
   pw.cur = keep;
   if (typeof window.print === "function") window.print();
 }
@@ -3033,12 +3033,13 @@ function pwBlank() {
   const m = pw.ctx.models[0] || { model: "", ports: [], poe: [] };
   const st = pw.ctx.stp || { mode: "rstp", region: "", revision: 0 };
   return { id: null, name: "", model: m.model, serial: "", port_names: m.ports.slice(), poe_ports: m.poe.slice(), ports: {}, extra_vlans: [], unset: "off", unset_vlan: null,
-    stp: { mode: st.mode, region: st.region || "", revision: st.revision || 0 }, bonds: [],
+    stp: { mode: st.mode, region: st.region || "", revision: st.revision || 0 }, bonds: [], ipv6: { mode: "off", address: "", gateway: "" },
     mgmt: { vid: pw.ctx.mgmt_vlan || (pw.ctx.networks[0] || {}).vid || 1, native: pw.ctx.mgmt_native, mode: "dhcp", address: "", gateway: "", dns: "" } };
 }
 function pwFrom(p) {
   const d = JSON.parse(JSON.stringify(p.data)), m = d.mgmt || {}, st = d.stp || {};
-  return { bonds: (d.bonds || []).map((b) => ({ ports: b.ports.slice(), lacp_rate: b.lacp_rate || "30secs" })),
+  return { ipv6: { mode: (d.ipv6 || {}).mode || "off", address: (d.ipv6 || {}).address || "", gateway: (d.ipv6 || {}).gateway || "" },
+    bonds: (d.bonds || []).map((b) => ({ ports: b.ports.slice(), lacp_rate: b.lacp_rate || "30secs" })),
     stp: { mode: st.mode === "mstp" ? "mstp" : "rstp", region: st.region || "", revision: st.revision || 0 }, id: p.id, name: d.name, model: d.model, serial: d.serial || "", port_names: d.port_names, poe_ports: d.poe_ports || [], ports: d.ports || {}, extra_vlans: d.extra_vlans || [],
     unset: d.unset || "off", unset_vlan: d.unset_vlan || null, mgmt: { vid: m.vid, native: m.native !== false, mode: m.mode || "dhcp", address: m.address || "", gateway: m.gateway || "", dns: (m.dns || []).join(", ") } };
 }
@@ -3050,6 +3051,7 @@ function pwPayload() {
     unset: c.unset, unset_vlan: c.unset === "default" ? Number(c.unset_vlan) : undefined,
     stp: { mode: c.stp.mode, region: c.stp.region.trim(), revision: Number(c.stp.revision) || 0 },
     bonds: c.bonds.map((b) => ({ ports: b.ports, lacp_rate: b.lacp_rate })),
+    ipv6: { mode: c.ipv6.mode, address: c.ipv6.address.trim(), gateway: c.ipv6.gateway.trim() },
     mgmt: { vid: Number(m.vid), native: !!m.native, mode: m.mode, address: m.address.trim(), gateway: m.gateway.trim(), dns: m.dns.split(/[\s,;]+/).filter(Boolean) } };
 }
 function pwCarriers() {
@@ -3295,6 +3297,20 @@ function pwStepMgmt(body) {
   } else card.appendChild(el("p", __("Ve VLAN správy musí běžet DHCP server. Doporučuji na něm adresu pro tohle zařízení rezervovat."), "muted small"));
   card.appendChild(el("p", __("NTP, časové pásmo a vypnutí zbytečných služeb (Telnet, FTP, www, api) se nastaví samy podle controlleru."), "muted small"));
   body.appendChild(card);
+  // IPv6 na switchi: vypnuto (výchozí) / automaticky ze sítě / ručně na rozhraní správy
+  const v6c = el("section", null, "pw-card"), v6 = c.ipv6, v6seg = el("div", null, "seg");
+  v6c.appendChild(el("h3", "IPv6"));
+  for (const [k, lab] of [["off", __("Vypnuto")], ["auto", __("Automaticky")], ["static", __("Ručně")]]) { const b = el("button", lab, v6.mode === k ? "active" : ""); b.type = "button"; b.addEventListener("click", () => { v6.mode = k; pwRender(); }); v6seg.appendChild(b); }
+  v6c.appendChild(pwField(__("IPv6 na switchi"), v6seg));
+  if (v6.mode === "off") v6c.appendChild(el("p", __("Switch nebude mít žádnou IPv6 adresu, ani link-local. Provoz IPv6 mezi porty tím není dotčen – týká se jen switche samotného. Bezpečnější volba, pokud switch přes IPv6 nespravuješ."), "muted small"));
+  else if (v6.mode === "auto") v6c.appendChild(el("p", __("Switch si vezme adresu z ohlášení routeru (SLAAC) ve VLAN správy. Sám neroutuje a nic neohlašuje."), "muted small"));
+  else {
+    const row = el("div", null, "pw-row");
+    row.append(pwField(__("IPv6 adresa s prefixem"), pwInput(v6.address, (v) => { v6.address = v; }, { placeholder: "2001:db8:93::20/64", autocomplete: "off" })),
+      pwField(__("IPv6 brána (nepovinná)"), pwInput(v6.gateway, (v) => { v6.gateway = v; }, { placeholder: "2001:db8:93::1", autocomplete: "off" })));
+    v6c.append(row, el("p", __("Adresa se nastaví na rozhraní správy. Ohlášení routeru se ignorují."), "muted small"));
+  }
+  body.appendChild(v6c);
   // spanning tree: musí sedět se zbytkem sítě (výchozí hodnota je to, co controller vidí na zařízeních lokality)
   const sc = el("section", null, "pw-card"), st = c.stp, sseg = el("div", null, "seg");
   sc.appendChild(el("h3", __("Spanning tree")));

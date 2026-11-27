@@ -311,3 +311,29 @@ def test_lacp_bond():
                 [{"ports": ["ether3", "ether4"]}]):
         with pytest.raises(Exception):
             prep.validate({**base, "bonds": bad})
+
+
+def test_ipv6():
+    """IPv6 na připravovaném switchi: vypnuto (výchozí) / automaticky / ručně na rozhraní správy."""
+    ports = [f"ether{i}" for i in range(1, 5)]
+    ctx = {"networks": [{"vid": 93, "name": "MNG", "purpose": "mgmt", "subnet": None, "gateway": None, "dns": []}],
+           "mgmt_vlan": 93, "mgmt_native": False, "managed": False, "models": [], "profiles": []}
+    base = {"name": "T", "model": "X", "port_names": ports, "poe_ports": [], "unset": "off",
+            "ports": {"ether4": {"mode": "trunk"}}, "mgmt": {"vid": 93, "native": False, "mode": "dhcp"}}
+    gen = lambda v6: prep.script(prep.validate({**base, **({"ipv6": v6} if v6 is not None else {})}), ctx, "https://c.example/enroll/KEY", OPTS)
+    s = gen(None)
+    assert prep.validate(base)["ipv6"] == {"mode": "off"}
+    assert ":do { /ipv6 settings set disable-ipv6=yes } on-error=" in s and "/ipv6 address" not in s and _balanced(s) and s.isascii()
+    s = gen({"mode": "auto"})
+    assert "disable-ipv6=no forward=no accept-router-advertisements=yes" in s and "/ipv6 address" not in s
+    s = gen({"mode": "static", "address": "2001:DB8:93::20/64", "gateway": "2001:db8:93::1"})
+    assert '/ipv6 address add address="2001:db8:93::20/64" interface="vlan93-mgmt" advertise=no comment="mtc"' in s
+    assert '/ipv6 route add dst-address=::/0 gateway="2001:db8:93::1" comment="mtc mgmt"' in s and "accept-router-advertisements=no" in s
+    assert _balanced(s) and s.isascii()
+    s = gen({"mode": "static", "address": "2001:db8:93::20/64", "gateway": "fe80::1"})
+    assert 'gateway="fe80::1%vlan93-mgmt"' in s                                   # link-local brána potřebuje rozhraní
+    assert "/ipv6 route" not in gen({"mode": "static", "address": "2001:db8:93::20/64"})
+    for bad in ({"mode": "static", "address": "2001:db8::20"}, {"mode": "static", "address": "10.0.0.1/24"},
+                {"mode": "static", "address": "fe80::5/64"}, {"mode": "static", "address": "2001:db8::20/64", "gateway": "x"}):
+        with pytest.raises(Exception):
+            prep.validate({**base, "ipv6": bad})

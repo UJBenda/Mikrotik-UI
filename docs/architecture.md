@@ -1849,3 +1849,11 @@ Skript z Přípravy dělá správu podle návodu MikroTiku „Basic VLAN switchi
 nad ním je `/interface vlan` `vlan<id>-mgmt` a na něm DHCP klient nebo pevná adresa. Převzetí do řízení zůstává
 u stylu „bridge“ (bridge má `pvid` = VLAN správy, adresa přímo na bridgi). Až půjde lokalita s připravenými switchi
 do řízení, je potřeba styly sjednotit, jinak sladění navrhne správu předělat – zatím nevyřešeno.
+
+### Příprava: IPv6
+
+Návrh nese `ipv6: {mode: off|auto|static, address, gateway}`; výchozí je `off`. Skript nastaví `/ipv6 settings`
+(`off` → `disable-ipv6=yes`; `auto` → `forward=no accept-router-advertisements=yes`, tedy SLAAC jako koncové
+zařízení; `static` → adresa na rozhraní správy `vlan<id>-mgmt` s `advertise=no`, volitelně výchozí trasa, RA se
+ignorují; link-local brána dostane `%rozhraní`). Příkazy jdou přes `on-error`, aby selhání IPv6 neshodilo ohlášení
+controlleru. Týká se jen switche samotného, ne provozu IPv6 mezi porty.

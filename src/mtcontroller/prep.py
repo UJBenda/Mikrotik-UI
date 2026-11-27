@@ -278,9 +278,31 @@ def validate(data: dict) -> dict:
         if not 0 <= revision <= 65535:
             raise ServiceError("MSTP: revize regionu musí být 0–65535")
         stp.update(region=region, revision=revision)
+    # IPv6 na switchi: vypnuto (výchozí – switch ho ke správě nepotřebuje), automaticky ze sítě (SLAAC), nebo ručně
+    v6 = data.get("ipv6") or {}
+    ipv6: dict[str, Any] = {"mode": v6.get("mode") if v6.get("mode") in ("auto", "static") else "off"}
+    if ipv6["mode"] == "static":
+        try:
+            a6 = ipaddress.IPv6Interface(str(v6.get("address") or "").strip())
+        except ValueError:
+            raise ServiceError("IPv6: adresa musí být IPv6 s délkou prefixu, např. 2001:db8:93::20/64")
+        if "/" not in str(v6.get("address")) or a6.ip.is_link_local or a6.ip.is_multicast or a6.ip.is_unspecified:
+            raise ServiceError("IPv6: zadej adresu s délkou prefixu (např. 2001:db8:93::20/64), ne link-local")
+        ipv6["address"] = a6.compressed
+        gw6 = str(v6.get("gateway") or "").strip()
+        if gw6:
+            try:
+                g6 = ipaddress.IPv6Address(gw6)
+            except ValueError:
+                raise ServiceError("IPv6: brána musí být IPv6 adresa")
+            if g6.is_multicast or g6.is_unspecified:
+                raise ServiceError("IPv6: brána musí být adresa routeru")
+            ipv6["gateway"] = g6.compressed
+        else:
+            ipv6["gateway"] = ""
     unset = "default" if data.get("unset") == "default" else "off"
     out = {"name": name, "model": model, "serial": serial, "port_names": names, "poe_ports": poe_ports, "ports": ports,
-           "mgmt": mgmt, "unset": unset, "extra_vlans": extra, "stp": stp, "bonds": bonds}
+           "mgmt": mgmt, "unset": unset, "extra_vlans": extra, "stp": stp, "bonds": bonds, "ipv6": ipv6}
     if unset == "default":
         out["unset_vlan"] = _vid(data.get("unset_vlan"), "VLAN pro nenastavené porty")
     return out
@@ -370,6 +392,23 @@ def build(plan: dict, ctx: dict) -> dict:
                         "pokud síť mapuje VLAN do dalších instancí (MSTI), doplň je po adopci, jinak switch zůstane mimo region")
         if not stp.get("region"):
             warnings.append("MSTP: jméno regionu je prázdné – musí být stejné jako na ostatních switchích")
+    # IPv6: nastavení jde přes on-error – selhání nesmí shodit zbytek skriptu (ohlášení controlleru)
+    v6 = plan.get("ipv6") or {"mode": "off"}
+    mif = switchcfg.mgmt_iface(mg)
+    if v6["mode"] == "off":
+        v6_cmds = ["/ipv6 settings set disable-ipv6=yes"]
+    elif v6["mode"] == "auto":
+        # switch je koncové zařízení: neroutuje a adresu si bere z ohlášení routeru (SLAAC)
+        v6_cmds = ["/ipv6 settings set disable-ipv6=no forward=no accept-router-advertisements=yes accept-redirects=no"]
+    else:
+        v6_cmds = ["/ipv6 settings set disable-ipv6=no forward=no accept-router-advertisements=no accept-redirects=no",
+                   f"/ipv6 address add address={q(v6['address'])} interface={q(mif)} advertise=no comment=\"mtc\""]
+        if v6.get("gateway"):
+            gw6 = v6["gateway"] + (f"%{mif}" if ipaddress.IPv6Address(v6["gateway"]).is_link_local else "")
+            v6_cmds.append(f"/ipv6 route add dst-address=::/0 gateway={q(gw6)} comment=\"mtc mgmt\"")
+    extra_lines.append(":do { " + "; ".join(v6_cmds) + " } on-error={ :log warning \"mtc: nastaveni IPv6 selhalo\" }")
+    if v6["mode"] == "auto":
+        warnings.append("IPv6 automaticky: switch si vezme adresu z ohlášení routeru ve VLAN správy – na síti musí být router, který je posílá")
     if plan["mgmt"]["mode"] == "dhcp":
         warnings.append("správa přes DHCP – ve VLAN správy musí běžet DHCP server; doporučuji rezervaci adresy")
     m = plan["mgmt"]

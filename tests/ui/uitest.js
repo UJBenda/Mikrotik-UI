@@ -436,6 +436,10 @@ process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + (e 
       if (!body.textContent.includes("VLAN správy") || !body.textContent.includes("DHCP") || !body.textContent.includes("Spanning tree")) errors.push("příprava: krok správa");
       await all(body, (n) => n.tagName === "BUTTON" && n.textContent === "MSTP")[0].fire("click");
       if (!body.textContent.includes("Jméno regionu")) errors.push("příprava: MSTP region");
+      if (!body.textContent.includes("IPv6 na switchi") || !body.textContent.includes("ani link-local")) errors.push("příprava: IPv6 výchozí vypnuto");
+      await all(body, (n) => n.tagName === "BUTTON" && n.textContent === "Ručně")[0].fire("click");
+      if (!body.textContent.includes("IPv6 adresa s prefixem")) errors.push("příprava: IPv6 ručně");
+      await all(body, (n) => n.tagName === "BUTTON" && n.textContent === "Vypnuto")[0].fire("click");
       await btn("Pokračovat").fire("click");
       for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
       const t = body.textContent;
